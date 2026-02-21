@@ -803,8 +803,9 @@ fn test_deposit_when_paused_fails() {
     let result = client.try_deposit(&token_id, &500, &user, &salt);
     
     assert!(result.is_err());
-    if let Err(Ok(error)) = result {
-        assert_eq!(error, QuickexError::ContractPaused);
+    match result {
+        Err(Ok(error)) => assert_eq!(error, QuickexError::ContractPaused),
+        _ => panic!("Expected contract paused error"),
     }
 }
 
@@ -851,8 +852,9 @@ fn test_withdraw_when_paused_fails() {
     let result = client.try_withdraw(&token_id, &amount, &commitment, &user, &salt);
     
     assert!(result.is_err());
-    if let Err(Ok(error)) = result {
-        assert_eq!(error, QuickexError::ContractPaused);
+    match result {
+        Err(Ok(error)) => assert_eq!(error, QuickexError::ContractPaused),
+        _ => panic!("Expected contract paused error"),
     }
 }
 
@@ -886,8 +888,9 @@ fn test_deposit_with_commitment_when_paused_fails() {
     let result = client.try_deposit_with_commitment(&user, &token_id, &amount, &commitment);
     
     assert!(result.is_err());
-    if let Err(Ok(error)) = result {
-        assert_eq!(error, QuickexError::ContractPaused);
+    match result {
+        Err(Ok(error)) => assert_eq!(error, QuickexError::ContractPaused),
+        _ => panic!("Expected contract paused error"),
     }
 }
 
@@ -912,8 +915,9 @@ fn test_admin_transfer_functionality() {
     // Verify old admin can no longer perform admin functions
     let result = client.try_set_paused(&admin, &true);
     assert!(result.is_err());
-    if let Err(Ok(error)) = result {
-        assert_eq!(error, QuickexError::Unauthorized);
+    match result {
+        Err(Ok(error)) => assert_eq!(error, QuickexError::Unauthorized),
+        _ => panic!("Expected unauthorized error"),
     }
     
     // Verify new admin can perform admin functions
