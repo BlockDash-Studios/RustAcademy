@@ -11,6 +11,7 @@ export class ScamAlertsController {
 
 	@Post("scan")
 	@HttpCode(HttpStatus.OK)
+	@UseGuards(ApiKeyGuard, CustomThrottlerGuard)
 	@ApiOperation({
 		summary: "Scan a payment link for scam indicators",
 		description:
