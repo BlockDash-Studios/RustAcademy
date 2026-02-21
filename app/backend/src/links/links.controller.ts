@@ -18,6 +18,7 @@ export class LinksController {
 
   @Post("metadata")
   @HttpCode(HttpStatus.OK)
+  @UseGuards(ApiKeyGuard, CustomThrottlerGuard)
   @ApiOperation({
     summary: "Generate canonical link metadata",
     description:
