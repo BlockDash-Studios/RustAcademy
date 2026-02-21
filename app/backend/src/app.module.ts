@@ -4,7 +4,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 
 import { AppConfigModule } from './config';
-import { HealthModule } from './health/health.module';
+import { HealthModul8e } from './health/health.module';
 import { StellarModule } from './stellar/stellar.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { UsernamesModule } from './usernames/usernames.module';
@@ -19,10 +19,10 @@ import { MetricsInterceptor } from './metrics/metrics.interceptor';
       wildcard: true,
       delimiter: '.',
     }),
-    ThrottlerModule.forRoot([{
-      ttl: 60000, 
-      limit: 20,
-    }]),
+    ThrottlerModule.forRoot({
+      ttl: RATE_LIMITS.PUBLIC.ttl,
+      limit: RATE_LIMITS.PUBLIC.limit,
+    }),
     SupabaseModule,
     HealthModule,
     StellarModule,
