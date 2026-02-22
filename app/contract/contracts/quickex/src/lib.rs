@@ -282,17 +282,17 @@ impl QuickexContract {
         if get_admin(&env).is_some() {
             return Err(QuickexError::AlreadyInitialized);
         }
-        
+
         // Initialize the admin
         set_admin(&env, &admin);
-        
+
         // Also initialize paused state to false by default
         set_paused(&env, false);
-        
+
         // Emit initialization event for audit trail
         let timestamp = env.ledger().timestamp();
         events::publish_contract_initialized(&env, &admin, timestamp);
-        
+
         Ok(())
     }
 
@@ -313,17 +313,17 @@ impl QuickexContract {
         if caller != admin {
             return Err(QuickexError::Unauthorized);
         }
-        
+
         // Require cryptographic authorization from the caller
         caller.require_auth();
-        
+
         // Update the paused state
         set_paused(&env, new_state);
-        
+
         // Emit pause event for audit trail
         let timestamp = env.ledger().timestamp();
         events::publish_contract_paused(&env, new_state, timestamp);
-        
+
         Ok(())
     }
 
@@ -344,20 +344,20 @@ impl QuickexContract {
         if caller != admin {
             return Err(QuickexError::Unauthorized);
         }
-        
+
         // Require cryptographic authorization from the caller
         caller.require_auth();
-        
+
         // Store old admin for event
         let old_admin = admin;
-        
+
         // Update the admin address
         set_admin(&env, &new_admin);
-        
+
         // Emit admin change event for audit trail
         let timestamp = env.ledger().timestamp();
         events::publish_admin_changed(&env, old_admin, new_admin, timestamp);
-        
+
         Ok(())
     }
 
