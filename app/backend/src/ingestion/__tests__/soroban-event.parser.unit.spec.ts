@@ -9,8 +9,7 @@ function symVal(s: string): xdr.ScVal {
 }
 
 function addressVal(pubkey: string): xdr.ScVal {
-  // For test purposes, use nativeToScVal which handles both G and C addresses
-  return nativeToScVal(pubkey, { type: "address" });
+  return nativeToScVal(pubkey);
 }
 
 function bytesVal(hex: string): xdr.ScVal {
@@ -43,8 +42,7 @@ function makeRaw(
   };
 }
 
-// Valid test addresses (generated once for consistency)
-const OWNER = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7";
+const OWNER = "GDQERHRWJYV7JHRP5V7DWJVI6Y5ABZP3YRH7DKYJRBEGJQKE6IQEOSY2";
 const TOKEN = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const ADMIN2 = "GBVVJJWOR35BPXM2XJQLMQBDNKJWKJNPGQLDNPVKPOUJDMKBDLKMNKR6";
 const COMMITMENT_HEX = "deadbeef".repeat(8);
@@ -132,6 +130,7 @@ describe("SorobanEventParser", () => {
 
   describe("AdminChanged", () => {
     it("parses a valid AdminChanged event", () => {
+      const ADMIN2 = "GB7QNDHSBQZENWGZUBJ4KLSZFRNHN5ATQXZSC3ZHZ5ZBQ6Y6X3TOBQ7S";
       const topics = [
         symVal("AdminChanged"),
         addressVal(OWNER),

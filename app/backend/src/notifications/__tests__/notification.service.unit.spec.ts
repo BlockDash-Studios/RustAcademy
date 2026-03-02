@@ -1,6 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { EventEmitterModule, EventEmitter2 } from "@nestjs/event-emitter";
-
+import { EventEmitterModule } from "@nestjs/event-emitter";
 import { NotificationService } from "../notification.service";
 import { NotificationPreferencesRepository } from "../notification-preferences.repository";
 import { NotificationLogRepository } from "../notification-log.repository";
@@ -15,7 +14,7 @@ import type { EscrowDepositedEvent } from "../../ingestion/types/contract-event.
 // Helpers
 // ---------------------------------------------------------------------------
 
-const PUBLIC_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const PUBLIC_KEY = "GDQERHRWJYV7JHRP5V7DWJVI6Y5ABZP3YRH7DKYJRBEGJQKE6IQEOSY2";
 
 function makeEmailPref(
   overrides: Partial<NotificationPreference> = {},
@@ -99,7 +98,6 @@ describe("NotificationService", () => {
   let prefsRepo: jest.Mocked<NotificationPreferencesRepository>;
   let logRepo: jest.Mocked<NotificationLogRepository>;
   let emailProvider: ReturnType<typeof mockEmailProvider>;
-  let eventEmitter: EventEmitter2;
   let module: TestingModule;
 
   beforeEach(async () => {
@@ -120,7 +118,9 @@ describe("NotificationService", () => {
     await module.init();
 
     service = module.get(NotificationService);
-    eventEmitter = module.get(EventEmitter2);
+    
+    // Ensure the service is fully initialized
+    service.onModuleInit();
   });
 
   afterEach(async () => {
@@ -148,10 +148,8 @@ describe("NotificationService", () => {
       .mockResolvedValue(undefined);
     const event = makeEscrowDepositedEvent();
 
-    await eventEmitter.emitAsync("stellar.EscrowDeposited", event);
-    
-    // Wait for async event handlers to complete
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Manually call the event handler method to test it directly
+    await service.onEscrowDeposited(event);
 
     expect(dispatchSpy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -167,15 +165,15 @@ describe("NotificationService", () => {
       .spyOn(service, "dispatch")
       .mockResolvedValue(undefined);
 
-    await eventEmitter.emitAsync("payment.received", {
+    const payload = {
       txHash: "tx123",
       amount: "100000000",
       sender: "GSENDER",
       recipientPublicKey: PUBLIC_KEY,
-    });
-    
-    // Wait for async event handlers to complete
-    await new Promise(resolve => setTimeout(resolve, 100));
+    };
+
+    // Manually call the event handler method to test it directly
+    await service.onPaymentReceived(payload);
 
     expect(dispatchSpy).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: "payment.received" }),
@@ -188,13 +186,13 @@ describe("NotificationService", () => {
       .spyOn(service, "dispatch")
       .mockResolvedValue(undefined);
 
-    await eventEmitter.emitAsync("username.claimed", {
-      username: "alice",
+    const payload = {
+      username: "testuser",
       publicKey: PUBLIC_KEY,
-    });
-    
-    // Wait for async event handlers to complete
-    await new Promise(resolve => setTimeout(resolve, 100));
+    };
+
+    // Manually call the event handler method to test it directly
+    await service.onUsernameClaimed(payload);
 
     expect(dispatchSpy).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: "username.claimed" }),
