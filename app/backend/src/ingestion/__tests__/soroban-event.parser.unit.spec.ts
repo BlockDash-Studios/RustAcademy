@@ -1,4 +1,4 @@
-import { xdr, nativeToScVal, Keypair } from "stellar-sdk";
+import { xdr, nativeToScVal } from "stellar-sdk";
 import {
   SorobanEventParser,
   RawHorizonContractEvent,
@@ -43,10 +43,10 @@ function makeRaw(
   };
 }
 
-// Generate valid test addresses
-const OWNER = Keypair.random().publicKey();
+// Valid test addresses (generated once for consistency)
+const OWNER = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7";
 const TOKEN = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
-const ADMIN2 = Keypair.random().publicKey();
+const ADMIN2 = "GBVVJJWOR35BPXM2XJQLMQBDNKJWKJNPGQLDNPVKPOUJDMKBDLKMNKR6";
 const COMMITMENT_HEX = "deadbeef".repeat(8);
 
 describe("SorobanEventParser", () => {
