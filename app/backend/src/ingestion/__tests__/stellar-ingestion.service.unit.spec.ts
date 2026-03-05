@@ -179,8 +179,8 @@ describe("StellarIngestionService", () => {
       const raw = makeRawEvent({ paging_token: "101-1", ledger: 101 });
       capturedOnMessage!(raw);
       
-      // Wait for async operations to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Flush all pending promises
+      await new Promise(setImmediate);
 
       expect(cursorRepo.saveCursor).toHaveBeenCalledWith(
         "contract:CTEST",
@@ -194,14 +194,11 @@ describe("StellarIngestionService", () => {
       const event = makeEscrowDepositedEvent();
       parser.parse.mockReturnValue(event);
 
-      // Start streaming to capture the onmessage callback
-      await service.startStreaming("CTEST");
-      
       const raw = makeRawEvent();
       capturedOnMessage!(raw);
       
-      // Wait for async operations to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Flush all pending promises
+      await new Promise(setImmediate);
 
       expect(escrowRepo.upsertEvent).toHaveBeenCalledWith(event);
       expect(cursorRepo.saveCursor).toHaveBeenCalledWith(
@@ -215,16 +212,13 @@ describe("StellarIngestionService", () => {
       const event = makeEscrowDepositedEvent();
       parser.parse.mockReturnValue(event);
 
-      // Start streaming to capture the onmessage callback
-      await service.startStreaming("CTEST");
-
       const listener = jest.fn();
       eventEmitter.on("stellar.EscrowDeposited", listener);
 
       capturedOnMessage!(makeRawEvent());
       
-      // Wait for async operations to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Flush all pending promises
+      await new Promise(setImmediate);
 
       expect(listener).toHaveBeenCalledWith(event);
     });
@@ -250,14 +244,13 @@ describe("StellarIngestionService", () => {
       parser.parse.mockReturnValue(event);
       escrowRepo.upsertEvent.mockResolvedValue(undefined); // idempotent – no error on duplicate
 
-      await service.startStreaming("CTEST");
-
       const raw = makeRawEvent();
       capturedOnMessage!(raw);
       capturedOnMessage!(raw); // replay same event
       
-      // Wait for async operations to complete
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Flush all pending promises
+      await new Promise(setImmediate);
+      await new Promise(setImmediate);
 
       // Both calls must succeed; DB layer handles deduplication
       expect(escrowRepo.upsertEvent).toHaveBeenCalledTimes(2);
