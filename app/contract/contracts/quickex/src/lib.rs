@@ -22,6 +22,10 @@ use errors::QuickexError;
 use storage::*;
 use types::{EscrowEntry, EscrowStatus, PrivacyAwareEscrowView};
 
+/// Current version of the contract code.
+/// Used during upgrades to detect and handle schema migrations.
+const CONTRACT_VERSION: u32 = 1;
+
 /// QuickEx Privacy Contract
 ///
 /// Soroban smart contract providing escrow, privacy controls, and X-Ray-style amount
@@ -344,6 +348,11 @@ impl QuickexContract {
         admin::get_admin(&env)
     }
 
+    /// Get the current contract version stored in state.
+    pub fn version(env: Env) -> u32 {
+        get_version(&env)
+    }
+
     /// Get the status of an escrow by its commitment hash (read-only).
     ///
     /// Returns `Pending`, `Spent`, `Expired`, or `Refunded` if an escrow exists; `None` otherwise.
@@ -447,7 +456,7 @@ impl QuickexContract {
     /// Upgrade the contract to a new WASM implementation (**Admin only**).
     ///
     /// Caller must equal admin and authorize. The new WASM must be pre-uploaded to the network.
-    /// Emits an upgrade event for audit.
+    /// Emits an upgrade event for audit. Handles storage migrations if the version has changed.
     ///
     /// # Arguments
     /// * `env` - The contract environment
@@ -471,9 +480,22 @@ impl QuickexContract {
 
         caller.require_auth();
 
+        // 1. Perform migrations if needed
+        let old_version = get_version(&env);
+        if old_version < CONTRACT_VERSION {
+            // Placeholder for actual migration logic
+            // Example:
+            // if old_version == 1 && CONTRACT_VERSION == 2 {
+            //     migrate_v1_to_v2(&env);
+            // }
+            set_version(&env, CONTRACT_VERSION);
+        }
+
+        // 2. Update WASM
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
 
+        // 3. Emit event
         events::publish_contract_upgraded(&env, new_wasm_hash, &admin);
 
         Ok(())

@@ -1162,6 +1162,46 @@ fn test_upgrade_without_admin_initialized_fails() {
     assert_contract_error(result, QuickexError::Unauthorized);
 }
 
+#[test]
+fn test_version_and_migration() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    // 1. Initial version should be 1 (default from storage)
+    assert_eq!(client.version(), 1);
+
+    // 2. Create some data to ensure integrity
+    let token = create_test_token(&env);
+    let owner = Address::generate(&env);
+    let amount: i128 = 1000;
+    let salt = Bytes::from_slice(&env, b"migration_test_salt");
+    let mut data = Bytes::new(&env);
+    data.append(&owner.clone().to_xdr(&env));
+    data.append(&Bytes::from_slice(&env, &amount.to_be_bytes()));
+    data.append(&salt);
+    let commitment: BytesN<32> = env.crypto().sha256(&data).into();
+    setup_escrow(&env, &client.address, &token, amount, commitment.clone(), 0);
+
+    // 3. Manually set version to 0 in storage to simulate an old contract
+    env.as_contract(&client.address, || {
+        crate::storage::set_version(&env, 0);
+    });
+    assert_eq!(client.version(), 0);
+
+    // 4. Perform "upgrade"
+    let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let _ = client.try_upgrade(&admin, &new_wasm_hash);
+
+    // 5. Version should now be 1 (current CONTRACT_VERSION)
+    assert_eq!(client.version(), 1);
+
+    // 6. Verify data integrity - escrow should still exist and be correct
+    let details = client.get_escrow_details(&commitment, &owner).unwrap();
+    assert_eq!(details.amount, Some(amount));
+    assert_eq!(details.owner, Some(owner));
+}
+
 // ============================================================================
 // Timeout & Refund Tests
 // ============================================================================

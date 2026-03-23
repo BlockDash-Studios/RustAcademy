@@ -12,6 +12,7 @@
 //! | [`EscrowCounter`](DataKey::EscrowCounter) | `u64`       | Global monotonic counter for escrow creation. |
 //! | [`Admin`](DataKey::Admin) | `Address`     | Contract admin address. Set during initialisation, transferable by admin. |
 //! | [`Paused`](DataKey::Paused) | `bool`       | Global pause flag. When true, critical operations may be blocked. |
+//! | [`Version`](DataKey::Version) | `u32`       | Contract version number. Defaults to 1. |
 //! | [`PrivacyLevel`](DataKey::PrivacyLevel) | `u32`  | Numeric privacy level per account (0 = off). Used by `enable_privacy`. |
 //! | [`PrivacyHistory`](DataKey::PrivacyHistory) | `Vec<u32>` | Per-account history of privacy level changes (chronological). |
 //!
@@ -71,6 +72,8 @@ pub enum DataKey {
     Admin,
     /// Paused state (singleton).
     Paused,
+    /// Contract version number (singleton).
+    Version,
     /// Numeric privacy level per account.
     PrivacyLevel(Address),
     /// Privacy level change history per account.
@@ -151,10 +154,23 @@ pub fn set_paused(env: &Env, paused: bool) {
 }
 
 /// Get paused state.
-#[allow(dead_code)]
 pub fn is_paused(env: &Env) -> bool {
     let key = DataKey::Paused;
     env.storage().persistent().get(&key).unwrap_or(false)
+}
+
+/// Get contract version.
+///
+/// **Contract**: Defaults to 1 if never set (assumed version for initial deployment).
+pub fn get_version(env: &Env) -> u32 {
+    let key = DataKey::Version;
+    env.storage().persistent().get(&key).unwrap_or(1)
+}
+
+/// Set contract version.
+pub fn set_version(env: &Env, version: u32) {
+    let key = DataKey::Version;
+    env.storage().persistent().set(&key, &version);
 }
 
 // -----------------------------------------------------------------------------
