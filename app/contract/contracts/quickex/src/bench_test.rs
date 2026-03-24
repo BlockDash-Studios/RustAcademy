@@ -198,9 +198,12 @@ fn bench_get_privacy() {
 fn bench_get_privacy_baseline_tuple() {
     let (env, client) = setup();
     let owner = Address::generate(&env);
-    
+
     env.as_contract(&client.address, || {
-        let key = (soroban_sdk::Symbol::new(&env, "privacy_enabled"), owner.clone());
+        let key = (
+            soroban_sdk::Symbol::new(&env, "privacy_enabled"),
+            owner.clone(),
+        );
         env.storage().persistent().set(&key, &true);
 
         env.cost_estimate().budget().reset_default();
@@ -214,7 +217,7 @@ fn bench_get_privacy_baseline_tuple() {
 fn bench_get_privacy_datakey() {
     let (env, client) = setup();
     let owner = Address::generate(&env);
-    
+
     env.as_contract(&client.address, || {
         let key = crate::storage::DataKey::PrivacyLevel(owner.clone());
         env.storage().persistent().set(&key, &true);
