@@ -1,7 +1,13 @@
 use crate::errors::QuickexError;
 use crate::events::publish_privacy_toggled;
-use crate::storage::PRIVACY_ENABLED_KEY;
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{xdr::ToXdr, Address, BytesN, Env};
+
+/// Get the storage key for an account's privacy flag.
+///
+/// Uses SHA256 for optimal balance of security and gas efficiency.
+fn get_privacy_key(env: &Env, owner: &Address) -> BytesN<32> {
+    env.crypto().sha256(&owner.to_xdr(env)).into()
+}
 
 /// Enable or disable privacy for an account.
 ///
@@ -11,13 +17,7 @@ use soroban_sdk::{Address, Env, Symbol};
 pub fn set_privacy(env: &Env, owner: Address, enabled: bool) -> Result<(), QuickexError> {
     owner.require_auth();
 
-    // non-optimized: key.clone() — Symbol cloned unnecessarily
-    // let key = Symbol::new(env, PRIVACY_ENABLED_KEY);
-    // let storage_key = (key.clone(), owner.clone());
-
-    // optimized: move key into tuple — no clone
-    let key = Symbol::new(env, PRIVACY_ENABLED_KEY);
-    let storage_key = (key, owner.clone());
+    let storage_key = get_privacy_key(env, &owner);
     let current: bool = env
         .storage()
         .persistent()
@@ -37,9 +37,9 @@ pub fn set_privacy(env: &Env, owner: Address, enabled: bool) -> Result<(), Quick
 ///
 /// Defaults to `false` if never set.
 pub fn get_privacy(env: &Env, owner: Address) -> bool {
-    let key = Symbol::new(env, PRIVACY_ENABLED_KEY);
+    let storage_key = get_privacy_key(env, &owner);
     env.storage()
         .persistent()
-        .get(&(key, owner))
+        .get(&storage_key)
         .unwrap_or(false)
 }

@@ -46,10 +46,6 @@ use crate::types::EscrowEntry;
 // Key constants (for keys not using DataKey)
 // -----------------------------------------------------------------------------
 
-/// Symbol string for the boolean privacy-enabled flag.
-/// Used as `(Symbol::new(env, PRIVACY_ENABLED_KEY), Address)` in persistent storage.
-/// See [`crate::privacy`] module.
-pub const PRIVACY_ENABLED_KEY: &str = "privacy_enabled";
 
 // -----------------------------------------------------------------------------
 // DataKey enum – central key derivation

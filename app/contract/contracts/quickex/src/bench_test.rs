@@ -180,19 +180,49 @@ fn bench_set_privacy() {
     print_budget(&env, "set_privacy");
 }
 
-/// Benchmark: get_privacy
-/// Medium frequency — read-only companion to set_privacy.
+/// Benchmark: get_privacy (current implementation - SHA256)
 #[test]
 fn bench_get_privacy() {
     let (env, client) = setup();
     let owner = Address::generate(&env);
-    // Set it first so the storage path is exercised (not just the default)
     client.set_privacy(&owner, &true);
 
     // --- Reset budget immediately before the hot path ---
     env.cost_estimate().budget().reset_default();
     let _ = client.get_privacy(&owner);
-    print_budget(&env, "get_privacy");
+    print_budget(&env, "get_privacy (SHA256 current)");
+}
+
+/// Benchmark: get_privacy_baseline_tuple
+#[test]
+fn bench_get_privacy_baseline_tuple() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    
+    env.as_contract(&client.address, || {
+        let key = (soroban_sdk::Symbol::new(&env, "privacy_enabled"), owner.clone());
+        env.storage().persistent().set(&key, &true);
+
+        env.cost_estimate().budget().reset_default();
+        let _: bool = env.storage().persistent().get(&key).unwrap_or(false);
+        print_budget(&env, "get_privacy (Baseline Tuple)");
+    });
+}
+
+/// Benchmark: get_privacy_datakey
+#[test]
+fn bench_get_privacy_datakey() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    
+    env.as_contract(&client.address, || {
+        let key = crate::storage::DataKey::PrivacyLevel(owner.clone());
+        env.storage().persistent().set(&key, &true);
+
+        env.cost_estimate().budget().reset_default();
+        let _: bool = env.storage().persistent().get(&key).unwrap_or(false);
+        print_budget(&env, "get_privacy (DataKey enum)");
+    });
 }
 
 /// Benchmark: verify_proof_view
