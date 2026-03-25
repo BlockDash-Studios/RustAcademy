@@ -1,4 +1,3 @@
-<<<<<<< migrationPath
 #![no_std]
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 
@@ -12,6 +11,9 @@ mod errors;
 mod escrow;
 mod events;
 mod privacy;
+mod stealth;
+#[cfg(test)]
+mod stealth_test;
 mod storage;
 #[cfg(test)]
 mod storage_test;
@@ -26,6 +28,7 @@ use types::{EscrowEntry, EscrowStatus, PrivacyAwareEscrowView};
 /// Current version of the contract code.
 /// Used during upgrades to detect and handle schema migrations.
 const CONTRACT_VERSION: u32 = 1;
+use types::{EscrowEntry, EscrowStatus, PrivacyAwareEscrowView, StealthDepositParams};
 
 /// QuickEx Privacy Contract
 ///
@@ -74,6 +77,10 @@ impl QuickexContract {
         salt: Bytes,
     ) -> Result<bool, QuickexError> {
         if is_feature_paused(&env, PauseFlag::Withdrawal) {
+        if admin::is_paused(&env) {
+            return Err(QuickexError::ContractPaused);
+        }
+        if storage::is_feature_paused(&env, storage::PauseFlag::Withdrawal as u64) {
             return Err(QuickexError::OperationPaused);
         }
         escrow::withdraw(&env, amount, to, salt)
@@ -129,6 +136,8 @@ impl QuickexContract {
     pub fn set_privacy(env: Env, owner: Address, enabled: bool) -> Result<(), QuickexError> {
         if is_feature_paused(&env, PauseFlag::SetPrivacy) {
             return Err(QuickexError::OperationPaused);
+        if admin::is_paused(&env) {
+            return Err(QuickexError::ContractPaused);
         }
         privacy::set_privacy(&env, owner, enabled)
     }
@@ -174,6 +183,15 @@ impl QuickexContract {
             return Err(QuickexError::OperationPaused);
         }
         escrow::deposit(&env, token, amount, owner, salt, timeout_secs)
+        arbiter: Option<Address>,
+    ) -> Result<BytesN<32>, QuickexError> {
+        if admin::is_paused(&env) {
+            return Err(QuickexError::ContractPaused);
+        }
+        if storage::is_feature_paused(&env, storage::PauseFlag::Deposit as u64) {
+            return Err(QuickexError::OperationPaused);
+        }
+        escrow::deposit(&env, token, amount, owner, salt, timeout_secs, arbiter)
     }
 
     /// Create a deterministic commitment hash for an amount (off-chain / pre-deposit use).
@@ -273,6 +291,23 @@ impl QuickexContract {
             return Err(QuickexError::OperationPaused);
         }
         escrow::deposit_with_commitment(&env, from, token, amount, commitment, timeout_secs)
+        arbiter: Option<Address>,
+    ) -> Result<(), QuickexError> {
+        if admin::is_paused(&env) {
+            return Err(QuickexError::ContractPaused);
+        }
+        if storage::is_feature_paused(&env, storage::PauseFlag::DepositWithCommitment as u64) {
+            return Err(QuickexError::OperationPaused);
+        }
+        escrow::deposit_with_commitment(
+            &env,
+            from,
+            token,
+            amount,
+            commitment,
+            timeout_secs,
+            arbiter,
+        )
     }
 
     /// Refund an expired escrow back to its original owner.
@@ -295,6 +330,9 @@ impl QuickexContract {
             return Err(QuickexError::OperationPaused);
         }
 
+        if storage::is_feature_paused(&env, storage::PauseFlag::Refund as u64) {
+            return Err(QuickexError::OperationPaused);
+        }
         escrow::refund(&env, commitment, caller)
     }
 
@@ -478,6 +516,9 @@ impl QuickexContract {
         let is_owner = caller == entry.owner;
 
         if privacy_on && !is_owner {
+        let is_arbiter = entry.arbiter.as_ref().is_some_and(|a| *a == caller);
+
+        if privacy_on && !is_owner && !is_arbiter {
             Some(PrivacyAwareEscrowView {
                 token: entry.token,
                 amount: None,
@@ -485,12 +526,14 @@ impl QuickexContract {
                 status: entry.status,
                 created_at: entry.created_at,
                 expires_at: entry.expires_at,
+                arbiter: None,
             })
         } else {
             Some(PrivacyAwareEscrowView {
                 token: entry.token,
                 amount: Some(entry.amount),
-                owner: Some(entry.owner),
+
+              owner: Some(entry.owner),
                 status: entry.status,
                 created_at: entry.created_at,
                 expires_at: entry.expires_at,
@@ -545,7 +588,6 @@ impl QuickexContract {
         Ok(())
     }
 }
-=======
 #![no_std]
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 
@@ -1097,6 +1139,133 @@ impl QuickexContract {
             })
         }
     }
+                owner: Some(entry.owner.clone()),
+                status: entry.status,
+                created_at: entry.created_at,
+                expires_at: entry.expires_at,
+                arbiter: entry.arbiter,
+            })
+        }
+    }
+    // -----------------------------------------------------------------------
+    // Dispute resolution (arbiter flow)
+    // -----------------------------------------------------------------------
+
+    /// Raise a dispute on a pending escrow.
+    ///
+    /// The escrow must have an arbiter assigned and be in `Pending` status.
+    /// Locks funds until the arbiter calls `resolve_dispute`.
+    pub fn dispute(env: Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
+        if admin::is_paused(&env) {
+            return Err(QuickexError::ContractPaused);
+        }
+        escrow::dispute(&env, commitment)
+    }
+
+    /// Resolve a disputed escrow.
+    ///
+    /// Only callable by the assigned arbiter. Pass `resolve_for_owner: true`
+    /// to refund the owner, or `false` to pay out to `recipient`.
+    pub fn resolve_dispute(
+        env: Env,
+        commitment: BytesN<32>,
+        resolve_for_owner: bool,
+        recipient: Address,
+    ) -> Result<(), QuickexError> {
+        if admin::is_paused(&env) {
+            return Err(QuickexError::ContractPaused);
+        }
+        escrow::resolve_dispute(&env, commitment, resolve_for_owner, recipient)
+    }
+
+    /// Pause specific operation flags (Admin only).
+    pub fn pause_features(env: Env, caller: Address, flags: u64) -> Result<(), QuickexError> {
+        admin::set_pause_flags(&env, &caller, flags, 0)
+    }
+
+    /// Unpause specific operation flags (Admin only).
+    pub fn unpause_features(env: Env, caller: Address, flags: u64) -> Result<(), QuickexError> {
+        admin::set_pause_flags(&env, &caller, 0, flags)
+    }
+
+    // -----------------------------------------------------------------------
+    // Stealth Address – Privacy v2 (Issue #157)
+    // -----------------------------------------------------------------------
+
+    /// Register an ephemeral public key and lock funds for a stealth recipient.
+    ///
+    /// The sender computes a one-time `stealth_address` off-chain via:
+    /// ```text
+    /// shared_secret   = SHA-256(eph_pub || spend_pub)
+    /// stealth_address = SHA-256(spend_pub || shared_secret)
+    /// ```
+    /// The contract re-derives and verifies the stealth address on-chain, then
+    /// locks `amount` of `token` under it.  The recipient's main address is
+    /// never recorded on-chain.
+    ///
+    /// All deposit parameters are bundled in [`StealthDepositParams`] to keep
+    /// the argument count within clippy's limit.
+    ///
+    /// # Errors
+    /// * `InvalidAmount`            – amount ≤ 0.
+    /// * `ContractPaused`           – contract is paused.
+    /// * `StealthAddressMismatch`   – on-chain re-derivation does not match.
+    /// * `StealthAddressAlreadyUsed`– stealth address already has a deposit.
+    pub fn register_ephemeral_key(
+        env: Env,
+        params: StealthDepositParams,
+    ) -> Result<BytesN<32>, QuickexError> {
+        if admin::is_paused(&env) {
+            return Err(QuickexError::ContractPaused);
+        }
+        stealth::register_ephemeral_key(&env, params)
+    }
+
+    /// Withdraw funds locked under a stealth address.
+    ///
+    /// The caller proves ownership by supplying the matching `spend_pub` and
+    /// `eph_pub`.  The contract re-derives the stealth address; if it matches,
+    /// funds are transferred to `recipient`.
+    ///
+    /// The `recipient` address is only revealed at withdrawal time and is not
+    /// linked to any prior on-chain activity.
+    ///
+    /// # Arguments
+    /// * `recipient`       – Address to receive the funds (must authorize).
+    /// * `eph_pub`         – Ephemeral public key from the registration event.
+    /// * `spend_pub`       – Recipient's spend public key (32 bytes).
+    /// * `stealth_address` – The one-time stealth address to withdraw from.
+    ///
+    /// # Errors
+    /// * `StealthEscrowNotFound`  – no escrow for this stealth address.
+    /// * `AlreadySpent`           – already withdrawn or refunded.
+    /// * `EscrowExpired`          – escrow has passed its expiry.
+    /// * `StealthAddressMismatch` – re-derived address does not match.
+    /// * `ContractPaused`         – contract is paused.
+    pub fn stealth_withdraw(
+        env: Env,
+        recipient: Address,
+        eph_pub: BytesN<32>,
+        spend_pub: BytesN<32>,
+        stealth_address: BytesN<32>,
+    ) -> Result<bool, QuickexError> {
+        if admin::is_paused(&env) {
+            return Err(QuickexError::ContractPaused);
+        }
+        stealth::stealth_withdraw(&env, recipient, eph_pub, spend_pub, stealth_address)
+    }
+
+    /// Get the status of a stealth escrow (read-only).
+    ///
+    /// Returns `Pending`, `Spent`, or `Refunded` if an escrow exists; `None` otherwise.
+    /// Does not reveal amount, token, or any key material.
+    ///
+    /// # Arguments
+    /// * `stealth_address` – The 32-byte one-time stealth address.
+    pub fn get_stealth_status(env: Env, stealth_address: BytesN<32>) -> Option<EscrowStatus> {
+        stealth::get_stealth_status(&env, &stealth_address)
+    }
+
     /// Upgrade the contract to a new WASM implementation (**Admin only**).
     ///
     /// Caller must equal admin and authorize. The new WASM must be pre-uploaded to the network.
@@ -1132,4 +1301,3 @@ impl QuickexContract {
         Ok(())
     }
 }
->>>>>>> main
