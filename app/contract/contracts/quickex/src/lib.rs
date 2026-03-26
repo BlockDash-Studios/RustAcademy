@@ -10,6 +10,9 @@ mod commitment_test;
 mod errors;
 mod escrow;
 mod events;
+mod fee;
+#[cfg(test)]
+mod fee_test;
 mod privacy;
 mod stealth;
 #[cfg(test)]
@@ -23,7 +26,7 @@ mod types;
 
 use errors::QuickexError;
 use storage::*;
-use types::{EscrowEntry, EscrowStatus, PrivacyAwareEscrowView, StealthDepositParams};
+use types::{EscrowEntry, EscrowStatus, FeeConfig, PrivacyAwareEscrowView, StealthDepositParams};
 
 /// Current version of the contract code.
 /// Used during upgrades to detect and handle schema migrations.
@@ -478,6 +481,32 @@ impl QuickexContract {
     /// Get the current contract version stored in state.
     pub fn version(env: Env) -> u32 {
         get_version(&env)
+    /// Get the current fee configuration (read-only).
+    pub fn get_fee_config(env: Env) -> FeeConfig {
+        storage::get_fee_config(&env)
+    }
+
+    /// Set the fee configuration (**Admin only**).
+    pub fn set_fee_config(
+        env: Env,
+        caller: Address,
+        config: FeeConfig,
+    ) -> Result<(), QuickexError> {
+        admin::set_fee_config(&env, &caller, config)
+    }
+
+    /// Get the platform wallet address (read-only).
+    pub fn get_platform_wallet(env: Env) -> Option<Address> {
+        storage::get_platform_wallet(&env)
+    }
+
+    /// Set the platform wallet address (**Admin only**).
+    pub fn set_platform_wallet(
+        env: Env,
+        caller: Address,
+        wallet: Address,
+    ) -> Result<(), QuickexError> {
+        admin::set_platform_wallet(&env, &caller, wallet)
     }
 
     /// Get the status of an escrow by its commitment hash (read-only).

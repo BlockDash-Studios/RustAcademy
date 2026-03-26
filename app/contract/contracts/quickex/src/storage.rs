@@ -43,7 +43,7 @@
 
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec};
 
-use crate::types::{EscrowEntry, StealthEscrowEntry};
+use crate::types::{EscrowEntry, FeeConfig, StealthEscrowEntry};
 
 // -----------------------------------------------------------------------------
 // Key constants (for keys not using DataKey)
@@ -84,6 +84,12 @@ pub enum DataKey {
     Version,
     /// Stealth escrow entry keyed by the 32-byte stealth address (Privacy v2).
     StealthEscrow(BytesN<32>),
+    /// Granular operation pause bitmask (singleton).
+    PauseFlags,
+    /// Fee configuration (singleton).
+    FeeConfig,
+    /// Platform wallet address for fee collection (singleton).
+    PlatformWallet,
 }
 
 // -----------------------------------------------------------------------------
@@ -274,5 +280,38 @@ pub fn put_stealth_escrow(env: &Env, stealth_address: &BytesN<32>, entry: &Steal
 /// Get a stealth escrow entry from storage.
 pub fn get_stealth_escrow(env: &Env, stealth_address: &BytesN<32>) -> Option<StealthEscrowEntry> {
     let key = DataKey::StealthEscrow(stealth_address.clone());
+    env.storage().persistent().get(&key)
+}
+
+// -----------------------------------------------------------------------------
+// Fee helpers
+// -----------------------------------------------------------------------------
+
+/// Set fee configuration.
+pub fn set_fee_config(env: &Env, config: &FeeConfig) {
+    let key = DataKey::FeeConfig;
+    env.storage().persistent().set(&key, config);
+}
+
+/// Get fee configuration.
+///
+/// Returns 0 fee (0 bps) if not set.
+pub fn get_fee_config(env: &Env) -> FeeConfig {
+    let key = DataKey::FeeConfig;
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(FeeConfig { fee_bps: 0 })
+}
+
+/// Set platform wallet address.
+pub fn set_platform_wallet(env: &Env, wallet: &Address) {
+    let key = DataKey::PlatformWallet;
+    env.storage().persistent().set(&key, wallet);
+}
+
+/// Get platform wallet address.
+pub fn get_platform_wallet(env: &Env) -> Option<Address> {
+    let key = DataKey::PlatformWallet;
     env.storage().persistent().get(&key)
 }
