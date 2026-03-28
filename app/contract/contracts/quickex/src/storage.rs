@@ -51,14 +51,7 @@ use crate::types::{EscrowEntry, FeeConfig, StealthEscrowEntry};
 /// See [`crate::privacy`] module.
 pub const PRIVACY_ENABLED_KEY: &str = "privacy_enabled";
 
-/// Bitmask flags for granular operation pausing.
-#[allow(dead_code)]
-pub enum PauseFlag {
-    Deposit = 1,
-    Withdrawal = 2,
-    Refund = 4,
-    DepositWithCommitment = 8,
-}
+// NO_CONTENT (Removed redundant PauseFlag definition)
 
 // -----------------------------------------------------------------------------
 // DataKey enum – central key derivation
@@ -78,18 +71,20 @@ pub enum DataKey {
     EscrowCounter,
     /// Admin address (singleton).
     Admin,
-    /// Paused state (singleton).
+    /// Global paused state (singleton).
     Paused,
+    /// Granular operation pause bitmask (singleton).
+    PauseFlags,
     /// Numeric privacy level per account.
     PrivacyLevel(Address),
     /// Privacy level change history per account.
     PrivacyHistory(Address),
+    /// Stealth escrow entry keyed by the 32-byte stealth address (Privacy v2).
+    StealthEscrow(BytesN<32>),
 }
 
-/// Feature-specific pause flags for disabling particular operations.
-#[soroban_sdk::contracttype]
+/// Bitmask flags for granular operation pausing.
 #[repr(u64)]
-#[derive(Clone, Copy, PartialEq)]
 pub enum PauseFlag {
     Deposit = 1,
     DepositWithCommitment = 2,
@@ -180,22 +175,6 @@ pub fn set_paused(env: &Env, paused: bool) {
     env.storage().persistent().set(&key, &paused);
 }
 
-/// Set pause flags (granular pause control – caller already verified by admin module).
-#[allow(dead_code)]
-pub fn set_pause_flags(env: &Env, _caller: &Address, flags_to_enable: u64, flags_to_disable: u64) {
-    let key = DataKey::PauseFlags;
-    let current: u64 = env.storage().persistent().get(&key).unwrap_or(0);
-    let updated = (current | flags_to_enable) & !flags_to_disable;
-    env.storage().persistent().set(&key, &updated);
-}
-
-/// Check whether a specific operation flag is paused.
-pub fn is_feature_paused(env: &Env, flag: u64) -> bool {
-    let key = DataKey::PauseFlags;
-    let flags: u64 = env.storage().persistent().get(&key).unwrap_or(0);
-    flags & flag != 0
-}
-
 /// Get paused state.
 #[allow(dead_code)]
 pub fn is_paused(env: &Env) -> bool {
@@ -253,24 +232,30 @@ pub fn get_privacy_history(env: &Env, account: &Address) -> Vec<u32> {
 pub fn get_pause_mask(env: &Env) -> u64 {
     env.storage()
         .persistent()
-        .get(&DataKey::Pause)
+        .get(&DataKey::PauseFlags)
         .unwrap_or(0u64)
 }
 
 /// Check if a specific feature is currently paused.
-pub fn is_feature_paused(env: &Env, flag: PauseFlag) -> bool {
+pub fn is_feature_paused(env: &Env, flag: u64) -> bool {
     let mask = get_pause_mask(env);
-    (mask & flag as u64) != 0
+    (mask & flag) != 0
 }
 
 /// Enable or disable specific feature-pause flags (**Admin-only logic**).
 ///
 /// **Contract**: `flags_to_enable` are OR-ed into the mask, `flags_to_disable` are AND-NOT-ed.
-pub fn set_pause_flags(env: &Env, _caller: &Address, flags_to_enable: u64, flags_to_disable: u64) {
+pub fn set_pause_flags(
+    env: &Env,
+    _caller: &Address,
+    flags_to_enable: u64,
+    flags_to_disable: u64,
+) {
     let mut mask = get_pause_mask(env);
     mask |= flags_to_enable;
     mask &= !flags_to_disable;
-    env.storage().persistent().set(&DataKey::Pause, &mask);
+    env.storage().persistent().set(&DataKey::PauseFlags, &mask);
+}
 // Stealth escrow helpers (Privacy v2 – Issue #157)
 // -----------------------------------------------------------------------------
 
