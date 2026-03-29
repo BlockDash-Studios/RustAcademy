@@ -53,7 +53,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
     if (exception instanceof ThrottlerException) {
       status = HttpStatus.TOO_MANY_REQUESTS;
       code = "RATE_LIMIT_EXCEEDED";
-      message = "Too many requests. Please try again later.";
+      message = "Too many requests. Please try again later";
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const res = exception.getResponse() as HttpExceptionResponse;
@@ -65,7 +65,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
         if ("fields" in res) {
           const validation = res as ValidationExceptionPayload;
 
-          return response.status(status).json({
+          response.status(status).json({
             success: false,
             error: {
               code: "VALIDATION_ERROR",
@@ -73,6 +73,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
               fields: validation.fields ?? [],
             },
           });
+          return; // ✅ IMPORTANT FIX
         }
 
         // ✅ BUSINESS ERRORS
@@ -98,6 +99,6 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
       },
     };
 
-    response.status(status).json(body);
+    response.status(status).json(body); // ✅ no return
   }
 }
