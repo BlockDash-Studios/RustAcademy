@@ -1,0 +1,58 @@
+{
+  "$schema": "https://k6.io/schema.json",
+  "options": {
+    "load": {
+      "executor": "constant-vus",
+      "vus": 100,
+      "duration": "2m",
+      "tags": {
+        "type": "load"
+      }
+    },
+    "thresholds": {
+      "links_latency": [
+        "p(95)<100",
+        "p(99)<200"
+      ],
+      "transactions_latency": [
+        "p(95)<100",
+        "p(99)<200"
+      ],
+      "http_req_duration": [
+        "p(95)<100"
+      ],
+      "errors": [
+        "rate<0.01"
+      ]
+    },
+    "summaryTrendStats": [
+      "avg",
+      "min",
+      "med",
+      "max",
+      "p(90)",
+      "p(95)",
+      "p(99)"
+    ]
+  },
+  "scenarios": {
+    "warmup": {
+      "executor": "ramping-vus",
+      "startVUs": 0,
+      "stages": [
+        { "duration": "30s", "target": 20 }
+      ]
+    },
+    "load_test": {
+      "executor": "constant-vus",
+      "vus": 100,
+      "duration": "2m"
+    },
+    "stress": {
+      "executor": "ramping-vus",
+      "stages": [
+        { "duration": "1m", "target": 150 }
+      ]
+    }
+  }
+}

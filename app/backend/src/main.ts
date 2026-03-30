@@ -8,6 +8,7 @@ import { BadRequestException, Logger, ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core"; //installed
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
+import compression from "compression";
 
 import { WinstonModule } from "nest-winston";
 import { winstonConfig } from "./common/logging/winston.config";
@@ -31,6 +32,9 @@ async function bootstrap() {
 
   // Use Helmet for security headers
   app.use(helmet());
+
+  // Enable response compression for better performance
+  app.use(compression());
 
   // In development allow all origins to make it easy to test from Expo web or devices on LAN.
   // In production keep the stricter origin whitelist to avoid accidental exposure.

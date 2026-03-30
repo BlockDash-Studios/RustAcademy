@@ -1,0 +1,221 @@
+name: Backend Load Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of load test to run'
+        required: true
+        default: 'load'
+        type: choice
+        options:
+          - load
+          - stress
+          - spike
+      duration:
+        description: 'Test duration in minutes'
+        required: false
+        default: '5'
+        type: string
+      target_vus:
+        description: 'Target virtual users'
+        required: false
+        default: '100'
+        type: string
+
+jobs:
+  load-test:
+    name: Performance Load Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build application
+        run: pnpm run build
+
+      - name: Start backend server
+        run: |
+          # Start the server in background
+          node dist/main.js &
+          SERVER_PID=$!
+          echo "Server PID: $SERVER_PID"
+          echo $SERVER_PID > /tmp/server.pid
+          
+          # Wait for server to be ready
+          echo "Waiting for server to be ready..."
+          for i in {1..30}; do
+            if curl -s http://localhost:4000/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              break
+            fi
+            echo "Attempt $i/30..."
+            sleep 2
+          done
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D1571FE70F7FAE9BB98D
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run load test
+        run: |
+          # Create k6 configuration based on input parameters
+          TARGET_VUS=${{ github.event.inputs.target_vus || '100' }}
+          DURATION=${{ github.event.inputs.duration || '5' }}m
+          
+          cat > load-tests/k6-test-runner.js << 'EOF'
+          import http from 'k6/http';
+          import { check, sleep } from 'k6';
+          import { Rate, Trend } from 'k6/metrics';
+
+          // Custom metrics
+          const errorRate = new Rate('errors');
+          const linksLatency = new Trend('links_latency');
+          const transactionsLatency = new Trend('transactions_latency');
+
+          const BASE_URL = __ENV.BASE_URL || 'http://localhost:4000';
+          const VUS = parseInt(__ENV.VUS || '100');
+          const DURATION = __ENV.DURATION || '2m';
+
+          export const options = {
+            scenarios: {
+              load_test: {
+                executor: 'constant-vus',
+                duration: DURATION,
+                vus: VUS,
+              },
+            },
+            thresholds: {
+              'links_latency': ['p(95)<100', 'p(99)<200'],
+              'transactions_latency': ['p(95)<100', 'p(99)<200'],
+              'http_req_duration': ['p(95)<100'],
+              'errors': ['rate<0.01'],
+            },
+          };
+
+          const linksPayload = JSON.stringify({
+            amount: 10.5,
+            asset: 'XLM',
+            memo: 'load-test-memo',
+            expirationDays: 7,
+          });
+
+          export default function() {
+            // Test links endpoint
+            const linksStart = Date.now();
+            const linksRes = http.post(`${BASE_URL}/links/metadata`, linksPayload, {
+              headers: { 'Content-Type': 'application/json', 'X-API-Key': 'test-api-key' },
+              tags: { name: 'links_metadata' },
+            });
+            linksLatency.add(Date.now() - linksStart);
+
+            const linksSuccess = check(linksRes, {
+              'links status is 200': (r) => r.status === 200 || r.status === 201,
+            });
+            errorRate.add(!linksSuccess);
+
+            // Test transactions endpoint
+            const txStart = Date.now();
+            const txRes = http.get(`${BASE_URL}/transactions?limit=20`, {
+              headers: { 'X-API-Key': 'test-api-key' },
+              tags: { name: 'transactions' },
+            });
+            transactionsLatency.add(Date.now() - txStart);
+
+            const txSuccess = check(txRes, {
+              'transactions status is 200 or 401': (r) => r.status === 200 || r.status === 401,
+            });
+            errorRate.add(!txSuccess && txRes.status !== 401);
+
+            // Test health endpoint
+            http.get(`${BASE_URL}/health`, { tags: { name: 'health' } });
+
+            sleep(0.1);
+          }
+
+          export function handleSummary(data) {
+            return {
+              'stdout': textSummary(data),
+              'load-test-results.json': JSON.stringify(data, null, 2),
+            };
+          }
+
+          function textSummary(data) {
+            const lines = [];
+            lines.push('');
+            lines.push('Load Test Results Summary');
+            lines.push('='.repeat(50));
+            lines.push('');
+            lines.push(`Total Requests: ${data.metrics.http_reqs.values.count}`);
+            lines.push(`Request Rate: ${data.metrics.http_reqs.values.rate.toFixed(2)} req/s`);
+            lines.push('');
+            lines.push('Response Times (ms):');
+            lines.push(`  Average: ${data.metrics.http_req_duration.values.avg.toFixed(2)}`);
+            lines.push(`  P95: ${data.metrics.http_req_duration.values['p(95)'].toFixed(2)}`);
+            lines.push(`  P99: ${data.metrics.http_req_duration.values['p(99)'].toFixed(2)}`);
+            lines.push('');
+            lines.push('Links Endpoint P95: ' + data.metrics.links_latency.values['p(95)'].toFixed(2) + ' ms');
+            lines.push('Transactions Endpoint P95: ' + data.metrics.transactions_latency.values['p(95)'].toFixed(2) + ' ms');
+            lines.push('');
+            
+            const linksP95 = data.metrics.links_latency.values['p(95)'];
+            const txP95 = data.metrics.transactions_latency.values['p(95)'];
+            const passed = linksP95 < 100 && txP95 < 100;
+            
+            lines.push(passed ? '✓ PASSED: <100ms requirement met' : '✗ FAILED: <100ms requirement not met');
+            lines.push('');
+            
+            return lines.join('\n');
+          }
+          EOF
+
+          k6 run load-tests/k6-test-runner.js \
+            --env BASE_URL=http://localhost:4000 \
+            --env VUS=$TARGET_VUS \
+            --env DURATION=$DURATION \
+            --summary-export=load-test-results.json
+
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results-${{ github.run_number }}
+          path: |
+            app/backend/load-test-results.json
+            app/backend/load-tests/load-test-results.json
+          retention-days: 30
+
+      - name: Check test results
+        run: |
+          if [ -f load-test-results.json ]; then
+            echo "Load test results:"
+            cat load-test-results.json
+          fi
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f /tmp/server.pid ]; then
+            kill $(cat /tmp/server.pid) 2>/dev/null || true
+          fi
