@@ -1,10 +1,18 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from "@nestjs/common";
 
-import { HorizonService } from './horizon.service';
-import { LinkService } from './link.service';
+import { TransactionsModule } from "../transactions/transactions.module";
+import { AssetMetadataModule } from "../asset-metadata/asset-metadata.module";
+import { HorizonService } from "./horizon.service";
+import { LinkService } from "./link.service";
+import { PathPreviewService } from "./path-preview.service";
+import { StellarController } from "./stellar.controller";
+import { ApiKeysModule } from "../api-keys/api-keys.module";
+import { ApiKeyGuard } from "../auth/guards/api-key.guard";
 
 @Module({
-  providers: [LinkService, HorizonService],
-  exports: [LinkService, HorizonService],
+  imports: [TransactionsModule, ApiKeysModule, forwardRef(() => AssetMetadataModule)],
+  controllers: [StellarController],
+  providers: [LinkService, HorizonService, PathPreviewService, ApiKeyGuard],
+  exports: [LinkService, HorizonService, PathPreviewService],
 })
 export class StellarModule {}

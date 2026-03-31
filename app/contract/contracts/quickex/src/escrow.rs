@@ -11,6 +11,16 @@
 //! Disputed --> Refunded: resolve_dispute() [arbiter decides for owner]
 //! ```
 //!
+//! ## Asset Type Handling
+//!
+//! This module supports both Native XLM and Stellar Asset Contract (SAC) tokens:
+//! - **Native XLM**: Uses the native lumens asset. The token address will be the stellar
+//!   network's native asset identifier.
+//! - **SAC Tokens**: Uses wrapped tokens via Stellar Asset Contracts (e.g., USDC, custom tokens).
+//!
+//! The contract uses the standardized `soroban_sdk::token::Client` which works uniformly across
+//! both asset types. No special wrap/unwrap logic is needed as Soroban handles this transparently.
+//!
 //! Guard rails:
 //! - `withdraw` fails with [`EscrowExpired`] if `expires_at > 0` and `now >= expires_at`.
 //! - `withdraw` fails with [`AlreadySpent`] if status is not `Pending`.
@@ -26,8 +36,8 @@ use soroban_sdk::{token, Address, Bytes, BytesN, Env};
 use crate::{
     commitment,
     errors::QuickexError,
-    events,
-    storage::{get_escrow, has_escrow, put_escrow},
+    events, fee,
+    storage::{get_escrow, get_platform_wallet, has_escrow, put_escrow},
     types::{EscrowEntry, EscrowStatus},
 };
 
@@ -199,8 +209,8 @@ pub fn deposit_with_commitment(
     events::publish_escrow_deposited(
         env,
         commitment,
-        token_client.address,
         from_ref,
+        token_client.address,
         amount,
         expires_at,
     );
@@ -268,10 +278,23 @@ pub fn withdraw(env: &Env, amount: i128, to: Address, salt: Bytes) -> Result<boo
     updated.status = EscrowStatus::Spent;
     put_escrow(env, &commitment_bytes, &updated);
 
-    let token_client = token::Client::new(env, &token_ref);
-    token_client.transfer(&env.current_contract_address(), &to, &amount);
+    let fee_amount = fee::calculate_fee(env, amount);
+    let payout_amount = amount.saturating_sub(fee_amount);
 
-    events::publish_escrow_withdrawn(env, commitment, to, token_ref, amount);
+    let token_client = token::Client::new(env, &token_ref);
+    token_client.transfer(&env.current_contract_address(), &to, &payout_amount);
+
+    if fee_amount > 0 {
+        if let Some(platform_wallet) = get_platform_wallet(env) {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &platform_wallet,
+                &fee_amount,
+            );
+        }
+    }
+
+    events::publish_escrow_withdrawn(env, commitment, to, token_ref, amount, fee_amount);
 
     Ok(true)
 }
@@ -413,12 +436,29 @@ pub fn resolve_dispute(
     updated.status = final_status;
     put_escrow(env, &commitment_bytes, &updated);
 
+    let (payout_amount, fee_amount) = if final_status == EscrowStatus::Spent {
+        let fee = fee::calculate_fee(env, entry.amount);
+        (entry.amount.saturating_sub(fee), fee)
+    } else {
+        (entry.amount, 0)
+    };
+
     let token_client = token::Client::new(env, &entry.token);
     token_client.transfer(
         &env.current_contract_address(),
         &recipient_address,
-        &entry.amount,
+        &payout_amount,
     );
+
+    if fee_amount > 0 {
+        if let Some(platform_wallet) = get_platform_wallet(env) {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &platform_wallet,
+                &fee_amount,
+            );
+        }
+    }
 
     if resolve_for_owner {
         events::publish_escrow_refunded(env, entry.owner, commitment, entry.token, entry.amount);
@@ -429,6 +469,7 @@ pub fn resolve_dispute(
             recipient_address,
             entry.token,
             entry.amount,
+            fee_amount,
         );
     }
 

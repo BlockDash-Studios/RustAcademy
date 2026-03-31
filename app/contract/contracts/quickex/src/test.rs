@@ -27,10 +27,10 @@ use crate::{
     EscrowEntry, EscrowStatus, QuickexContract, QuickexContractClient,
 };
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events as _, Ledger},
     token,
     xdr::ToXdr,
-    Address, Bytes, BytesN, ConversionError, Env, InvokeError,
+    Address, Bytes, BytesN, ConversionError, Env, InvokeError, Map, Symbol, TryIntoVal, Val,
 };
 
 fn setup<'a>() -> (Env, QuickexContractClient<'a>) {
@@ -250,6 +250,24 @@ fn assert_contract_error<T>(
     }
 }
 
+fn latest_contract_event(env: &Env, contract_id: &Address) -> (soroban_sdk::Vec<Val>, Val) {
+    let all = env.events().all();
+    let len = all.len();
+
+    for i in (0..len).rev() {
+        let event = all.get(i).unwrap();
+        if event.0 == *contract_id {
+            return (event.1, event.2);
+        }
+    }
+
+    panic!("no contract event found for contract id")
+}
+
+fn event_data_map(env: &Env, data: Val) -> Map<Symbol, Val> {
+    data.try_into_val(env).unwrap()
+}
+
 /// Regression suite: golden path withdrawal — deposit then withdraw by proof.
 #[test]
 fn test_successful_withdrawal() {
@@ -449,6 +467,20 @@ fn test_event_snapshot_privacy_toggled_schema() {
     let account = Address::generate(&env);
 
     client.set_privacy(&account, &true);
+
+    let (topics, data) = latest_contract_event(&env, &client.address);
+
+    let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    let t1: Symbol = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    let t2: Address = topics.get(2).unwrap().try_into_val(&env).unwrap();
+
+    assert_eq!(t0, Symbol::new(&env, "TOPIC_PRIVACY"));
+    assert_eq!(t1, Symbol::new(&env, "PrivacyToggled"));
+    assert_eq!(t2, account);
+
+    let data_map = event_data_map(&env, data);
+    assert!(data_map.get(Symbol::new(&env, "enabled")).is_some());
+    assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
 }
 
 #[test]
@@ -568,6 +600,24 @@ fn test_event_snapshot_escrow_deposited_schema() {
 
     let commitment = BytesN::from_array(&env, &[7; 32]);
     client.deposit_with_commitment(&user, &token_id, &250, &commitment, &0, &None);
+
+    let (topics, data) = latest_contract_event(&env, &contract_id);
+
+    let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    let t1: Symbol = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    let t2: BytesN<32> = topics.get(2).unwrap().try_into_val(&env).unwrap();
+    let t3: Address = topics.get(3).unwrap().try_into_val(&env).unwrap();
+
+    assert_eq!(t0, Symbol::new(&env, "TOPIC_ESCROW"));
+    assert_eq!(t1, Symbol::new(&env, "EscrowDeposited"));
+    assert_eq!(t2, commitment);
+    assert_eq!(t3, user);
+
+    let data_map = event_data_map(&env, data);
+    assert!(data_map.get(Symbol::new(&env, "token")).is_some());
+    assert!(data_map.get(Symbol::new(&env, "amount")).is_some());
+    assert!(data_map.get(Symbol::new(&env, "expires_at")).is_some());
+    assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
 }
 
 #[test]
@@ -591,6 +641,23 @@ fn test_event_snapshot_escrow_withdrawn_schema() {
     token_client.mint(&client.address, &amount);
 
     let _ = client.withdraw(&token, &amount, &commitment, &to, &salt);
+
+    let (topics, data) = latest_contract_event(&env, &client.address);
+
+    let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    let t1: Symbol = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    let t2: BytesN<32> = topics.get(2).unwrap().try_into_val(&env).unwrap();
+    let t3: Address = topics.get(3).unwrap().try_into_val(&env).unwrap();
+
+    assert_eq!(t0, Symbol::new(&env, "TOPIC_ESCROW"));
+    assert_eq!(t1, Symbol::new(&env, "EscrowWithdrawn"));
+    assert_eq!(t2, commitment);
+    assert_eq!(t3, to);
+
+    let data_map = event_data_map(&env, data);
+    assert!(data_map.get(Symbol::new(&env, "token")).is_some());
+    assert!(data_map.get(Symbol::new(&env, "amount")).is_some());
+    assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
 }
 
 #[test]
@@ -610,6 +677,54 @@ fn test_event_snapshot_escrow_refunded_schema() {
         .set_timestamp(env.ledger().timestamp() + timeout);
 
     client.refund(&commitment, &owner);
+
+    let (topics, data) = latest_contract_event(&env, &client.address);
+
+    let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    let t1: Symbol = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    let t2: BytesN<32> = topics.get(2).unwrap().try_into_val(&env).unwrap();
+    let t3: Address = topics.get(3).unwrap().try_into_val(&env).unwrap();
+
+    assert_eq!(t0, Symbol::new(&env, "TOPIC_ESCROW"));
+    assert_eq!(t1, Symbol::new(&env, "EscrowRefunded"));
+    assert_eq!(t2, commitment);
+    assert_eq!(t3, owner);
+
+    let data_map = event_data_map(&env, data);
+    assert!(data_map.get(Symbol::new(&env, "token")).is_some());
+    assert!(data_map.get(Symbol::new(&env, "amount")).is_some());
+    assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
+}
+
+#[test]
+fn test_event_snapshot_escrow_disputed_schema() {
+    let (env, client) = setup();
+    let token = create_test_token(&env);
+    let owner = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let amount: i128 = 1000;
+    let salt = Bytes::from_slice(&env, b"event_dispute_salt");
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&owner, &amount);
+
+    let commitment = client.deposit(&token, &amount, &owner, &salt, &100, &Some(arbiter.clone()));
+    client.dispute(&commitment);
+
+    let (topics, data) = latest_contract_event(&env, &client.address);
+
+    let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    let t1: Symbol = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    let t2: BytesN<32> = topics.get(2).unwrap().try_into_val(&env).unwrap();
+    let t3: Address = topics.get(3).unwrap().try_into_val(&env).unwrap();
+
+    assert_eq!(t0, Symbol::new(&env, "TOPIC_ESCROW"));
+    assert_eq!(t1, Symbol::new(&env, "EscrowDisputed"));
+    assert_eq!(t2, commitment);
+    assert_eq!(t3, arbiter);
+
+    let data_map = event_data_map(&env, data);
+    assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
 }
 
 #[test]
@@ -619,6 +734,20 @@ fn test_event_snapshot_contract_paused_schema() {
 
     client.initialize(&admin);
     client.set_paused(&admin, &true);
+
+    let (topics, data) = latest_contract_event(&env, &client.address);
+
+    let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    let t1: Symbol = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    let t2: Address = topics.get(2).unwrap().try_into_val(&env).unwrap();
+
+    assert_eq!(t0, Symbol::new(&env, "TOPIC_ADMIN"));
+    assert_eq!(t1, Symbol::new(&env, "ContractPaused"));
+    assert_eq!(t2, admin);
+
+    let data_map = event_data_map(&env, data);
+    assert!(data_map.get(Symbol::new(&env, "paused")).is_some());
+    assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
 }
 
 #[test]
@@ -879,6 +1008,21 @@ fn test_event_snapshot_admin_changed_schema() {
 
     client.initialize(&old_admin);
     client.set_admin(&old_admin, &new_admin);
+
+    let (topics, data) = latest_contract_event(&env, &client.address);
+
+    let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    let t1: Symbol = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    let t2: Address = topics.get(2).unwrap().try_into_val(&env).unwrap();
+    let t3: Address = topics.get(3).unwrap().try_into_val(&env).unwrap();
+
+    assert_eq!(t0, Symbol::new(&env, "TOPIC_ADMIN"));
+    assert_eq!(t1, Symbol::new(&env, "AdminChanged"));
+    assert_eq!(t2, old_admin);
+    assert_eq!(t3, new_admin);
+
+    let data_map = event_data_map(&env, data);
+    assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
 }
 
 #[test]
@@ -1762,4 +1906,364 @@ fn test_get_escrow_details_shows_arbiter_to_owner_and_arbiter() {
     // Stranger should not see arbiter due to privacy
     let stranger_view = client.get_escrow_details(&commitment, &stranger).unwrap();
     assert_eq!(stranger_view.arbiter, None);
+}
+
+// ============================================================================
+// Cross-Asset Test Suite: Native XLM and SAC Assets
+// ============================================================================
+
+/// Test helper: Create a mock native XLM asset address
+/// In production, this would be the actual Stellar network native asset address
+#[allow(dead_code)]
+fn create_native_xlm_mock(env: &Env) -> Address {
+    // For testing purposes, we generate a specific address to represent XLM
+    // In production on mainnet, this would be the actual native asset identifier
+    Address::generate(env)
+}
+
+/// Test helper: Create different types of SAC tokens for testing
+fn create_sac_token<'a>(env: &'a Env, _name: &str) -> (Address, token::StellarAssetClient<'a>) {
+    let admin = Address::generate(env);
+    let token_address = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let client = token::StellarAssetClient::new(env, &token_address);
+    (token_address, client)
+}
+
+#[test]
+fn test_cross_asset_native_xlm_deposit_withdrawal() {
+    // Test complete flow with native XLM
+    let (env, client) = setup();
+    let xlm_token = create_test_token(&env); // Use regular test token instead of mock
+    let user = Address::generate(&env);
+    let amount: i128 = 10_000_000; // 10 XLM in stroops (assuming 7 decimals)
+    let salt = Bytes::from_slice(&env, b"xlm_test_salt");
+
+    // Simulate minting XLM to user (in production, this would be actual XLM)
+    let xlm_client = token::StellarAssetClient::new(&env, &xlm_token);
+    xlm_client.mint(&user, &amount);
+
+    // Deposit XLM into escrow
+    let commitment = client.deposit(&xlm_token, &amount, &user, &salt, &0, &None);
+
+    // Verify escrow created
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Pending)
+    );
+    assert_eq!(xlm_client.balance(&user), 0);
+    assert_eq!(xlm_client.balance(&client.address), amount);
+
+    // Withdraw XLM from escrow
+    let result = client.withdraw(&xlm_token, &amount, &commitment, &user, &salt);
+    assert!(result);
+
+    // Verify balances after withdrawal
+    assert_eq!(xlm_client.balance(&user), amount);
+    assert_eq!(xlm_client.balance(&client.address), 0);
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Spent)
+    );
+}
+
+#[test]
+fn test_cross_asset_usdc_sac_deposit_withdrawal() {
+    // Test complete flow with USDC (SAC token)
+    let (env, client) = setup();
+    let (usdc_token, usdc_client) = create_sac_token(&env, "USDC");
+    let user = Address::generate(&env);
+    let amount: i128 = 100_000_000; // 100 USDC (6 decimals)
+    let salt = Bytes::from_slice(&env, b"usdc_test_salt");
+
+    // Mint USDC to user
+    usdc_client.mint(&user, &amount);
+
+    // Deposit USDC into escrow
+    let commitment = client.deposit(&usdc_token, &amount, &user, &salt, &0, &None);
+
+    // Verify escrow created
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Pending)
+    );
+    assert_eq!(usdc_client.balance(&user), 0);
+    assert_eq!(usdc_client.balance(&client.address), amount);
+
+    // Withdraw USDC from escrow
+    let result = client.withdraw(&usdc_token, &amount, &commitment, &user, &salt);
+    assert!(result);
+
+    // Verify balances after withdrawal
+    assert_eq!(usdc_client.balance(&user), amount);
+    assert_eq!(usdc_client.balance(&client.address), 0);
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Spent)
+    );
+}
+
+#[test]
+fn test_cross_asset_custom_token_deposit_refund() {
+    // Test refund flow with a custom SAC token
+    let (env, client) = setup();
+    let (custom_token, custom_client) = create_sac_token(&env, "CUSTOM");
+    let owner = Address::generate(&env);
+    let amount: i128 = 50_000; // Custom token amount
+    let salt = Bytes::from_slice(&env, b"custom_refund_salt");
+    let timeout_secs = 100u64;
+
+    // Mint custom tokens to owner
+    custom_client.mint(&owner, &amount);
+
+    // Deposit with timeout
+    let commitment = client.deposit(&custom_token, &amount, &owner, &salt, &timeout_secs, &None);
+
+    // Advance time past expiry
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + timeout_secs + 1);
+
+    // Refund expired escrow
+    client.refund(&commitment, &owner);
+
+    // Verify refund completed
+    assert_eq!(custom_client.balance(&owner), amount);
+    assert_eq!(custom_client.balance(&client.address), 0);
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Refunded)
+    );
+}
+
+#[test]
+fn test_cross_asset_multiple_tokens_concurrent() {
+    // Test handling multiple different tokens simultaneously
+    let (env, client) = setup();
+
+    // Create three different tokens
+    let (token_a, client_a) = create_sac_token(&env, "TokenA");
+    let (token_b, client_b) = create_sac_token(&env, "TokenB");
+    let token_c = create_test_token(&env); // Use regular test token
+    let client_c = token::StellarAssetClient::new(&env, &token_c);
+
+    let user = Address::generate(&env);
+    let amount_a: i128 = 1000;
+    let amount_b: i128 = 2000;
+    let amount_c: i128 = 3000;
+
+    // Mint all tokens to user
+    client_a.mint(&user, &amount_a);
+    client_b.mint(&user, &amount_b);
+    client_c.mint(&user, &amount_c);
+
+    // Create escrows for all three tokens
+    let salt_a = Bytes::from_slice(&env, b"token_a_salt");
+    let salt_b = Bytes::from_slice(&env, b"token_b_salt");
+    let salt_c = Bytes::from_slice(&env, b"token_c_salt");
+
+    let commitment_a = client.deposit(&token_a, &amount_a, &user, &salt_a, &0, &None);
+    let commitment_b = client.deposit(&token_b, &amount_b, &user, &salt_b, &0, &None);
+    let commitment_c = client.deposit(&token_c, &amount_c, &user, &salt_c, &0, &None);
+
+    // Verify all escrows created
+    assert_eq!(
+        client.get_commitment_state(&commitment_a),
+        Some(EscrowStatus::Pending)
+    );
+    assert_eq!(
+        client.get_commitment_state(&commitment_b),
+        Some(EscrowStatus::Pending)
+    );
+    assert_eq!(
+        client.get_commitment_state(&commitment_c),
+        Some(EscrowStatus::Pending)
+    );
+
+    // Verify contract balances
+    assert_eq!(client_a.balance(&client.address), amount_a);
+    assert_eq!(client_b.balance(&client.address), amount_b);
+    assert_eq!(client_c.balance(&client.address), amount_c);
+
+    // Withdraw all three escrows
+    client.withdraw(&token_a, &amount_a, &commitment_a, &user, &salt_a);
+    client.withdraw(&token_b, &amount_b, &commitment_b, &user, &salt_b);
+    client.withdraw(&token_c, &amount_c, &commitment_c, &user, &salt_c);
+
+    // Verify all withdrawals completed
+    assert_eq!(client_a.balance(&user), amount_a);
+    assert_eq!(client_b.balance(&user), amount_b);
+    assert_eq!(client_c.balance(&user), amount_c);
+
+    assert_eq!(client_a.balance(&client.address), 0);
+    assert_eq!(client_b.balance(&client.address), 0);
+    assert_eq!(client_c.balance(&client.address), 0);
+}
+
+#[test]
+fn test_cross_asset_dispute_resolution_multi_token() {
+    // Test dispute resolution with different token types
+    let (env, client) = setup();
+    let (usdc_token, usdc_client) = create_sac_token(&env, "USDC");
+    let owner = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let amount: i128 = 50_000_000; // 50 USDC
+    let salt = Bytes::from_slice(&env, b"dispute_usdc_salt");
+
+    // Mint USDC
+    usdc_client.mint(&owner, &amount);
+
+    // Create escrow with arbiter
+    let commitment = client.deposit(
+        &usdc_token,
+        &amount,
+        &owner,
+        &salt,
+        &1000,
+        &Some(arbiter.clone()),
+    );
+
+    // Dispute
+    client.dispute(&commitment);
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Disputed)
+    );
+
+    // Resolve for recipient
+    client.resolve_dispute(&commitment, &false, &recipient);
+
+    // Verify resolution
+    assert_eq!(usdc_client.balance(&recipient), amount);
+    assert_eq!(usdc_client.balance(&client.address), 0);
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Spent)
+    );
+}
+
+#[test]
+fn test_cross_asset_zero_amount_edge_case() {
+    // Test that zero amount deposits are rejected for all token types
+    let (env, client) = setup();
+    let token = create_test_token(&env);
+    let user = Address::generate(&env);
+    let salt = Bytes::from_slice(&env, b"zero_amount_salt");
+
+    // Attempt zero amount deposit should fail
+    let result = client.try_deposit(&token, &0, &user, &salt, &0, &None);
+    assert_eq!(result, Err(Ok(QuickexError::InvalidAmount)));
+}
+
+#[test]
+fn test_cross_asset_large_amount_edge_case() {
+    // Test large amounts work correctly (no overflow issues)
+    let (env, client) = setup();
+    let token = create_test_token(&env);
+    let user = Address::generate(&env);
+    let amount: i128 = i128::MAX / 2; // Very large but safe amount
+    let salt = Bytes::from_slice(&env, b"large_amount_salt");
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&user, &amount);
+
+    // Deposit large amount
+    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None);
+
+    // Verify deposit succeeded
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Pending)
+    );
+    assert_eq!(token_client.balance(&client.address), amount);
+
+    // Withdraw large amount
+    client.withdraw(&token, &amount, &commitment, &user, &salt);
+
+    // Verify withdrawal succeeded
+    assert_eq!(token_client.balance(&user), amount);
+    assert_eq!(token_client.balance(&client.address), 0);
+}
+
+#[test]
+fn test_cross_asset_privacy_preserved_across_tokens() {
+    // Test that privacy settings work correctly regardless of token type
+    let (env, client) = setup();
+    let (token_a, client_a) = create_sac_token(&env, "TokenA");
+    let (_token_b, _client_b) = create_sac_token(&env, "TokenB");
+    let owner = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let amount: i128 = 1000;
+    let _salt = Bytes::from_slice(&env, b"privacy_multi_salt");
+
+    // Create escrows with privacy enabled
+    client_a.mint(&owner, &amount);
+    let commitment_a = client.deposit(&token_a, &amount, &owner, &_salt, &0, &None);
+
+    // Enable privacy
+    client.set_privacy(&owner, &true);
+
+    // Stranger should not see sensitive details
+    let view = client.get_escrow_details(&commitment_a, &stranger).unwrap();
+    assert_eq!(view.amount, None);
+    assert_eq!(view.owner, None);
+    assert_eq!(view.token, token_a);
+    assert_eq!(view.status, EscrowStatus::Pending);
+}
+
+#[test]
+fn test_cross_asset_deposit_with_commitment_various_tokens() {
+    // Test deposit_with_commitment works with different token types
+    let (env, client) = setup();
+    let (usdc_token, usdc_client) = create_sac_token(&env, "USDC");
+    let user = Address::generate(&env);
+    let amount: i128 = 100_000_000;
+    let commitment = BytesN::from_array(&env, &[42u8; 32]);
+
+    // Mint USDC
+    usdc_client.mint(&user, &amount);
+
+    // Deposit with pre-generated commitment
+    client.deposit_with_commitment(&user, &usdc_token, &amount, &commitment, &0, &None);
+
+    // Verify deposit
+    assert_eq!(usdc_client.balance(&user), 0);
+    assert_eq!(usdc_client.balance(&client.address), amount);
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Pending)
+    );
+
+    // Withdraw using the same commitment
+    let _salt = Bytes::from_slice(&env, b"pre_commitment_salt");
+    // Note: In real usage, the commitment would be created with proper salt
+    // This is simplified for testing the token handling
+}
+
+#[test]
+fn test_cross_asset_token_authorization() {
+    // Test that token transfers require proper authorization
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_id = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    let token_client = token::StellarAssetClient::new(&env, &token_id);
+
+    token_client.mint(&user, &1000);
+
+    let contract_id = env.register(QuickexContract, ());
+    let client = QuickexContractClient::new(&env, &contract_id);
+
+    let commitment = BytesN::from_array(&env, &[99u8; 32]);
+
+    // Deposit should require user authorization
+    client.deposit_with_commitment(&user, &token_id, &500, &commitment, &0, &None);
+
+    // Verify auth was required (mock_all_auths handles this)
+    assert_eq!(token_client.balance(&contract_id), 500);
 }

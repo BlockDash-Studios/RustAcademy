@@ -2,7 +2,7 @@
 // Channels
 // ---------------------------------------------------------------------------
 
-export type NotificationChannel = "email" | "push" | "webhook";
+export type NotificationChannel = "email" | "push" | "webhook" | "telegram";
 
 // ---------------------------------------------------------------------------
 // Notification domain events
@@ -14,7 +14,16 @@ export type NotificationEventType =
   | "EscrowWithdrawn"
   | "EscrowRefunded"
   | "payment.received"
-  | "username.claimed";
+  | "username.claimed"
+  | "recurring.payment.due"
+  | "recurring.payment.executed"
+  | "recurring.payment.failed"
+  | "recurring.payment.cancelled"
+  | "recurring.link.created"
+  | "recurring.link.updated"
+  | "recurring.link.paused"
+  | "recurring.link.resumed"
+  | "recurring.link.completed";
 
 export interface BaseNotificationPayload {
   /** The event kind — used to match against user preference filters. */
@@ -47,6 +56,56 @@ export interface EscrowWithdrawnPayload extends BaseNotificationPayload {
   commitment: string;
   token: string;
   amountStroops: bigint;
+}
+
+// ---------------------------------------------------------------------------
+// Recurring Payment Notification Payloads
+// ---------------------------------------------------------------------------
+
+export interface RecurringPaymentDuePayload extends BaseNotificationPayload {
+  eventType: "recurring.payment.due";
+  linkId: string;
+  executionId: string;
+  username?: string;
+  destination?: string;
+  amount: number;
+  asset: string;
+  periodNumber: number;
+  scheduledAt: string;
+}
+
+export interface RecurringPaymentExecutedPayload extends BaseNotificationPayload {
+  eventType: "recurring.payment.executed";
+  linkId: string;
+  executionId: string;
+  username?: string;
+  destination?: string;
+  amount: number;
+  asset: string;
+  periodNumber: number;
+  transactionHash: string;
+}
+
+export interface RecurringPaymentFailedPayload extends BaseNotificationPayload {
+  eventType: "recurring.payment.failed";
+  linkId: string;
+  executionId: string;
+  username?: string;
+  destination?: string;
+  amount: number;
+  asset: string;
+  periodNumber: number;
+  failureReason: string;
+  retryCount: number;
+  permanent: boolean;
+}
+
+export interface RecurringLinkStatusPayload extends BaseNotificationPayload {
+  eventType: NotificationEventType;
+  linkId: string;
+  username?: string;
+  destination?: string;
+  status: string;
 }
 
 export interface EscrowRefundedPayload extends BaseNotificationPayload {
@@ -86,7 +145,7 @@ export interface NotificationPreference {
   email?: string;
   pushToken?: string;
   webhookUrl?: string;
-  /** null = all events; otherwise only listed event types trigger notifications */
+  webhookSecret?: string;
   events: NotificationEventType[] | null;
   minAmountStroops: bigint;
   enabled: boolean;
@@ -110,4 +169,34 @@ export interface NotificationLogEntry {
   providerMessageId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Webhook-specific types
+// ---------------------------------------------------------------------------
+
+export interface WebhookPayload {
+  id: string;
+  eventType: NotificationEventType;
+  eventId: string;
+  timestamp: string;
+  sentAt: string;
+  recipientPublicKey: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+}
+
+export interface WebhookDeliveryResult {
+  success: boolean;
+  httpStatus?: number;
+  responseBody?: string;
+  error?: string;
+}
+
+export interface WebhookStats {
+  totalSent: number;
+  totalFailed: number;
+  lastDeliveryAt?: string;
+  lastError?: string;
 }

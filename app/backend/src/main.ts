@@ -1,3 +1,6 @@
+// Sentry instrumentation MUST be imported before everything else
+import "./sentry/instrument";
+
 import "reflect-metadata";
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -5,7 +8,6 @@ import { BadRequestException, Logger, ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core"; //installed
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
-
 
 import { WinstonModule } from "nest-winston";
 import { winstonConfig } from "./common/logging/winston.config";
@@ -16,42 +18,54 @@ import { AppModule } from "./app.module";
 import { AppConfigService } from "./config";
 import { GlobalHttpExceptionFilter } from "./common/filters/global-http-exception.filter";
 import { mapValidationErrors } from "./common/utils/validation-error.mapper";
+import { SentryExceptionFilter, SentryService } from "./sentry";
 
 async function bootstrap() {
-  
   const logger = new Logger("Bootstrap");
 
   const app = await NestFactory.create(AppModule, {
-    
     logger: WinstonModule.createLogger(winstonConfig),
   });
 
   const configService = app.get(AppConfigService);
 
-  
-  const allowedOrigins = [
-    "http://localhost:3000",
-    "https://app.quickex.example.com", 
-  ];
-
   // Use Helmet for security headers
   app.use(helmet());
-  app.enableCors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        return callback(null, true);
-      }
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        logger.warn(`CORS blocked request from origin: ${origin}`);
-        callback(new Error(`Origin not allowed by CORS: ${origin}`));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-correlation-id"], 
-  });
+
+  // In development allow all origins to make it easy to test from Expo web or devices on LAN.
+  // In production keep the stricter origin whitelist to avoid accidental exposure.
+  if (process.env.NODE_ENV !== "production") {
+    app.enableCors();
+    logger.log("CORS enabled for all origins (dev mode)");
+  } else {
+    const allowedOrigins = [
+      "http://localhost:3000",
+      "https://app.quickex.example.com",
+    ];
+
+    app.enableCors({
+      origin: (origin, callback) => {
+        if (!origin) {
+          return callback(null, true);
+        }
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          logger.warn(`CORS blocked request from origin: ${origin}`);
+          callback(new Error(`Origin not allowed by CORS: ${origin}`));
+        }
+      },
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "x-correlation-id",
+        "X-API-Key",
+      ],
+
+    });
+  }
 
   // Global validation pipe
   app.useGlobalPipes(
@@ -70,11 +84,15 @@ async function bootstrap() {
     }),
   );
 
-  
   app.useGlobalInterceptors(new LoggingInterceptor());
-  
 
-  app.useGlobalFilters(new GlobalHttpExceptionFilter(configService));
+  // Register Sentry exception filter FIRST so it captures errors,
+  // then the existing HTTP exception filter handles the response.
+  const sentryService = app.get(SentryService);
+  app.useGlobalFilters(
+    new SentryExceptionFilter(sentryService, configService),
+    new GlobalHttpExceptionFilter(configService),
+  );
 
   // Swagger setup
   const swaggerConfig = new DocumentBuilder()
@@ -90,6 +108,7 @@ async function bootstrap() {
     .addTag("transactions", "Stellar transaction and payment history")
     .addTag("scam-alerts", "Fraud detection and link scanning")
     .addTag("metrics", "Application performance and health metrics")
+    .addTag("stellar", "Verified assets, path preview, Soroban preflight")
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
@@ -100,9 +119,10 @@ async function bootstrap() {
   });
 
   const port = configService.port;
-  await app.listen(port);
+  // Bind to 0.0.0.0 so devices on your LAN can access the dev server.
+  await app.listen(port, "0.0.0.0");
 
-  logger.log(`Backend listening on http://localhost:${port}`);
+  logger.log(`Backend listening on http://0.0.0.0:${port}`);
   logger.log(`Swagger docs available at http://localhost:${port}/docs`);
 }
 
