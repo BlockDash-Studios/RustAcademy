@@ -3,8 +3,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import { NetworkBadge } from "@/components/NetworkBadge";
+import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { useWorkspace } from "@/context/WorkspaceContext";
 
 export default function Settings() {
+  const { isViewer } = useWorkspace();
   const [form, setForm] = useState({
     username: "john_doe",
     primaryColor: "#6366f1",
@@ -46,7 +49,10 @@ export default function Settings() {
 
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden md:flex w-72 h-screen fixed left-0 top-0 border-r border-white/5 bg-black/20 backdrop-blur-3xl flex-col z-20">
-        <nav className="flex-1 px-4 py-30 space-y-2">
+        <div className="px-4 py-6">
+          <WorkspacePanel />
+        </div>
+        <nav className="flex-1 px-4 space-y-2 pb-10">
           <Link
             href="/dashboard"
             className="flex items-center gap-3 px-4 py-3 text-neutral-500 hover:text-white hover:bg-white/5 rounded-2xl font-semibold transition"
@@ -88,12 +94,18 @@ export default function Settings() {
           </p>
         </div>
 
-        <nav className="flex gap-3 mb-8">
+        <nav className="flex flex-wrap gap-3 mb-8">
           <Link
             href="/settings"
             className="px-4 py-2 rounded-xl border border-white/10 bg-white/10 text-sm font-semibold hover:bg-white/20"
           >
             General
+          </Link>
+          <Link
+            href="/settings/team"
+            className="px-4 py-2 rounded-xl border border-white/10 text-sm font-semibold hover:bg-white/5"
+          >
+            Team
           </Link>
           <Link
             href="/settings/developer"
@@ -124,7 +136,8 @@ export default function Settings() {
                       onChange={(e) =>
                         setForm({ ...form, primaryColor: e.target.value })
                       }
-                      className="w-14 sm:w-16 h-11 sm:h-12 rounded-xl border border-white/10 bg-transparent cursor-pointer"
+                      disabled={isViewer}
+                      className="w-14 sm:w-16 h-11 sm:h-12 rounded-xl border border-white/10 bg-transparent cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                     <input
                       type="text"
@@ -132,7 +145,8 @@ export default function Settings() {
                       onChange={(e) =>
                         setForm({ ...form, primaryColor: e.target.value })
                       }
-                      className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white font-mono text-sm sm:text-base"
+                      disabled={isViewer}
+                      className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white font-mono text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
                       placeholder="#6366f1"
                     />
                   </div>
@@ -148,7 +162,8 @@ export default function Settings() {
                     onChange={(e) =>
                       setForm({ ...form, avatarUrl: e.target.value })
                     }
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base"
+                    disabled={isViewer}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="https://example.com/avatar.jpg"
                   />
                 </div>
@@ -162,7 +177,8 @@ export default function Settings() {
                     onChange={(e) => setForm({ ...form, bio: e.target.value })}
                     maxLength={160}
                     rows={3}
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white resize-none text-sm sm:text-base"
+                    disabled={isViewer}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white resize-none text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="Building the future of payments on Stellar"
                   />
                   <p className="text-xs text-neutral-600 mt-1">
@@ -193,7 +209,8 @@ export default function Settings() {
                       onChange={(e) =>
                         setForm({ ...form, twitterHandle: e.target.value })
                       }
-                      className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base"
+                      disabled={isViewer}
+                      className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
                       placeholder="stellarorg"
                       maxLength={15}
                     />
@@ -210,7 +227,8 @@ export default function Settings() {
                     onChange={(e) =>
                       setForm({ ...form, discordHandle: e.target.value })
                     }
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base"
+                    disabled={isViewer}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="user#1234"
                     maxLength={32}
                   />
@@ -226,7 +244,8 @@ export default function Settings() {
                     onChange={(e) =>
                       setForm({ ...form, githubHandle: e.target.value })
                     }
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base"
+                    disabled={isViewer}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="stellar"
                     maxLength={39}
                   />
@@ -238,10 +257,16 @@ export default function Settings() {
             <div className="hidden sm:flex gap-3 sm:gap-4">
               <button
                 onClick={handleSave}
-                className="flex-1 px-4 sm:px-6 py-3 sm:py-4 bg-indigo-500 text-white font-bold rounded-xl hover:scale-105 active:scale-95 transition text-sm sm:text-base"
+                disabled={isViewer}
+                className="flex-1 px-4 sm:px-6 py-3 sm:py-4 bg-indigo-500 text-white font-bold rounded-xl hover:scale-105 active:scale-95 transition text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Save Changes
               </button>
+              {isViewer && (
+                <p className="text-amber-500 text-sm text-center col-span-2">
+                  Viewer access cannot modify profile settings. Ask an operator or admin to make changes.
+                </p>
+              )}
               <button
                 onClick={() => setShowPreview(!showPreview)}
                 className="px-4 sm:px-6 py-3 sm:py-4 bg-white/5 border border-white/10 text-white font-bold rounded-xl hover:bg-white/10 transition text-sm sm:text-base whitespace-nowrap"
@@ -282,7 +307,8 @@ export default function Settings() {
         <div className="flex gap-3">
           <button
             onClick={handleSave}
-            className="flex-1 px-4 py-3 bg-indigo-500 text-white font-bold rounded-xl active:scale-95 transition"
+            disabled={isViewer}
+            className="flex-1 px-4 py-3 bg-indigo-500 text-white font-bold rounded-xl active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Save Changes
           </button>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { NetworkBadge } from "@/components/NetworkBadge";
+import { WorkspacePanel } from "@/components/WorkspacePanel";
 import { useApi } from "@/hooks/useApi";
 import { mockFetch } from "@/hooks/mockApi";
 import { useEffect, useState } from "react";
@@ -13,15 +14,17 @@ import {
   formatCountdown,
 } from "@/hooks/marketplaceApi";
 import AnalyticsDashboard from "@/components/AnalyticsDashboard";
+import { useWorkspace } from "@/context/WorkspaceContext";
 
 type DashboardResponse = {
   items: Array<Record<string, unknown>>;
 };
 
 export default function Dashboard() {
-  const { error, loading, callApi } = useApi<DashboardResponse>();
+  const { error, loading, data, callApi } = useApi<DashboardResponse>();
   const [userBids, setUserBids] = useState<UserBid[]>([]);
   const [userListings, setUserListings] = useState<UserListing[]>([]);
+  const { isViewer } = useWorkspace();
 
   useEffect(() => {
     callApi(() =>
@@ -45,6 +48,10 @@ export default function Dashboard() {
     alert("Storage deposit reclaimed and record cleaned up!");
   };
 
+  const mockContractCall = async (_action: string, _id: string) => {
+    return new Promise<void>((resolve) => setTimeout(resolve, 250));
+  };
+
   if (loading) return <p>Loading dashboard...</p>;
   if (error) return <p>{error}</p>;
    if (!data || !data.items || data.items.length === 0) {
@@ -61,7 +68,10 @@ export default function Dashboard() {
 
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden md:flex w-72 h-screen fixed left-0 top-0 border-r border-white/5 bg-black/20 backdrop-blur-3xl flex-col z-20">
-        <nav className="flex-1 px-4 py-30 space-y-2 ">
+        <div className="px-4 py-6">
+          <WorkspacePanel />
+        </div>
+        <nav className="flex-1 px-4 space-y-2 pb-10">
           <Link
             href="/dashboard"
             className="flex items-center gap-3 px-4 py-3 bg-white/5 border border-white/5 rounded-2xl font-bold"
@@ -107,9 +117,17 @@ export default function Dashboard() {
             </p>
           </div>
 
-          <button className="px-4 sm:px-6 py-3 bg-indigo-500 text-white font-bold rounded-xl shadow-lg hover:scale-105 active:scale-95 transition">
+          <button 
+            disabled={isViewer}
+            className="px-4 sm:px-6 py-3 bg-indigo-500 text-white font-bold rounded-xl shadow-lg hover:scale-105 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             Withdraw Funds
           </button>
+          {isViewer && (
+            <p className="text-amber-500 text-xs text-center">
+              Viewer access cannot withdraw funds. Ask an operator or admin to handle withdrawals.
+            </p>
+          )}
         </header>
 
         {/* CARDS GRID */}
@@ -254,17 +272,24 @@ export default function Dashboard() {
                       {tx.status === "Pending" ? (
                         <button 
                           onClick={() => handleExtend(tx.id)}
-                          className="px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 hover:text-white transition shadow-sm"
+                          disabled={isViewer}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 hover:text-white transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Extend TTL
                         </button>
                       ) : (
                         <button 
                           onClick={() => handleCleanup(tx.id)}
-                          className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition shadow-sm"
+                          disabled={isViewer}
+                          className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Cleanup
                         </button>
+                      )}
+                      {isViewer && (
+                        <p className="text-[9px] text-amber-500 mt-1">
+                          Viewer access cannot modify transactions.
+                        </p>
                       )}
                     </td>
                   </tr>

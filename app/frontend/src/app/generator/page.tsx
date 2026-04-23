@@ -6,6 +6,7 @@ import { QRPreview } from "@/components/QRPreview";
 import { NetworkBadge } from "@/components/NetworkBadge";
 import { useApi } from "@/hooks/useApi";
 import { getQuickexApiBase } from "@/lib/api";
+import { useWorkspace } from "@/context/WorkspaceContext";
 
 type ValidationErrors = Partial<
   Record<"amount" | "asset" | "destination", string>
@@ -66,6 +67,7 @@ type ComposeError = {
 export default function Generator() {
   const apiBase = useMemo(() => getQuickexApiBase(), []);
   const { error, loading, callApi, data } = useApi<LinkMetadataSuccess>();
+  const { isViewer } = useWorkspace();
 
   const [form, setForm] = useState({
     amount: "",
@@ -425,7 +427,8 @@ export default function Generator() {
                       onChange={(e) =>
                         setForm({ ...form, amount: e.target.value })
                       }
-                      className="w-full bg-transparent p-6 sm:p-8 text-3xl sm:text-5xl font-black focus:outline-none placeholder:text-neutral-800"
+                      disabled={isViewer}
+                      className="w-full bg-transparent p-6 sm:p-8 text-3xl sm:text-5xl font-black focus:outline-none placeholder:text-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
                     />
 
                     <div className="absolute right-4 top-1/2 -translate-y-1/2 flex bg-black/40 p-2 rounded-2xl border border-white/5 backdrop-blur-xl gap-1 max-w-[50%] flex-wrap justify-end">
@@ -439,6 +442,7 @@ export default function Generator() {
                             key={a.code}
                             type="button"
                             onClick={() => setRecipientAssetCode(a.code)}
+                            disabled={isViewer}
                             className={`
                             px-3 py-2 text-xs sm:text-sm rounded-xl transition 
                             ${
@@ -446,6 +450,7 @@ export default function Generator() {
                                 ? "bg-white text-black font-black"
                                 : "text-neutral-500 hover:text-white"
                             }
+                            ${isViewer ? "disabled:opacity-50 disabled:cursor-not-allowed" : ""}
                           `}
                           >
                             {a.code}
@@ -475,7 +480,8 @@ export default function Generator() {
                   onChange={(e) =>
                     setForm({ ...form, destination: e.target.value })
                   }
-                  className="w-full bg-neutral-900/30 border border-white/10 rounded-3xl p-5 font-bold mt-2 focus:outline-none placeholder:text-neutral-700"
+                  disabled={isViewer}
+                  className="w-full bg-neutral-900/30 border border-white/10 rounded-3xl p-5 font-bold mt-2 focus:outline-none placeholder:text-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 {errors.destination && (
                   <p className="text-red-500 text-xs mt-2">
@@ -493,7 +499,8 @@ export default function Generator() {
                   placeholder="What's this payment for?"
                   value={form.memo}
                   onChange={(e) => setForm({ ...form, memo: e.target.value })}
-                  className="w-full bg-neutral-900/30 border border-white/10 rounded-3xl p-5 font-bold mt-2 focus:outline-none placeholder:text-neutral-700"
+                  disabled={isViewer}
+                  className="w-full bg-neutral-900/30 border border-white/10 rounded-3xl p-5 font-bold mt-2 focus:outline-none placeholder:text-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -501,7 +508,8 @@ export default function Generator() {
                 <button
                   type="button"
                   onClick={() => setAdvancedOpen((v) => !v)}
-                  className="flex w-full items-center justify-between text-left"
+                  disabled={isViewer}
+                  className="flex w-full items-center justify-between text-left disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span className="text-sm font-black uppercase tracking-widest text-indigo-300">
                     Advanced settings
@@ -526,7 +534,8 @@ export default function Generator() {
                         onChange={(e) =>
                           setRecipientAssetCode(e.target.value)
                         }
-                        className="w-full bg-neutral-900 border border-white/10 rounded-2xl p-4 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                        disabled={isViewer}
+                        className="w-full bg-neutral-900 border border-white/10 rounded-2xl p-4 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {verifiedAssets.map((a) => (
                           <option key={a.code} value={a.code}>
@@ -560,11 +569,12 @@ export default function Generator() {
                               key={a.code}
                               type="button"
                               onClick={() => toggleSource(a.code)}
+                              disabled={isViewer}
                               className={`px-4 py-2 rounded-xl text-sm font-bold border transition ${
                                 on
                                   ? "bg-indigo-500/30 border-indigo-400/50 text-white"
                                   : "bg-neutral-900/50 border-white/10 text-neutral-500 hover:text-neutral-300"
-                              }`}
+                              } ${isViewer ? "disabled:opacity-50 disabled:cursor-not-allowed" : ""}`}
                             >
                               {a.code}
                             </button>
@@ -647,13 +657,14 @@ export default function Generator() {
                         placeholder="Source account G… (funded, for sequence)"
                         value={preflightAccount}
                         onChange={(e) => setPreflightAccount(e.target.value)}
-                        className="w-full bg-neutral-900/80 border border-white/10 rounded-xl p-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                        disabled={isViewer}
+                        className="w-full bg-neutral-900/80 border border-white/10 rounded-xl p-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
                       />
                       <button
                         type="button"
                         onClick={() => void runPreflight()}
-                        disabled={preflightLoading}
-                        className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm font-bold disabled:opacity-50"
+                        disabled={preflightLoading || isViewer}
+                        className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {preflightLoading
                           ? "Simulating…"
@@ -696,13 +707,18 @@ export default function Generator() {
 
             <button
               onClick={handleSubmit}
-              disabled={loading}
-              className="w-full py-6 bg-white text-black text-3xl font-black rounded-3xl hover:bg-neutral-200 active:scale-95 transition disabled:opacity-60"
+              disabled={loading || isViewer}
+              className="w-full py-6 bg-white text-black text-3xl font-black rounded-3xl hover:bg-neutral-200 active:scale-95 transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading ? "Generating…" : "Generate Payment Link"}
             </button>
             {error && (
               <p className="text-red-500 text-sm text-center">{error}</p>
+            )}
+            {isViewer && (
+              <p className="text-amber-500 text-sm text-center">
+                Viewer access cannot create payment links. Ask an operator or admin to create links for this workspace.
+              </p>
             )}
           </div>
 

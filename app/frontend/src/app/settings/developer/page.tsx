@@ -227,6 +227,12 @@ export default function DeveloperSettings() {
             General
           </Link>
           <Link
+            href="/settings/team"
+            className="px-4 py-2 rounded-xl border border-white/10 text-sm font-semibold text-neutral-400 hover:text-white hover:bg-white/5 transition"
+          >
+            Team
+          </Link>
+          <Link
             href="/settings/developer"
             className="px-4 py-2 rounded-xl border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 text-sm font-semibold"
           >
