@@ -1,4 +1,8 @@
-import { NewKeyForm, AVAILABLE_SCOPES, ApiKeyScope } from "@/app/settings/developer/page";
+import {
+  AVAILABLE_SCOPES,
+  type ApiKeyScope,
+  type NewKeyForm,
+} from "@/app/settings/developer/api-key-types";
 import React from "react";
 
 type Props = {
@@ -46,10 +50,14 @@ export default function CreateAPIKeyModal({
 
         {/* Key name */}
         <div className="space-y-2">
-          <label className="text-xs font-black uppercase tracking-widest text-neutral-500">
+          <label
+            htmlFor="create-api-key-name"
+            className="text-xs font-black uppercase tracking-widest text-neutral-500"
+          >
             Key Name
           </label>
           <input
+            id="create-api-key-name"
             type="text"
             placeholder="e.g. Production App"
             value={newKey.name}
@@ -61,16 +69,17 @@ export default function CreateAPIKeyModal({
         </div>
 
         {/* Scope selection */}
-        <div className="space-y-2">
-          <label className="text-xs font-black uppercase tracking-widest text-neutral-500">
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-black uppercase tracking-widest text-neutral-500">
             Scopes
-          </label>
+          </legend>
           <div className="space-y-2">
             {AVAILABLE_SCOPES.map((scope) => {
               const active = newKey.scopes.includes(scope);
               return (
                 <button
                   key={scope}
+                  type="button"
                   onClick={() => toggleScope(scope)}
                   className={`w-full p-3 rounded-xl border text-left transition flex items-center gap-3 ${
                     active
@@ -99,11 +108,12 @@ export default function CreateAPIKeyModal({
               );
             })}
           </div>
-        </div>
+        </fieldset>
 
         {/* Actions */}
         <div className="flex gap-3 pt-2">
           <button
+            type="button"
             onClick={() => setModalOpen(false)}
             disabled={loading}
             className="flex-1 py-3 rounded-xl border border-white/10 text-sm font-semibold text-neutral-400 hover:text-white hover:bg-white/5 disabled:opacity-40 transition"
@@ -111,6 +121,7 @@ export default function CreateAPIKeyModal({
             Cancel
           </button>
           <button
+            type="button"
             onClick={generateKey}
             disabled={!newKey.name.trim() || newKey.scopes.length === 0 || loading}
             className="flex-1 py-3 rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold transition active:scale-95"

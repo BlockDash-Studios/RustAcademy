@@ -1,13 +1,13 @@
 "use client";
 
+import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { QRPreview } from "@/components/QRPreview";
 import { NetworkBadge } from "@/components/NetworkBadge";
+import { QRPreview } from "@/components/QRPreview";
+import { useFocusPreview } from "@/hooks/useFocusPreview";
 import { useApi } from "@/hooks/useApi";
 import { getQuickexApiBase } from "@/lib/api";
-import '@/lib/i18n';
-import { useTranslation } from 'react-i18next';
 
 type ValidationErrors = Partial<
   Record<"amount" | "asset" | "destination", string>
@@ -66,16 +66,16 @@ type ComposeError = {
 };
 
 export default function Generator() {
-  const { t } = useTranslation();
+  useFocusPreview();
+
   const apiBase = useMemo(() => getQuickexApiBase(), []);
-  const { error, loading, callApi, data } = useApi<LinkMetadataSuccess>();
+  const { data, error, loading, callApi } = useApi<LinkMetadataSuccess>();
 
   const [form, setForm] = useState({
     amount: "",
     destination: "",
     memo: "",
   });
-
   const [recipientAssetCode, setRecipientAssetCode] = useState("USDC");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [sourceAssetCodes, setSourceAssetCodes] = useState<Set<string>>(
@@ -99,25 +99,38 @@ export default function Generator() {
     string | null
   >(null);
 
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [errors, setErrors] = useState<ValidationErrors>({});
 
   useEffect(() => {
+    if (!copyStatus) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setCopyStatus(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [copyStatus]);
+
+  useEffect(() => {
     let cancelled = false;
+
     (async () => {
       setAssetsLoading(true);
       setAssetsError(null);
+
       try {
-        const res = await fetch(`${apiBase}/stellar/verified-assets`);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
+        const response = await fetch(`${apiBase}/stellar/verified-assets`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
         }
-        const json = (await res.json()) as { assets: VerifiedAsset[] };
+
+        const json = (await response.json()) as { assets: VerifiedAsset[] };
         if (!cancelled) {
           setVerifiedAssets(json.assets ?? []);
         }
       } catch {
         if (!cancelled) {
-          setAssetsError(t('couldNotLoadAssets'));
+          setAssetsError("Could not load verified assets.");
           setVerifiedAssets([]);
         }
       } finally {
@@ -126,33 +139,38 @@ export default function Generator() {
         }
       }
     })();
+
     return () => {
       cancelled = true;
     };
   }, [apiBase]);
 
   const recipientRef = useMemo(() => {
-    const a = verifiedAssets.find(
-      (x) => x.code.toUpperCase() === recipientAssetCode.toUpperCase(),
+    const asset = verifiedAssets.find(
+      (item) => item.code.toUpperCase() === recipientAssetCode.toUpperCase(),
     );
-    return a
-      ? { code: a.code, issuer: a.issuer ?? undefined }
+
+    return asset
+      ? { code: asset.code, issuer: asset.issuer ?? undefined }
       : { code: recipientAssetCode };
-  }, [verifiedAssets, recipientAssetCode]);
+  }, [recipientAssetCode, verifiedAssets]);
 
   const sourceRefsForPreview = useMemo(() => {
-    const refs: { code: string; issuer?: string }[] = [];
+    const refs: Array<{ code: string; issuer?: string }> = [];
+
     for (const code of sourceAssetCodes) {
-      const a = verifiedAssets.find(
-        (x) => x.code.toUpperCase() === code.toUpperCase(),
+      const asset = verifiedAssets.find(
+        (item) => item.code.toUpperCase() === code.toUpperCase(),
       );
-      if (a) {
+
+      if (asset) {
         refs.push({
-          code: a.code,
-          issuer: a.issuer ?? undefined,
+          code: asset.code,
+          issuer: asset.issuer ?? undefined,
         });
       }
     }
+
     return refs;
   }, [sourceAssetCodes, verifiedAssets]);
 
@@ -166,10 +184,12 @@ export default function Generator() {
       setPathData(null);
       return;
     }
+
     setPathLoading(true);
     setPathError(null);
+
     try {
-      const res = await fetch(`${apiBase}/stellar/path-preview`, {
+      const response = await fetch(`${apiBase}/stellar/path-preview`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -178,17 +198,21 @@ export default function Generator() {
           sourceAssets: sourceRefsForPreview,
         }),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg =
+      const json = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
           typeof json?.message === "string"
             ? json.message
-            : "Path preview failed.";
-        throw new Error(msg);
+            : "Path preview failed.",
+        );
       }
+
       setPathData(json as PathPreviewResponse);
-    } catch (e) {
-      setPathError(e instanceof Error ? e.message : "Path preview failed.");
+    } catch (reason) {
+      setPathError(
+        reason instanceof Error ? reason.message : "Path preview failed.",
+      );
       setPathData(null);
     } finally {
       setPathLoading(false);
@@ -205,35 +229,43 @@ export default function Generator() {
     if (!advancedOpen) {
       return;
     }
-    const t = window.setTimeout(() => {
+
+    const timer = window.setTimeout(() => {
       void fetchPathPreview();
     }, 450);
-    return () => window.clearTimeout(t);
+
+    return () => window.clearTimeout(timer);
   }, [advancedOpen, fetchPathPreview]);
 
-  const validate = () => {
-    const newErrors: ValidationErrors = {};
+  const validate = useCallback(() => {
+    const nextErrors: ValidationErrors = {};
+
     if (!form.amount) {
-      newErrors.amount = t('amountRequired');
+      nextErrors.amount = "Amount is required.";
     } else if (Number.isNaN(Number(form.amount))) {
-      newErrors.amount = t('enterValidNumber');
+      nextErrors.amount = "Enter a valid number.";
     }
+
     if (!form.destination) {
-      newErrors.destination = t('destinationRequired');
+      nextErrors.destination = "Destination public key is required.";
     }
+
     if (!recipientAssetCode) {
-      newErrors.asset = t('selectRecipientAsset');
+      nextErrors.asset = "Select the recipient asset.";
     }
-    return newErrors;
-  };
+
+    return nextErrors;
+  }, [form.amount, form.destination, recipientAssetCode]);
 
   const linkData = useMemo(() => {
     if (!form.amount || !recipientAssetCode || !form.destination) {
       return "";
     }
-    const recipient = verifiedAssets.find(
-      (x) => x.code.toUpperCase() === recipientAssetCode.toUpperCase(),
+
+    const recipientAsset = verifiedAssets.find(
+      (item) => item.code.toUpperCase() === recipientAssetCode.toUpperCase(),
     );
+
     return JSON.stringify({
       amount: form.amount,
       asset: recipientAssetCode,
@@ -241,11 +273,11 @@ export default function Generator() {
       memo: form.memo,
       ...(advancedOpen && {
         pathPayment: {
-          recipientAsset: recipient
+          recipientAsset: recipientAsset
             ? {
-                code: recipient.code,
-                type: recipient.type,
-                issuer: recipient.issuer,
+                code: recipientAsset.code,
+                type: recipientAsset.type,
+                issuer: recipientAsset.issuer,
               }
             : { code: recipientAssetCode },
           allowedSourceAssets: Array.from(sourceAssetCodes),
@@ -253,24 +285,26 @@ export default function Generator() {
       }),
     });
   }, [
+    advancedOpen,
     form.amount,
     form.destination,
     form.memo,
     recipientAssetCode,
-    verifiedAssets,
-    advancedOpen,
     sourceAssetCodes,
+    verifiedAssets,
   ]);
 
-  const handleSubmit = () => {
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
     const validation = validate();
     setErrors(validation);
     if (Object.keys(validation).length > 0) {
       return;
     }
 
-    callApi(async () => {
-      const res = await fetch(`${apiBase}/links/metadata`, {
+    void callApi(async () => {
+      const response = await fetch(`${apiBase}/links/metadata`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -280,63 +314,78 @@ export default function Generator() {
           memo: form.memo || undefined,
         }),
       });
-      const json = await res.json();
-      if (!res.ok) {
-        const msg =
+      const json = await response.json();
+
+      if (!response.ok) {
+        const message =
           json?.message ??
           json?.error ??
-          `Request failed (${res.status})`;
-        throw new Error(typeof msg === "string" ? msg : "Request failed");
+          `Request failed (${response.status})`;
+        throw new Error(
+          typeof message === "string" ? message : "Request failed",
+        );
       }
+
       return json as LinkMetadataSuccess;
     });
   };
 
   const runPreflight = async () => {
-    const pk = preflightAccount.trim();
-    if (!/^G[A-Z0-9]{55}$/.test(pk)) {
+    const publicKey = preflightAccount.trim();
+
+    if (!/^G[A-Z0-9]{55}$/.test(publicKey)) {
       setPreflightResult({
         success: false,
-        userMessage: t('invalidPublicKey'),
+        userMessage:
+          "Enter a valid 56-character Stellar public key that starts with G.",
       });
       return;
     }
+
     setPreflightLoading(true);
     setPreflightResult(null);
     setPreflightUnavailable(null);
+
     try {
-      const res = await fetch(`${apiBase}/stellar/soroban-preflight`, {
+      const response = await fetch(`${apiBase}/stellar/soroban-preflight`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceAccount: pk }),
+        body: JSON.stringify({ sourceAccount: publicKey }),
       });
-      const json = (await res.json()) as ComposeSuccess | ComposeError | {
-        message?: string;
-        code?: string;
-      };
-      if (res.status === 503) {
+
+      const json = (await response.json()) as
+        | ComposeSuccess
+        | ComposeError
+        | {
+            message?: string;
+            code?: string;
+          };
+      const responseMessage =
+        "message" in json && typeof json.message === "string"
+          ? json.message
+          : null;
+
+      if (response.status === 503) {
         setPreflightUnavailable(
-          typeof json?.message === "string"
-            ? json.message
-            : t('preflightUnavailable'),
+          responseMessage ??
+            "Soroban preflight is not configured on this server.",
         );
         return;
       }
-      if (!res.ok) {
+
+      if (!response.ok) {
         setPreflightResult({
           success: false,
-          userMessage:
-            typeof json?.message === "string"
-              ? json.message
-              : t('preflightFailed'),
+          userMessage: responseMessage ?? "Preflight request failed.",
         });
         return;
       }
+
       setPreflightResult(json as ComposeSuccess | ComposeError);
     } catch {
       setPreflightResult({
         success: false,
-        userMessage: t('networkError'),
+        userMessage: "Network error when calling preflight.",
       });
     } finally {
       setPreflightLoading(false);
@@ -344,8 +393,9 @@ export default function Generator() {
   };
 
   const toggleSource = (code: string) => {
-    setSourceAssetCodes((prev) => {
-      const next = new Set(prev);
+    setSourceAssetCodes((previous) => {
+      const next = new Set(previous);
+
       if (next.has(code)) {
         if (next.size <= 1) {
           return next;
@@ -354,103 +404,166 @@ export default function Generator() {
       } else {
         next.add(code);
       }
+
       return next;
     });
+  };
+
+  const handleCanonicalCopy = async () => {
+    if (!canonicalPreview) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(canonicalPreview);
+      setCopyStatus("Canonical parameters copied to the clipboard.");
+    } catch {
+      setCopyStatus("Copy failed in this browser.");
+    }
   };
 
   const canonicalPreview =
     data?.success === true ? data.data.canonical : null;
 
+  const recipientAssetHelp = errors.asset
+    ? "generator-recipient-asset-help generator-asset-error"
+    : "generator-recipient-asset-help";
+  const sourceAssetsLabel = Array.from(sourceAssetCodes).join(", ");
+
   return (
-    <div className="relative min-h-screen text-white selection:bg-indigo-500/30 overflow-x-hidden">
+    <div className="relative min-h-screen overflow-x-hidden text-white">
       <NetworkBadge />
 
-      <div className="fixed top-[-20%] left-[-30%] w-[60%] h-[60%] bg-indigo-500/10 blur-[120px]" />
-      <div className="fixed bottom-[-20%] right-[-30%] w-[50%] h-[50%] bg-purple-500/5 blur-[100px]" />
+      <div className="fixed left-[-30%] top-[-20%] h-[60%] w-[60%] bg-indigo-500/10 blur-[120px]" />
+      <div className="fixed bottom-[-20%] right-[-30%] h-[50%] w-[50%] bg-purple-500/5 blur-[100px]" />
 
-      <aside className="hidden md:flex w-72 h-screen border-r border-white/5 bg-black/20 backdrop-blur-3xl flex-col fixed left-0 top-0 z-20">
-        <nav className="flex-1 px-4 py-20 space-y-2">
+      <aside className="fixed left-0 top-0 z-20 hidden h-screen w-72 flex-col border-r border-white/5 bg-black/20 backdrop-blur-3xl md:flex">
+        <nav
+          aria-label="Generator quick navigation"
+          className="flex-1 space-y-2 px-4 py-20"
+        >
           <Link
             href="/dashboard"
-            className="flex items-center gap-3 px-4 py-3 text-neutral-500 hover:text-white hover:bg-white/5 rounded-2xl font-semibold"
+            className="flex items-center gap-3 rounded-2xl px-4 py-3 font-semibold text-neutral-200 transition hover:bg-white/5 hover:text-white"
           >
-            <span>📊</span> {t('dashboard')}
+            <span aria-hidden="true">📊</span>
+            Dashboard
           </Link>
           <Link
             href="/generator"
-            className="flex items-center gap-3 px-4 py-3 bg-white/5 text-white rounded-2xl font-bold border border-white/5 shadow-inner"
+            aria-current="page"
+            className="flex items-center gap-3 rounded-2xl border border-white/5 bg-white/5 px-4 py-3 font-bold text-white shadow-inner"
           >
-            <span className="text-indigo-400">⚡</span> {t('linkGenerator')}
+            <span aria-hidden="true" className="text-indigo-300">
+              ⚡
+            </span>
+            Link Generator
           </Link>
-          <Link href="/settings" className="flex items-center gap-3 px-4 py-3 text-neutral-500 hover:text-white hover:bg-white/5 rounded-2xl font-semibold">
-            <span>⚙️</span> {t('profileSettings')}
+          <Link
+            href="/settings"
+            className="flex items-center gap-3 rounded-2xl px-4 py-3 font-semibold text-neutral-200 transition hover:bg-white/5 hover:text-white"
+          >
+            <span aria-hidden="true">⚙</span>
+            Profile Settings
           </Link>
         </nav>
       </aside>
 
-      <main className="relative z-10 px-4 sm:px-6 md:px-12 pt-10 md:ml-72">
-        <header className="mb-10 sm:mb-16 max-w-3xl">
-          <nav className="flex items-center gap-2 text-xs font-black text-neutral-600 uppercase tracking-widest mb-4">
-            <span>{t('services')}</span>
-            <span>/</span>
-            <span className="text-neutral-400">{t('linkGenerator')}</span>
+      <main className="relative z-10 px-4 pt-10 sm:px-6 md:ml-72 md:px-12">
+        <header className="mb-10 max-w-3xl sm:mb-16">
+          <nav
+            aria-label="Breadcrumb"
+            className="mb-4 flex items-center gap-2 text-xs font-black uppercase tracking-widest text-neutral-300"
+          >
+            <span>Services</span>
+            <span aria-hidden="true">/</span>
+            <span className="text-neutral-100">Link Generator</span>
           </nav>
 
-          <h1 className="text-4xl sm:text-5xl md:text-6xl font-black tracking-tight mb-4">
-            {t('createPayment')} <br />
-            <span className="bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-              {t('requestInstantly')}
+          <h1 className="mb-4 text-4xl font-black tracking-tight sm:text-5xl md:text-6xl">
+            Create a payment
+            <br />
+            <span className="bg-gradient-to-r from-indigo-300 to-purple-300 bg-clip-text text-transparent">
+              request instantly.
             </span>
           </h1>
 
-          <p className="text-neutral-500 text-lg max-w-xl">
-            {t('advancedModeDescription')}
+          <p className="max-w-xl text-lg text-neutral-200">
+            Build a payment request that works with a keyboard, reads clearly
+            with assistive technology, and optionally supports path payments.
           </p>
         </header>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-12 xl:gap-20 max-w-7xl">
-          <div className="space-y-12">
-            <section className="space-y-6">
+        <div className="grid max-w-7xl grid-cols-1 gap-12 xl:grid-cols-[1.2fr_0.8fr] xl:gap-20">
+          <form className="space-y-12" onSubmit={handleSubmit} noValidate>
+            <section aria-labelledby="payment-request-title" className="space-y-6">
+              <h2 id="payment-request-title" className="sr-only">
+                Payment request details
+              </h2>
+
               <div>
-                <label className="text-xs font-black uppercase tracking-widest text-neutral-500 ml-1">
-                  {t('amountLabel')}
+                <label
+                  htmlFor="generator-amount"
+                  className="ml-1 text-xs font-black uppercase tracking-widest text-neutral-200"
+                >
+                  Amount recipient receives
                 </label>
+                <p
+                  id="generator-amount-help"
+                  className="ml-1 mt-2 text-sm text-neutral-300"
+                >
+                  Choose the asset below, then enter the amount you want the
+                  recipient to receive.
+                </p>
 
-                <div className="relative group mt-2">
-                  <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500/20 to-purple-500/20 rounded-3xl blur opacity-0 group-focus-within:opacity-100 transition" />
+                <div className="group relative mt-3">
+                  <div className="absolute -inset-0.5 rounded-3xl bg-gradient-to-r from-indigo-500/20 to-purple-500/20 opacity-0 blur transition group-focus-within:opacity-100" />
 
-                  <div className="relative bg-neutral-900/50 border border-white/10 rounded-3xl p-1 shadow-2xl">
+                  <div className="relative rounded-3xl border border-white/10 bg-neutral-900/50 p-1 shadow-2xl">
                     <input
+                      id="generator-amount"
                       type="number"
-                      placeholder={t('amountPlaceholder')}
+                      inputMode="decimal"
+                      placeholder="0.00"
                       value={form.amount}
-                      onChange={(e) =>
-                        setForm({ ...form, amount: e.target.value })
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          amount: event.target.value,
+                        }))
                       }
-                      className="w-full bg-transparent p-6 sm:p-8 text-3xl sm:text-5xl font-black focus:outline-none placeholder:text-neutral-800"
+                      aria-invalid={Boolean(errors.amount)}
+                      aria-describedby={
+                        errors.amount
+                          ? "generator-amount-help generator-amount-error"
+                          : "generator-amount-help"
+                      }
+                      className="w-full bg-transparent p-6 text-3xl font-black placeholder:text-neutral-400 sm:p-8 sm:text-5xl"
                     />
 
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 flex bg-black/40 p-2 rounded-2xl border border-white/5 backdrop-blur-xl gap-1 max-w-[50%] flex-wrap justify-end">
+                    <div
+                      role="group"
+                      aria-label="Quick recipient asset selection"
+                      className="absolute right-4 top-1/2 flex max-w-[50%] -translate-y-1/2 flex-wrap justify-end gap-1 rounded-2xl border border-white/5 bg-black/40 p-2 backdrop-blur-xl"
+                    >
                       {assetsLoading ? (
-                        <span className="px-3 py-2 text-xs text-neutral-500">
-                          {t('loadingAssets')}
+                        <span className="px-3 py-2 text-xs text-neutral-300">
+                          Loading assets...
                         </span>
                       ) : (
-                        verifiedAssets.map((a) => (
+                        verifiedAssets.map((asset) => (
                           <button
-                            key={a.code}
+                            key={asset.code}
                             type="button"
-                            onClick={() => setRecipientAssetCode(a.code)}
-                            className={`
-                            px-3 py-2 text-xs sm:text-sm rounded-xl transition 
-                            ${
-                              recipientAssetCode === a.code
-                                ? "bg-white text-black font-black"
-                                : "text-neutral-500 hover:text-white"
-                            }
-                          `}
+                            aria-pressed={recipientAssetCode === asset.code}
+                            onClick={() => setRecipientAssetCode(asset.code)}
+                            className={`rounded-xl px-3 py-2 text-xs transition sm:text-sm ${
+                              recipientAssetCode === asset.code
+                                ? "bg-white font-black text-black"
+                                : "text-neutral-200 hover:text-white"
+                            }`}
                           >
-                            {a.code}
+                            {asset.code}
                           </button>
                         ))
                       )}
@@ -459,165 +572,239 @@ export default function Generator() {
                 </div>
 
                 {errors.amount && (
-                  <p className="text-red-500 text-xs mt-2">{errors.amount}</p>
+                  <p
+                    id="generator-amount-error"
+                    className="mt-2 text-xs text-red-300"
+                  >
+                    {errors.amount}
+                  </p>
                 )}
                 {assetsError && (
-                  <p className="text-amber-500 text-xs mt-2">{assetsError}</p>
+                  <p className="mt-2 text-xs text-amber-300">{assetsError}</p>
                 )}
               </div>
 
               <div>
-                <label className="text-xs font-black uppercase tracking-widest text-neutral-500 ml-1">
-                  {t('destinationLabel')}
+                <label
+                  htmlFor="generator-destination"
+                  className="ml-1 text-xs font-black uppercase tracking-widest text-neutral-200"
+                >
+                  Destination
                 </label>
+                <p
+                  id="generator-destination-help"
+                  className="ml-1 mt-2 text-sm text-neutral-300"
+                >
+                  Paste the receiver&apos;s Stellar public key.
+                </p>
                 <input
+                  id="generator-destination"
                   type="text"
-                  placeholder={t('destinationPlaceholder')}
+                  placeholder="Receiver public key"
                   value={form.destination}
-                  onChange={(e) =>
-                    setForm({ ...form, destination: e.target.value })
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      destination: event.target.value,
+                    }))
                   }
-                  className="w-full bg-neutral-900/30 border border-white/10 rounded-3xl p-5 font-bold mt-2 focus:outline-none placeholder:text-neutral-700"
+                  aria-invalid={Boolean(errors.destination)}
+                  aria-describedby={
+                    errors.destination
+                      ? "generator-destination-help generator-destination-error"
+                      : "generator-destination-help"
+                  }
+                  className="mt-3 w-full rounded-3xl border border-white/10 bg-neutral-900/30 p-5 font-bold text-white placeholder:text-neutral-400"
                 />
                 {errors.destination && (
-                  <p className="text-red-500 text-xs mt-2">
+                  <p
+                    id="generator-destination-error"
+                    className="mt-2 text-xs text-red-300"
+                  >
                     {errors.destination}
                   </p>
                 )}
               </div>
 
               <div>
-                <label className="text-xs font-black uppercase tracking-widest text-neutral-500 ml-1">
-                  {t('memoLabel')}
+                <label
+                  htmlFor="generator-memo"
+                  className="ml-1 text-xs font-black uppercase tracking-widest text-neutral-200"
+                >
+                  Memo (optional)
                 </label>
+                <p
+                  id="generator-memo-help"
+                  className="ml-1 mt-2 text-sm text-neutral-300"
+                >
+                  Add a note so the recipient knows what this payment is for.
+                </p>
                 <input
+                  id="generator-memo"
                   type="text"
-                  placeholder={t('memoPlaceholder')}
+                  placeholder="What is this payment for?"
                   value={form.memo}
-                  onChange={(e) => setForm({ ...form, memo: e.target.value })}
-                  className="w-full bg-neutral-900/30 border border-white/10 rounded-3xl p-5 font-bold mt-2 focus:outline-none placeholder:text-neutral-700"
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      memo: event.target.value,
+                    }))
+                  }
+                  aria-describedby="generator-memo-help"
+                  className="mt-3 w-full rounded-3xl border border-white/10 bg-neutral-900/30 p-5 font-bold text-white placeholder:text-neutral-400"
                 />
               </div>
 
-              <div className="rounded-3xl border border-white/10 bg-black/30 p-6 space-y-4">
+              <section className="space-y-4 rounded-3xl border border-white/10 bg-black/30 p-6">
                 <button
                   type="button"
-                  onClick={() => setAdvancedOpen((v) => !v)}
+                  aria-expanded={advancedOpen}
+                  aria-controls="advanced-settings-panel"
+                  onClick={() => setAdvancedOpen((current) => !current)}
                   className="flex w-full items-center justify-between text-left"
                 >
-                  <span className="text-sm font-black uppercase tracking-widest text-indigo-300">
-                    {t('advancedSettings')}
+                  <span className="text-sm font-black uppercase tracking-widest text-indigo-200">
+                    Advanced settings
                   </span>
-                  <span className="text-neutral-500 text-sm">
-                    {advancedOpen ? t('hide') : t('show')} path payments
+                  <span className="text-sm text-neutral-200">
+                    {advancedOpen ? "Hide" : "Show"} path payments
                   </span>
                 </button>
 
                 {advancedOpen && (
-                  <div className="space-y-6 pt-2 border-t border-white/5">
+                  <div
+                    id="advanced-settings-panel"
+                    className="space-y-6 border-t border-white/5 pt-2"
+                  >
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-wider text-neutral-500 mb-2">
-                        {t('recipientAsset')}
-                      </p>
-                      <p className="text-sm text-neutral-400 mb-3">
-                        {t('recipientAssetDescription')}
+                      <label
+                        htmlFor="generator-recipient-asset"
+                        className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-200"
+                      >
+                        Recipient asset
+                      </label>
+                      <p
+                        id="generator-recipient-asset-help"
+                        className="mb-3 text-sm text-neutral-300"
+                      >
+                        Pick the asset that the recipient should receive.
                       </p>
                       <select
+                        id="generator-recipient-asset"
                         value={recipientAssetCode}
-                        onChange={(e) =>
-                          setRecipientAssetCode(e.target.value)
+                        onChange={(event) =>
+                          setRecipientAssetCode(event.target.value)
                         }
-                        className="w-full bg-neutral-900 border border-white/10 rounded-2xl p-4 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                        aria-invalid={Boolean(errors.asset)}
+                        aria-describedby={recipientAssetHelp}
+                        className="w-full rounded-2xl border border-white/10 bg-neutral-900 p-4 font-bold text-white"
                       >
-                        {verifiedAssets.map((a) => (
-                          <option key={a.code} value={a.code}>
-                            {a.code}
-                            {a.type !== "native" && a.issuer
-                              ? ` (${a.issuer.slice(0, 4)}…)`
+                        {verifiedAssets.map((asset) => (
+                          <option key={asset.code} value={asset.code}>
+                            {asset.code}
+                            {asset.type !== "native" && asset.issuer
+                              ? ` (${asset.issuer.slice(0, 4)}...)`
                               : ""}
                           </option>
                         ))}
                       </select>
                       {errors.asset && (
-                        <p className="text-red-500 text-xs mt-2">
+                        <p
+                          id="generator-asset-error"
+                          className="mt-2 text-xs text-red-300"
+                        >
                           {errors.asset}
                         </p>
                       )}
                     </div>
 
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-wider text-neutral-500 mb-2">
-                        {t('allowedSourceAssets')}
+                    <fieldset>
+                      <legend className="mb-2 text-xs font-bold uppercase tracking-wider text-neutral-200">
+                        Allowed source assets
+                      </legend>
+                      <p
+                        id="generator-source-assets-help"
+                        className="mb-3 text-sm text-neutral-300"
+                      >
+                        Choose which assets payers may use. At least one option
+                        stays enabled at all times.
                       </p>
-                      <p className="text-sm text-neutral-400 mb-3">
-                        {t('allowedSourceAssetsDescription')}
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {verifiedAssets.map((a) => {
-                          const on = sourceAssetCodes.has(a.code);
+                      <div
+                        role="group"
+                        aria-describedby="generator-source-assets-help"
+                        className="flex flex-wrap gap-2"
+                      >
+                        {verifiedAssets.map((asset) => {
+                          const enabled = sourceAssetCodes.has(asset.code);
+
                           return (
                             <button
-                              key={a.code}
+                              key={asset.code}
                               type="button"
-                              onClick={() => toggleSource(a.code)}
-                              className={`px-4 py-2 rounded-xl text-sm font-bold border transition ${
-                                on
-                                  ? "bg-indigo-500/30 border-indigo-400/50 text-white"
-                                  : "bg-neutral-900/50 border-white/10 text-neutral-500 hover:text-neutral-300"
+                              aria-pressed={enabled}
+                              onClick={() => toggleSource(asset.code)}
+                              className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
+                                enabled
+                                  ? "border-indigo-300/60 bg-indigo-500/30 text-white"
+                                  : "border-white/10 bg-neutral-900/50 text-neutral-200 hover:text-white"
                               }`}
                             >
-                              {a.code}
+                              {asset.code}
                             </button>
                           );
                         })}
                       </div>
-                    </div>
+                      <p className="mt-2 text-xs text-neutral-300">
+                        Active source assets: {sourceAssetsLabel}
+                      </p>
+                    </fieldset>
 
-                    <div className="rounded-2xl border border-white/10 bg-neutral-950/60 p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-xs font-black uppercase tracking-widest text-neutral-400">
-                          {t('pathPreview')}
+                    <div
+                      aria-live="polite"
+                      className="space-y-3 rounded-2xl border border-white/10 bg-neutral-950/60 p-4"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-neutral-200">
+                          Path preview
                         </h3>
                         {pathLoading && (
-                          <span className="text-xs text-indigo-300 animate-pulse">
-                            {t('fetchingEstimates')}
+                          <span className="animate-pulse text-xs text-indigo-200">
+                            Fetching estimates...
                           </span>
                         )}
                       </div>
                       {pathError && (
-                        <p className="text-amber-500 text-sm">{pathError}</p>
+                        <p className="text-sm text-amber-300">{pathError}</p>
                       )}
                       {!pathLoading &&
                         !pathError &&
                         pathData &&
                         pathData.paths.length === 0 && (
-                          <p className="text-neutral-500 text-sm">
-                            {t('noPathsFound', { horizonUrl: pathData.horizonUrl })}
+                          <p className="text-sm text-neutral-200">
+                            No compatible paths were found. Horizon source:{" "}
+                            {pathData.horizonUrl}
                           </p>
                         )}
                       {pathData && pathData.paths.length > 0 && (
-                        <ul className="space-y-3 max-h-64 overflow-y-auto pr-1">
-                          {pathData.paths.map((p, i) => (
+                        <ul className="max-h-64 space-y-3 overflow-y-auto pr-1">
+                          {pathData.paths.map((path, index) => (
                             <li
-                              key={`${p.sourceAsset}-${i}`}
-                              className="rounded-xl bg-black/40 border border-white/5 p-3 text-sm"
+                              key={`${path.sourceAsset}-${index}`}
+                              className="rounded-xl border border-white/5 bg-black/40 p-3 text-sm"
                             >
-                              <div className="font-mono text-neutral-300">
-                                {t('payReceive', {
-                                  sourceAmount: p.sourceAmount,
-                                  sourceAsset: p.sourceAsset,
-                                  destinationAmount: p.destinationAmount,
-                                  destinationAsset: p.destinationAsset
-                                })}
+                              <div className="font-mono text-neutral-100">
+                                Pay {path.sourceAmount} {path.sourceAsset} to
+                                deliver {path.destinationAmount}{" "}
+                                {path.destinationAsset}
                               </div>
-                              <div className="text-xs text-neutral-500 mt-1">
-                                {t('hops', { hopCount: p.hopCount })}
-                                {p.pathHops.length > 0
-                                  ? ` · ${p.pathHops.join(" → ")}`
+                              <div className="mt-1 text-xs text-neutral-300">
+                                {path.hopCount} hops
+                                {path.pathHops.length > 0
+                                  ? ` -> ${path.pathHops.join(" -> ")}`
                                   : ""}
                               </div>
-                              <div className="text-xs text-neutral-600 mt-1">
-                                {p.rateDescription}
+                              <div className="mt-1 text-xs text-neutral-400">
+                                {path.rateDescription}
                               </div>
                             </li>
                           ))}
@@ -625,54 +812,71 @@ export default function Generator() {
                       )}
                     </div>
 
-                    <div className="rounded-2xl border border-white/10 bg-neutral-950/60 p-4 space-y-3">
-                      <h3 className="text-xs font-black uppercase tracking-widest text-neutral-400">
-                        {t('sorobanPreflight')}
+                    <div
+                      aria-live="polite"
+                      className="space-y-3 rounded-2xl border border-white/10 bg-neutral-950/60 p-4"
+                    >
+                      <h3 className="text-xs font-black uppercase tracking-widest text-neutral-200">
+                        Soroban preflight
                       </h3>
-                      <p className="text-xs text-neutral-500">
-                        {t('sorobanPreflightDescription')}
+                      <p
+                        id="generator-preflight-help"
+                        className="text-xs text-neutral-300"
+                      >
+                        Simulate this request against a source account before
+                        sharing it.
                       </p>
+                      <label
+                        htmlFor="generator-source-account"
+                        className="block text-xs font-bold uppercase tracking-wider text-neutral-200"
+                      >
+                        Source account
+                      </label>
                       <input
+                        id="generator-source-account"
                         type="text"
-                        placeholder={t('sourceAccountPlaceholder')}
+                        placeholder="Source account public key"
                         value={preflightAccount}
-                        onChange={(e) => setPreflightAccount(e.target.value)}
-                        className="w-full bg-neutral-900/80 border border-white/10 rounded-xl p-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                        onChange={(event) =>
+                          setPreflightAccount(event.target.value)
+                        }
+                        aria-describedby="generator-preflight-help"
+                        className="w-full rounded-xl border border-white/10 bg-neutral-900/80 p-3 font-mono text-sm text-white placeholder:text-neutral-400"
                       />
                       <button
                         type="button"
                         onClick={() => void runPreflight()}
                         disabled={preflightLoading}
-                        className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm font-bold disabled:opacity-50"
+                        className="w-full rounded-xl border border-white/10 bg-white/10 py-3 text-sm font-bold text-white transition hover:bg-white/15 disabled:opacity-50"
                       >
-                        {preflightLoading
-                          ? t('simulating')
-                          : t('runPreflight')}
+                        {preflightLoading ? "Simulating..." : "Run preflight"}
                       </button>
+
                       {preflightUnavailable && (
-                        <p className="text-amber-500 text-sm">
+                        <p className="text-sm text-amber-300">
                           {preflightUnavailable}
                         </p>
                       )}
                       {preflightResult && preflightResult.success === false && (
-                        <p className="text-red-400 text-sm">
+                        <p className="text-sm text-red-300">
                           {preflightResult.userMessage ??
                             preflightResult.error ??
-                            t('simulationFailed')}
+                            "Simulation failed."}
                         </p>
                       )}
                       {preflightResult && preflightResult.success === true && (
-                        <div className="text-sm text-emerald-400 space-y-1">
-                          <p>{t('simulationOk')}</p>
+                        <div className="space-y-1 text-sm text-emerald-300">
+                          <p>Simulation looks good.</p>
                           {preflightResult.feeEstimate?.totalFeeXLM && (
-                            <p className="font-mono text-neutral-300">
-                              {t('totalFee', { totalFee: preflightResult.feeEstimate.totalFeeXLM })}
+                            <p className="font-mono text-neutral-100">
+                              Total fee:{" "}
+                              {preflightResult.feeEstimate.totalFeeXLM}
                             </p>
                           )}
                           {typeof preflightResult.simulationLatencyMs ===
                             "number" && (
-                            <p className="text-xs text-neutral-500">
-                              {t('latency', { latency: preflightResult.simulationLatencyMs })}
+                            <p className="text-xs text-neutral-300">
+                              Latency: {preflightResult.simulationLatencyMs} ms
                             </p>
                           )}
                         </div>
@@ -680,35 +884,53 @@ export default function Generator() {
                     </div>
                   </div>
                 )}
-              </div>
+              </section>
             </section>
 
             <button
-              onClick={handleSubmit}
+              type="submit"
               disabled={loading}
-              className="w-full py-6 bg-white text-black text-3xl font-black rounded-3xl hover:bg-neutral-200 active:scale-95 transition disabled:opacity-60"
+              className="w-full rounded-3xl bg-white py-6 text-3xl font-black text-black transition hover:bg-neutral-200 active:scale-95 disabled:opacity-60"
             >
-              {loading ? "Generating…" : "Generate Payment Link"}
+              {loading ? "Generating..." : "Generate payment link"}
             </button>
             {error && (
-              <p className="text-red-500 text-sm text-center">{error}</p>
+              <p role="alert" className="text-center text-sm text-red-300">
+                {error}
+              </p>
             )}
-          </div>
+          </form>
 
           <div className="space-y-12">
-            <div className="w-full max-w-sm mx-auto">
+            <section
+              aria-labelledby="qr-preview-title"
+              className="mx-auto w-full max-w-sm"
+            >
+              <div className="mb-4 space-y-2 text-center">
+                <h2 id="qr-preview-title" className="text-xl font-black">
+                  Live QR preview
+                </h2>
+                <p className="text-sm text-neutral-300">
+                  The preview updates as you fill in the form, so you can verify
+                  the request before sharing it.
+                </p>
+              </div>
               <QRPreview value={linkData} />
-            </div>
+            </section>
 
-            <div className="space-y-4 p-8 rounded-3xl bg-black/40 border border-white/5 backdrop-blur-xl">
-              <label className="text-[10px] font-black uppercase tracking-widest text-neutral-600">
-                Canonical query (from API)
-              </label>
+            <section className="space-y-4 rounded-3xl border border-white/5 bg-black/40 p-8 backdrop-blur-xl">
+              <h2 className="text-[10px] font-black uppercase tracking-widest text-neutral-200">
+                Canonical query from the API
+              </h2>
 
-              <div className="bg-neutral-900 border border-white/5 p-4 rounded-xl font-mono text-neutral-400 text-xs break-all min-h-[3rem]">
+              <div
+                aria-live="polite"
+                className="min-h-[3rem] rounded-xl border border-white/5 bg-neutral-900 p-4 font-mono text-xs text-neutral-100 break-all"
+              >
                 {canonicalPreview ?? (
-                  <span className="text-neutral-600 italic">
-                    Generate to fetch metadata from the backend.
+                  <span className="italic text-neutral-300">
+                    Submit the form to fetch canonical metadata from the
+                    backend.
                   </span>
                 )}
               </div>
@@ -716,16 +938,16 @@ export default function Generator() {
               <button
                 type="button"
                 disabled={!canonicalPreview}
-                onClick={() => {
-                  if (canonicalPreview && navigator.clipboard) {
-                    void navigator.clipboard.writeText(canonicalPreview);
-                  }
-                }}
-                className="w-full py-3 bg-white/10 text-white rounded-xl border border-white/5 text-xs uppercase tracking-widest hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => void handleCanonicalCopy()}
+                className="w-full rounded-xl border border-white/5 bg-white/10 py-3 text-xs uppercase tracking-widest text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Copy canonical params
               </button>
-            </div>
+
+              <p aria-live="polite" className="text-xs text-neutral-300">
+                {copyStatus ?? "Use the canonical params for a text-based shareable fallback."}
+              </p>
+            </section>
           </div>
         </div>
       </main>

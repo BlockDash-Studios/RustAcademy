@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
 import { Header } from "@/components/Header";
-import i18n from '@/lib/i18n';
+import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({
@@ -17,24 +16,37 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-neutral-950 text-white`}
-      >
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable}`}
+    >
+      <body className="bg-neutral-950 text-white antialiased">
+        <a href="#main-content" className="skip-link">
+          Skip to main content
+        </a>
         <Header />
-        <main className="min-h-screen container mx-auto px-6 py-10">
-          {children}
-        </main>
 
-        <footer className="container mx-auto px-6 py-12 border-t border-white/5 text-neutral-500 text-sm">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+        <div
+          id="main-content"
+          tabIndex={-1}
+          className="min-h-screen container mx-auto px-6 py-10"
+        >
+          {children}
+        </div>
+
+        <footer className="container mx-auto border-t border-white/5 px-6 py-12 text-sm text-neutral-300">
+          <div className="flex items-center justify-between gap-6 max-md:flex-col">
             <p>© 2026 QuickEx Platform. Built by Pulsefy.</p>
-            <div className="flex gap-8 underline underline-offset-4 decoration-white/10 hover:decoration-white/20">
-              <a href="https://github.com/pulsefy/QuickEx" target="_blank">
+            <div className="flex gap-8 underline decoration-white/10 underline-offset-4 hover:decoration-white/20">
+              <a
+                href="https://github.com/pulsefy/QuickEx"
+                target="_blank"
+                rel="noreferrer"
+              >
                 GitHub
               </a>
               <a href="#">Terms</a>

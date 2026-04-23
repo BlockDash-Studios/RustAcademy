@@ -1,102 +1,59 @@
 "use client";
 
-/**
- * AnalyticsDashboard.tsx
- *
- * Interactive analytics dashboard for QuickEx (Issue #175).
- * Charts: Area (volume), Line (tx count), Donut (asset distribution).
- * Fully responsive and themed to QuickEx dark-glass aesthetic.
- */
-
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  AreaChart,
   Area,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
+  AreaChart,
+  CartesianGrid,
   Cell,
-  Tooltip,
   Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  ResponsiveContainer,
 } from "recharts";
 import type {
-  ValueType,
   NameType,
+  ValueType,
 } from "recharts/types/component/DefaultTooltipContent";
 import {
   fetchAnalytics,
-  type DateRange,
   type AnalyticsData,
+  type DateRange,
 } from "@/hooks/analyticsApi";
 
-// ─── Date-range filter ────────────────────────────────────────────────────────
-
-const RANGES: { label: string; value: DateRange }[] = [
+const RANGES: Array<{ label: string; value: DateRange }> = [
   { label: "24h", value: "24h" },
   { label: "7d", value: "7d" },
   { label: "30d", value: "30d" },
   { label: "All Time", value: "all" },
 ];
 
-function DateRangeFilter({
-  active,
-  onChange,
-}: {
-  active: DateRange;
-  onChange: (r: DateRange) => void;
-}) {
-  return (
-    <div className="inline-flex gap-1 p-1 rounded-xl bg-white/5 border border-white/5">
-      {RANGES.map((r) => (
-        <button
-          key={r.value}
-          id={`analytics-range-${r.value}`}
-          onClick={() => onChange(r.value)}
-          className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all ${
-            active === r.value
-              ? "bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
-              : "text-neutral-500 hover:text-white hover:bg-white/5"
-          }`}
-        >
-          {r.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ─── Shared tooltip styles ────────────────────────────────────────────────────
-
 const tooltipStyle = {
   contentStyle: {
-    background: "rgba(10,10,20,0.9)",
-    border: "1px solid rgba(255,255,255,0.06)",
+    background: "rgba(10,10,20,0.96)",
+    border: "1px solid rgba(255,255,255,0.08)",
     borderRadius: "12px",
     color: "#fff",
     fontSize: "12px",
     boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
   },
-  labelStyle: { color: "#6366f1", fontWeight: 800 },
+  labelStyle: { color: "#a5b4fc", fontWeight: 800 },
   cursor: { stroke: "rgba(99,102,241,0.3)", strokeWidth: 2 },
 };
 
-// ─── Skeleton loader ──────────────────────────────────────────────────────────
-
 function ChartSkeleton() {
   return (
-    <div className="animate-pulse flex flex-col gap-3 h-full">
-      <div className="h-4 bg-white/5 rounded w-1/3" />
-      <div className="flex-1 bg-white/[0.03] rounded-2xl" />
+    <div className="flex h-full animate-pulse flex-col gap-3">
+      <div className="h-4 w-1/3 rounded bg-white/5" />
+      <div className="flex-1 rounded-2xl bg-white/[0.03]" />
     </div>
   );
 }
-
-// ─── Stat card used in the summary row ───────────────────────────────────────
 
 function StatCard({
   label,
@@ -108,18 +65,19 @@ function StatCard({
   change?: number;
 }) {
   const positive = (change ?? 0) >= 0;
+
   return (
-    <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/5 flex flex-col gap-1">
-      <p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
+    <div className="flex flex-col gap-1 rounded-2xl border border-white/5 bg-white/[0.03] p-5">
+      <p className="text-[10px] font-black uppercase tracking-widest text-neutral-300">
         {label}
       </p>
       <p className="text-2xl font-black">{value}</p>
       {change !== undefined && (
         <span
-          className={`text-[11px] font-black px-2 py-0.5 w-fit rounded-lg ${
+          className={`w-fit rounded-lg px-2 py-0.5 text-[11px] font-black ${
             positive
-              ? "text-emerald-400 bg-emerald-400/10"
-              : "text-red-400 bg-red-400/10"
+              ? "bg-emerald-400/10 text-emerald-300"
+              : "bg-red-400/10 text-red-300"
           }`}
         >
           {positive ? "+" : ""}
@@ -130,103 +88,115 @@ function StatCard({
   );
 }
 
-// ─── Custom Donut label ───────────────────────────────────────────────────────
-
-function DonutLabel({
-  cx,
-  cy,
-  total,
-}: {
-  cx: number;
-  cy: number;
-  total: number;
-}) {
-  return (
-    <>
-      <text
-        x={cx}
-        y={cy - 8}
-        textAnchor="middle"
-        fill="#6366f1"
-        style={{ fontSize: 11, fontWeight: 900, letterSpacing: 2 }}
-      >
-        TOTAL
-      </text>
-      <text
-        x={cx}
-        y={cy + 12}
-        textAnchor="middle"
-        fill="#fff"
-        style={{ fontSize: 18, fontWeight: 900 }}
-      >
-        {total}%
-      </text>
-    </>
-  );
+function formatMoney(value: number) {
+  return value >= 1000 ? `$${(value / 1000).toFixed(1)}k` : `$${value}`;
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+function getTopAsset(data: AnalyticsData | null) {
+  if (!data || data.assetDist.length === 0) {
+    return "None";
+  }
+
+  return [...data.assetDist].sort((left, right) => right.value - left.value)[0]
+    .name;
+}
 
 export default function AnalyticsDashboard() {
   const [range, setRange] = useState<DateRange>("30d");
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback((r: DateRange) => {
+  const loadAnalytics = useCallback((nextRange: DateRange) => {
     setLoading(true);
-    fetchAnalytics(r).then((d) => {
-      setData(d);
+
+    fetchAnalytics(nextRange).then((nextData) => {
+      setData(nextData);
       setLoading(false);
     });
   }, []);
 
   useEffect(() => {
-    load(range);
-  }, [range, load]);
+    loadAnalytics(range);
+  }, [loadAnalytics, range]);
 
-  const { summary, volume, txCount, assetDist } = data ?? {
-    summary: null,
-    volume: [],
-    txCount: [],
-    assetDist: [],
-  };
+  const summary = data?.summary ?? null;
+  const volume = data?.volume ?? [];
+  const txCount = data?.txCount ?? [];
+  const assetDist = data?.assetDist ?? [];
+  const topAsset = getTopAsset(data);
+  const totalShare = assetDist.reduce((sum, item) => sum + item.value, 0);
 
-  const fmt = (n: number) =>
-    n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${n}`;
+  const srSummary = loading
+    ? `Loading analytics summary for ${range}.`
+    : summary
+      ? `Analytics for ${range}: ${summary.totalTx.toLocaleString()} transactions, ${formatMoney(
+          summary.totalVolume,
+        )} total volume, average transaction size ${formatMoney(
+          summary.avgTxSize,
+        )}, top asset ${topAsset}.`
+      : "Analytics data is unavailable.";
 
   return (
     <section
-      id="analytics-dashboard"
-      className="rounded-3xl bg-black/40 border border-white/5 backdrop-blur-2xl shadow-2xl overflow-hidden"
+      aria-labelledby="analytics-overview-title"
+      className="overflow-hidden rounded-3xl border border-white/5 bg-black/40 shadow-2xl backdrop-blur-2xl"
     >
-      {/* ── Header ── */}
-      <div className="p-6 sm:p-10 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-black mb-1">
-            Analytics Overview
-          </h2>
-          <p className="text-xs sm:text-sm text-neutral-500">
-            Payment volume, transaction counts &amp; asset distribution
-          </p>
+      <div className="border-b border-white/5 p-6 sm:p-10">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <div>
+            <h2
+              id="analytics-overview-title"
+              className="mb-1 text-xl font-black sm:text-2xl"
+            >
+              Analytics Overview
+            </h2>
+            <p className="text-xs text-neutral-300 sm:text-sm">
+              Payment volume, transaction counts, and asset distribution
+            </p>
+          </div>
+
+          <div
+            role="group"
+            aria-label="Select analytics date range"
+            className="inline-flex gap-1 rounded-xl border border-white/5 bg-white/5 p-1"
+          >
+            {RANGES.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                aria-pressed={range === item.value}
+                onClick={() => setRange(item.value)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-black transition-all ${
+                  range === item.value
+                    ? "bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+                    : "text-neutral-200 hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <DateRangeFilter active={range} onChange={setRange} />
+
+        <p className="sr-only" aria-live="polite">
+          {srSummary}
+        </p>
       </div>
 
-      <div className="p-6 sm:p-10 space-y-10">
-        {/* ── Summary stats ── */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="space-y-10 p-6 sm:p-10">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {loading || !summary ? (
-            Array.from({ length: 4 }).map((_, i) => (
+            Array.from({ length: 4 }).map((_, index) => (
               <div
-                key={i}
-                className="animate-pulse h-24 rounded-2xl bg-white/[0.03]"
+                key={index}
+                className="h-24 animate-pulse rounded-2xl bg-white/[0.03]"
               />
             ))
           ) : (
             <>
               <StatCard
                 label="Total Volume"
-                value={fmt(summary.totalVolume)}
+                value={formatMoney(summary.totalVolume)}
                 change={summary.changeVolumePercent}
               />
               <StatCard
@@ -235,26 +205,53 @@ export default function AnalyticsDashboard() {
               />
               <StatCard
                 label="Avg Tx Size"
-                value={fmt(summary.avgTxSize)}
+                value={formatMoney(summary.avgTxSize)}
               />
-              <StatCard
-                label="Top Asset"
-                value={
-                  assetDist.length > 0
-                    ? `${assetDist.sort((a, b) => b.value - a.value)[0].name}`
-                    : "—"
-                }
-              />
+              <StatCard label="Top Asset" value={topAsset} />
             </>
           )}
         </div>
 
-        {/* ── Area Chart: Payment Volume ── */}
+        <div className="grid gap-4 rounded-2xl border border-white/5 bg-white/[0.02] p-4 text-sm text-neutral-200 sm:grid-cols-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-widest text-neutral-300">
+              Volume
+            </p>
+            <p>
+              {summary
+                ? `${formatMoney(summary.totalVolume)} processed in ${range}.`
+                : "Waiting for analytics data."}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-widest text-neutral-300">
+              Transactions
+            </p>
+            <p>
+              {summary
+                ? `${summary.totalTx.toLocaleString()} payments were recorded.`
+                : "Transaction totals will appear here."}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-widest text-neutral-300">
+              Asset Mix
+            </p>
+            <p>
+              {assetDist.length > 0
+                ? `${topAsset} leads the mix with ${Math.max(
+                    ...assetDist.map((item) => item.value),
+                  )}% share.`
+                : "Asset distribution will appear here."}
+            </p>
+          </div>
+        </div>
+
         <div>
-          <h3 className="text-sm font-black uppercase tracking-widest text-neutral-500 mb-5">
+          <h3 className="mb-5 text-sm font-black uppercase tracking-widest text-neutral-300">
             Payment Volume
           </h3>
-          <div className="h-64">
+          <div aria-hidden="true" className="h-64">
             {loading ? (
               <ChartSkeleton />
             ) : (
@@ -265,45 +262,41 @@ export default function AnalyticsDashboard() {
                 >
                   <defs>
                     <linearGradient id="gUsdc" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
                       <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="gXlm" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.2} />
+                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.25} />
                       <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid
                     strokeDasharray="3 3"
-                    stroke="rgba(255,255,255,0.04)"
+                    stroke="rgba(255,255,255,0.06)"
                     vertical={false}
                   />
                   <XAxis
                     dataKey="date"
-                    tick={{ fill: "#525252", fontSize: 10, fontWeight: 700 }}
+                    tick={{ fill: "#cbd5e1", fontSize: 10, fontWeight: 700 }}
                     axisLine={false}
                     tickLine={false}
                     interval="preserveStartEnd"
                   />
                   <YAxis
-                    tick={{ fill: "#525252", fontSize: 10, fontWeight: 700 }}
+                    tick={{ fill: "#cbd5e1", fontSize: 10, fontWeight: 700 }}
                     axisLine={false}
                     tickLine={false}
-                    tickFormatter={(v: number) => `$${v}`}
+                    tickFormatter={(value: number) => `$${value}`}
                   />
                   <Tooltip
                     {...tooltipStyle}
-                    formatter={(v?: ValueType, name?: NameType) => [
-                      `$${Number(v ?? 0).toLocaleString()}`,
+                    formatter={(value?: ValueType, name?: NameType) => [
+                      `$${Number(value ?? 0).toLocaleString()}`,
                       name === "volumeUSDC" ? "USDC" : "XLM",
                     ]}
                   />
                   <Legend
-                    wrapperStyle={{
-                      fontSize: 11,
-                      fontWeight: 800,
-                      paddingTop: 12,
-                    }}
+                    wrapperStyle={{ fontSize: 11, fontWeight: 800, paddingTop: 12 }}
                     formatter={(value) =>
                       value === "volumeUSDC" ? "USDC Volume" : "XLM Volume"
                     }
@@ -311,20 +304,20 @@ export default function AnalyticsDashboard() {
                   <Area
                     type="monotone"
                     dataKey="volumeUSDC"
-                    stroke="#6366f1"
+                    stroke="#818cf8"
                     strokeWidth={2}
                     fill="url(#gUsdc)"
                     dot={false}
-                    activeDot={{ r: 5, fill: "#6366f1" }}
+                    activeDot={{ r: 5, fill: "#818cf8" }}
                   />
                   <Area
                     type="monotone"
                     dataKey="volumeXLM"
-                    stroke="#8b5cf6"
+                    stroke="#c084fc"
                     strokeWidth={2}
                     fill="url(#gXlm)"
                     dot={false}
-                    activeDot={{ r: 5, fill: "#8b5cf6" }}
+                    activeDot={{ r: 5, fill: "#c084fc" }}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -332,14 +325,12 @@ export default function AnalyticsDashboard() {
           </div>
         </div>
 
-        {/* ── Bottom row: Tx Count line + Asset Donut ── */}
-        <div className="grid md:grid-cols-2 gap-10">
-          {/* Line Chart: Transaction Count */}
+        <div className="grid gap-10 md:grid-cols-2">
           <div>
-            <h3 className="text-sm font-black uppercase tracking-widest text-neutral-500 mb-5">
+            <h3 className="mb-5 text-sm font-black uppercase tracking-widest text-neutral-300">
               Transaction Count
             </h3>
-            <div className="h-56">
+            <div aria-hidden="true" className="h-56">
               {loading ? (
                 <ChartSkeleton />
               ) : (
@@ -350,34 +341,37 @@ export default function AnalyticsDashboard() {
                   >
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke="rgba(255,255,255,0.04)"
+                      stroke="rgba(255,255,255,0.06)"
                       vertical={false}
                     />
                     <XAxis
                       dataKey="date"
-                      tick={{ fill: "#525252", fontSize: 10, fontWeight: 700 }}
+                      tick={{ fill: "#cbd5e1", fontSize: 10, fontWeight: 700 }}
                       axisLine={false}
                       tickLine={false}
                       interval="preserveStartEnd"
                     />
                     <YAxis
-                      tick={{ fill: "#525252", fontSize: 10, fontWeight: 700 }}
+                      tick={{ fill: "#cbd5e1", fontSize: 10, fontWeight: 700 }}
                       axisLine={false}
                       tickLine={false}
                     />
                     <Tooltip
                       {...tooltipStyle}
-                      formatter={(v?: ValueType) => [Number(v ?? 0), "Transactions"]}
+                      formatter={(value?: ValueType) => [
+                        Number(value ?? 0),
+                        "Transactions",
+                      ]}
                     />
                     <Line
                       type="monotone"
                       dataKey="count"
-                      stroke="#6366f1"
+                      stroke="#818cf8"
                       strokeWidth={2.5}
                       dot={false}
                       activeDot={{
                         r: 6,
-                        fill: "#6366f1",
+                        fill: "#818cf8",
                         stroke: "rgba(99,102,241,0.3)",
                         strokeWidth: 6,
                       }}
@@ -388,12 +382,11 @@ export default function AnalyticsDashboard() {
             </div>
           </div>
 
-          {/* Donut Chart: Asset Distribution */}
           <div>
-            <h3 className="text-sm font-black uppercase tracking-widest text-neutral-500 mb-5">
+            <h3 className="mb-5 text-sm font-black uppercase tracking-widest text-neutral-300">
               Asset Distribution
             </h3>
-            <div className="h-56 flex items-center justify-center">
+            <div aria-hidden="true" className="h-56">
               {loading ? (
                 <ChartSkeleton />
               ) : (
@@ -406,8 +399,8 @@ export default function AnalyticsDashboard() {
                       innerRadius="52%"
                       outerRadius="75%"
                       dataKey="value"
+                      nameKey="name"
                       paddingAngle={3}
-                      labelLine={false}
                     >
                       {assetDist.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
@@ -415,31 +408,28 @@ export default function AnalyticsDashboard() {
                     </Pie>
                     <Tooltip
                       {...tooltipStyle}
-                      formatter={(v?: ValueType, name?: NameType) => [
-                        `${Number(v ?? 0)}%`,
+                      formatter={(value?: ValueType, name?: NameType) => [
+                        `${Number(value ?? 0)}%`,
                         name ?? "",
                       ]}
                     />
                     <Legend
-                      wrapperStyle={{
-                        fontSize: 11,
-                        fontWeight: 800,
-                      }}
+                      wrapperStyle={{ fontSize: 11, fontWeight: 800 }}
                       formatter={(value) => {
-                        const found = assetDist.find((d) => d.name === value);
+                        const found = assetDist.find((item) => item.name === value);
                         return `${value} ${found ? `(${found.value}%)` : ""}`;
                       }}
-                    />
-                    {/* Centered label rendered manually below via absolute positioning */}
-                    <DonutLabel
-                      cx={0}
-                      cy={0}
-                      total={assetDist.reduce((s, d) => s + d.value, 0)}
                     />
                   </PieChart>
                 </ResponsiveContainer>
               )}
             </div>
+            {!loading && assetDist.length > 0 && (
+              <p className="mt-4 text-sm text-neutral-300">
+                The current mix accounts for {totalShare}% of volume across{" "}
+                {assetDist.length} tracked asset groups.
+              </p>
+            )}
           </div>
         </div>
       </div>

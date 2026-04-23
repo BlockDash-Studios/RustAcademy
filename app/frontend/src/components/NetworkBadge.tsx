@@ -27,7 +27,8 @@ export function NetworkBadge() {
 
   return (
     <div
-      className={`fixed top-4 left-60 px-3 py-1 rounded-full text-xs font-bold transition-all ${badgeStyles[normalized] || ""}`}
+      aria-label={`Network: ${label}`}
+      className={`fixed right-4 top-20 z-40 rounded-full px-3 py-1 text-xs font-bold transition-all md:top-24 ${badgeStyles[normalized] || ""}`}
     >
       {label}
 

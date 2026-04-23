@@ -1,6 +1,10 @@
 "use client";
 
 import CreateAPIKeyModal from "@/components/CreateAPIKeyModal";
+import {
+  type ApiKey,
+  type NewKeyForm,
+} from "@/app/settings/developer/api-key-types";
 import { getQuickexApiBase } from "@/lib/api";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
@@ -8,37 +12,6 @@ import { useCallback, useEffect, useState } from "react";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export const AVAILABLE_SCOPES = [
-  "links:read",
-  "links:write",
-  "transactions:read",
-  "usernames:read",
-] as const;
-
-export type ApiKeyScope = (typeof AVAILABLE_SCOPES)[number];
-
-export type ApiKey = {
-  id: string;
-  name: string;
-  key_prefix: string;
-  scopes: ApiKeyScope[];
-  is_active: boolean;
-  request_count: number;
-  monthly_quota: number;
-  last_used_at: string | null;
-  created_at: string;
-  // client-only UI state
-  revealed?: boolean;
-  copyLabel?: string;
-  /** Set only immediately after creation / rotation */
-  rawKey?: string;
-};
-
-export type NewKeyForm = {
-  name: string;
-  scopes: ApiKeyScope[];
-};
 
 type UsageSummary = {
   total_keys: number;
