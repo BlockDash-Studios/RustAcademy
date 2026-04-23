@@ -47,6 +47,9 @@ pub enum QuickexError {
     StealthAddressAlreadyUsed = 401,
     /// No stealth escrow found for the given stealth address.
     StealthEscrowNotFound = 402,
+    // Batch processing errors (500-599)
+    /// Batch size exceeds the allowed maximum (MAX_BATCH_SIZE).
+    BatchTooLarge = 500,
     // Internal/unexpected conditions (900-999)
     InternalError = 900,
     InvalidTimeout = 901,

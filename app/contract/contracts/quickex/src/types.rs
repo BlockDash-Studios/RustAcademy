@@ -2,7 +2,7 @@
 //!
 //! See [`crate::storage`] for the storage schema and key layout.
 
-use soroban_sdk::{contracttype, Address, BytesN};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN};
 
 /// Escrow entry status.
 ///
@@ -145,4 +145,48 @@ pub struct StealthEscrowEntry {
 pub struct FeeConfig {
     /// Fee in basis points (1 = 0.01%, 100 = 1%, 10000 = 100%).
     pub fee_bps: u32,
+}
+
+/// Parameters for a single withdrawal in a batch operation.
+///
+/// Bundles the per-item arguments for [`QuickexContract::batch_withdraw`].
+#[contracttype]
+#[derive(Clone)]
+pub struct BatchWithdrawParams {
+    /// Amount to withdraw; must be positive and match the escrow amount.
+    pub amount: i128,
+    /// Commitment hash for the escrow being withdrawn.
+    pub commitment: BytesN<32>,
+    /// Recipient address (must authorize the call).
+    pub to: Address,
+    /// Salt used when creating the original deposit commitment.
+    pub salt: Bytes,
+}
+
+/// Parameters for a single refund in a batch operation.
+///
+/// Bundles the per-item arguments for [`QuickexContract::batch_refund`].
+#[contracttype]
+#[derive(Clone)]
+pub struct BatchRefundParams {
+    /// 32-byte commitment hash identifying the escrow to refund.
+    pub commitment: BytesN<32>,
+    /// Caller address; must equal the original depositor (must authorize).
+    pub caller: Address,
+}
+
+/// Per-item outcome in a batch operation.
+///
+/// `Ok(true)` means the item succeeded; `Err(code)` carries the [`QuickexError`]
+/// discriminant (u32) so the result is `contracttype`-serialisable.
+///
+/// Using `u32` for the error code keeps the type `contracttype`-compatible
+/// without pulling in the full error enum into the ABI.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BatchItemResult {
+    /// Item processed successfully.
+    Ok,
+    /// Item failed; carries the [`crate::errors::QuickexError`] discriminant.
+    Err(u32),
 }

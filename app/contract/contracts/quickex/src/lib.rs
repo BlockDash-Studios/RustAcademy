@@ -2,6 +2,9 @@
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 
 mod admin;
+mod batch;
+#[cfg(test)]
+mod batch_test;
 #[cfg(test)]
 mod bench_test;
 mod commitment;
@@ -28,7 +31,10 @@ mod types;
 
 use errors::QuickexError;
 use storage::*;
-use types::{EscrowEntry, EscrowStatus, FeeConfig, PrivacyAwareEscrowView, StealthDepositParams};
+use types::{
+    BatchItemResult, BatchRefundParams, BatchWithdrawParams, EscrowEntry, EscrowStatus, FeeConfig,
+    PrivacyAwareEscrowView, StealthDepositParams,
+};
 
 /// QuickEx Privacy Contract
 ///
@@ -695,6 +701,50 @@ impl QuickexContract {
     /// * `stealth_address` – The 32-byte one-time stealth address.
     pub fn get_stealth_status(env: Env, stealth_address: BytesN<32>) -> Option<EscrowStatus> {
         stealth::get_stealth_status(&env, &stealth_address)
+    }
+
+    // -----------------------------------------------------------------------
+    // Batch entry points (Wave 4 – Performance)
+    // -----------------------------------------------------------------------
+
+    /// Process multiple withdrawals in a single transaction (non-atomic).
+    ///
+    /// Each item is attempted independently; a failure in one item does not
+    /// roll back the others. The caller receives a per-item result vector.
+    ///
+    /// # Arguments
+    /// * `env`   – The contract environment.
+    /// * `items` – Up to `MAX_BATCH_SIZE` (10) withdrawal parameter sets.
+    ///
+    /// # Errors (whole-call)
+    /// * `ContractPaused`  – contract is globally paused.
+    /// * `OperationPaused` – the Withdrawal feature is paused.
+    /// * `BatchTooLarge`   – `items.len() > MAX_BATCH_SIZE`.
+    pub fn batch_withdraw(
+        env: Env,
+        items: Vec<BatchWithdrawParams>,
+    ) -> Result<Vec<BatchItemResult>, QuickexError> {
+        batch::batch_withdraw(&env, items)
+    }
+
+    /// Process multiple refunds in a single transaction (non-atomic).
+    ///
+    /// Each item is attempted independently; a failure in one item does not
+    /// roll back the others. The caller receives a per-item result vector.
+    ///
+    /// # Arguments
+    /// * `env`   – The contract environment.
+    /// * `items` – Up to `MAX_BATCH_SIZE` (10) refund parameter sets.
+    ///
+    /// # Errors (whole-call)
+    /// * `ContractPaused`  – contract is globally paused.
+    /// * `OperationPaused` – the Refund feature is paused.
+    /// * `BatchTooLarge`   – `items.len() > MAX_BATCH_SIZE`.
+    pub fn batch_refund(
+        env: Env,
+        items: Vec<BatchRefundParams>,
+    ) -> Result<Vec<BatchItemResult>, QuickexError> {
+        batch::batch_refund(&env, items)
     }
 
     /// Upgrade the contract to a new WASM implementation (**Admin only**).
