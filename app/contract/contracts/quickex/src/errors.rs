@@ -18,6 +18,7 @@ pub enum QuickexError {
     // Auth/admin failures (200-299)
     Unauthorized = 200,
     AlreadyInitialized = 201,
+    InsufficientRole = 202,
     // State, escrow, and commitment violations (300-399)
     ContractPaused = 300,
     PrivacyAlreadySet = 301,
@@ -44,6 +45,8 @@ pub enum QuickexError {
     EvidenceWindowNotEnded = 314,
     /// Dispute has timed out; only auto-resolution is allowed.
     DisputeTimedOut = 315,
+    /// The stored contract version cannot be migrated by this release.
+    InvalidContractVersion = 314,
     // Stealth address errors (400-499)
     /// Derived stealth address does not match the provided one.
     StealthAddressMismatch = 400,
@@ -53,4 +56,5 @@ pub enum QuickexError {
     StealthEscrowNotFound = 402,
     // Internal/unexpected conditions (900-999)
     InternalError = 900,
+    InvalidTimeout = 901,
 }

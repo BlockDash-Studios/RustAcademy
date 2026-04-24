@@ -9,9 +9,10 @@ import {
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { ScheduleModule } from "@nestjs/schedule";
-import { APP_INTERCEPTOR } from "@nestjs/core";
+import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 
 import { AppConfigModule } from "./config";
+import { AssetMetadataModule } from "./asset-metadata/asset-metadata.module";
 import { HealthModule } from "./health/health.module";
 import { StellarModule } from "./stellar/stellar.module";
 import { SupabaseModule } from "./supabase/supabase.module";
@@ -31,6 +32,9 @@ import { ApiKeysModule } from "./api-keys/api-keys.module";
 import { MarketplaceModule } from "./marketplace/marketplace.module";
 import { SentryModule } from "./sentry";
 import { CacheModule } from "./common/services/cache.module";
+import { FiatRampsModule } from "./fiat-ramps/fiat-ramps.module";
+import { CustomThrottlerGuard } from "./auth/guards/custom-throttler.guard";
+import { throttlerModuleProfiles } from "./config/rate-limit.config";
 
 type AppImport =
   | Type<unknown>
@@ -50,14 +54,10 @@ type AppImport =
         wildcard: true,
         delimiter: ".",
       }),
-      ThrottlerModule.forRoot([
-        {
-          ttl: 60000,
-          limit: 20,
-        },
-      ]),
+      ThrottlerModule.forRoot(throttlerModuleProfiles),
       SupabaseModule,
       HealthModule,
+      AssetMetadataModule,
       StellarModule,
       UsernamesModule,
       MetricsModule,
@@ -68,6 +68,7 @@ type AppImport =
       IngestionModule,
       ApiKeysModule,
       MarketplaceModule,
+      FiatRampsModule,
     ];
 
     // In development, if SUPABASE_URL points to a localhost placeholder (i.e. you don't
@@ -97,6 +98,10 @@ type AppImport =
     return baseImports;
   })(),
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: CustomThrottlerGuard,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: MetricsInterceptor,

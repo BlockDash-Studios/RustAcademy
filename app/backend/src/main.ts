@@ -20,6 +20,7 @@ import { AppConfigService } from "./config";
 import { GlobalHttpExceptionFilter } from "./common/filters/global-http-exception.filter";
 import { mapValidationErrors } from "./common/utils/validation-error.mapper";
 import { SentryExceptionFilter, SentryService } from "./sentry";
+import { MetricsService } from "./metrics/metrics.service";
 
 async function bootstrap() {
   const logger = new Logger("Bootstrap");
@@ -67,7 +68,6 @@ async function bootstrap() {
         "x-correlation-id",
         "X-API-Key",
       ],
-
     });
   }
 
@@ -93,9 +93,10 @@ async function bootstrap() {
   // Register Sentry exception filter FIRST so it captures errors,
   // then the existing HTTP exception filter handles the response.
   const sentryService = app.get(SentryService);
+  const metricsService = app.get(MetricsService);
   app.useGlobalFilters(
     new SentryExceptionFilter(sentryService, configService),
-    new GlobalHttpExceptionFilter(configService),
+    new GlobalHttpExceptionFilter(configService, metricsService),
   );
 
   // Swagger setup

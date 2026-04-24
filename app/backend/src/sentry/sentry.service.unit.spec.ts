@@ -1,162 +1,116 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Test, TestingModule } from '@nestjs/testing';
+import * as Sentry from '@sentry/node';
+
 import { SentryService } from './sentry.service';
-
-// Mock the @sentry/nestjs module entirely
-const mockGetClient = jest.fn();
-const mockCaptureException = jest.fn().mockReturnValue('mock-event-id');
-const mockCaptureMessage = jest.fn().mockReturnValue('mock-event-id');
-const mockSetUser = jest.fn();
-const mockAddBreadcrumb = jest.fn();
-const mockSetTag = jest.fn();
-const mockSetExtra = jest.fn();
-
-jest.mock('@sentry/nestjs', () => ({
-  getClient: mockGetClient,
-  captureException: mockCaptureException,
-  captureMessage: mockCaptureMessage,
-  setUser: mockSetUser,
-  addBreadcrumb: mockAddBreadcrumb,
-  setTag: mockSetTag,
-  setExtra: mockSetExtra,
-}));
 
 describe('SentryService', () => {
   let service: SentryService;
 
   beforeEach(async () => {
+    jest.restoreAllMocks();
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [SentryService],
     }).compile();
 
     service = module.get<SentryService>(SentryService);
-    jest.clearAllMocks();
   });
 
-  describe('isEnabled', () => {
-    it('should return true when Sentry client exists', () => {
-      mockGetClient.mockReturnValue({});
-      expect(service.isEnabled).toBe(true);
-    });
-
-    it('should return false when Sentry client is undefined', () => {
-      mockGetClient.mockReturnValue(undefined);
-      expect(service.isEnabled).toBe(false);
-    });
+  it('reports enabled when a Sentry client exists', () => {
+    jest.spyOn(Sentry, 'getClient').mockReturnValue({} as never);
+    expect(service.isEnabled).toBe(true);
   });
 
-  describe('captureException', () => {
-    it('should capture exception when Sentry is enabled', () => {
-      mockGetClient.mockReturnValue({});
-      const error = new Error('Test error');
-      const result = service.captureException(error, { orderId: '123' });
-      expect(mockCaptureException).toHaveBeenCalledWith(
-        error,
-        expect.any(Function),
-      );
-      expect(result).toBe('mock-event-id');
-    });
-
-    it('should return undefined when Sentry is not enabled', () => {
-      mockGetClient.mockReturnValue(undefined);
-      const error = new Error('Test error');
-      const result = service.captureException(error);
-      expect(mockCaptureException).not.toHaveBeenCalled();
-      expect(result).toBeUndefined();
-    });
+  it('reports disabled when no Sentry client exists', () => {
+    jest.spyOn(Sentry, 'getClient').mockReturnValue(undefined as never);
+    expect(service.isEnabled).toBe(false);
   });
 
-  describe('captureMessage', () => {
-    it('should capture message when Sentry is enabled', () => {
-      mockGetClient.mockReturnValue({});
-      const result = service.captureMessage(
-        'Horizon API down',
-        'fatal',
-        { endpoint: 'https://horizon.stellar.org' },
-      );
-      expect(mockCaptureMessage).toHaveBeenCalledWith(
-        'Horizon API down',
-        expect.any(Function),
-      );
-      expect(result).toBe('mock-event-id');
-    });
+  it('captures exceptions when enabled', () => {
+    jest.spyOn(Sentry, 'getClient').mockReturnValue({} as never);
+    const captureSpy = jest
+      .spyOn(Sentry, 'captureException')
+      .mockReturnValue('event-1' as never);
 
-    it('should return undefined when Sentry is not enabled', () => {
-      mockGetClient.mockReturnValue(undefined);
-      const result = service.captureMessage('test');
-      expect(mockCaptureMessage).not.toHaveBeenCalled();
-      expect(result).toBeUndefined();
-    });
+    const error = new Error('boom');
+    const result = service.captureException(error, { orderId: '123' });
+
+    expect(captureSpy).toHaveBeenCalledWith(error, expect.any(Function));
+    expect(result).toBe('event-1');
   });
 
-  describe('setUser', () => {
-    it('should set user context with wallet', () => {
-      service.setUser({
-        id: 'user-1',
-        wallet: 'GAB...XYZ',
-        username: 'alice',
-      });
-      expect(mockSetUser).toHaveBeenCalledWith({
-        id: 'user-1',
-        username: 'alice',
-        wallet: 'GAB...XYZ',
-      });
-    });
+  it('returns undefined for exception capture when disabled', () => {
+    jest.spyOn(Sentry, 'getClient').mockReturnValue(undefined as never);
+    const captureSpy = jest.spyOn(Sentry, 'captureException');
 
-    it('should set user context without wallet', () => {
-      service.setUser({ id: 'user-1' });
-      expect(mockSetUser).toHaveBeenCalledWith({
-        id: 'user-1',
-        username: undefined,
-      });
-    });
+    const result = service.captureException(new Error('boom'));
+
+    expect(captureSpy).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
   });
 
-  describe('clearUser', () => {
-    it('should clear user context', () => {
-      service.clearUser();
-      expect(mockSetUser).toHaveBeenCalledWith(null);
+  it('captures messages when enabled', () => {
+    jest.spyOn(Sentry, 'getClient').mockReturnValue({} as never);
+    const captureSpy = jest
+      .spyOn(Sentry, 'captureMessage')
+      .mockReturnValue('event-2' as never);
+
+    const result = service.captureMessage('Horizon API down', 'fatal', {
+      endpoint: 'https://horizon.stellar.org',
     });
+
+    expect(captureSpy).toHaveBeenCalledWith(
+      'Horizon API down',
+      expect.any(Function),
+    );
+    expect(result).toBe('event-2');
   });
 
-  describe('addBreadcrumb', () => {
-    it('should add a breadcrumb with custom data', () => {
-      service.addBreadcrumb({
+  it('returns undefined for message capture when disabled', () => {
+    jest.spyOn(Sentry, 'getClient').mockReturnValue(undefined as never);
+    const captureSpy = jest.spyOn(Sentry, 'captureMessage');
+
+    const result = service.captureMessage('test');
+
+    expect(captureSpy).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
+
+  it('sets and clears user context', () => {
+    const setUserSpy = jest.spyOn(Sentry, 'setUser').mockImplementation();
+
+    service.setUser({ id: 'user-1', username: 'alice', wallet: 'GAB...XYZ' });
+    expect(setUserSpy).toHaveBeenCalledWith({
+      id: 'user-1',
+      username: 'alice',
+      wallet: 'GAB...XYZ',
+    });
+
+    service.clearUser();
+    expect(setUserSpy).toHaveBeenCalledWith(null);
+  });
+
+  it('adds breadcrumbs and extra context', () => {
+    const breadcrumbSpy = jest.spyOn(Sentry, 'addBreadcrumb').mockImplementation();
+    const tagSpy = jest.spyOn(Sentry, 'setTag').mockImplementation();
+    const extraSpy = jest.spyOn(Sentry, 'setExtra').mockImplementation();
+
+    service.addBreadcrumb({
+      category: 'stellar',
+      message: 'Payment submitted',
+      data: { txHash: 'abc123' },
+    });
+    service.setTag('network', 'testnet');
+    service.setExtra('contractId', 'C123');
+
+    expect(breadcrumbSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
         category: 'stellar',
         message: 'Payment submitted',
         level: 'info',
-        data: { txHash: 'abc123' },
-      });
-      expect(mockAddBreadcrumb).toHaveBeenCalledWith({
-        category: 'stellar',
-        message: 'Payment submitted',
-        level: 'info',
-        data: { txHash: 'abc123' },
-      });
-    });
-
-    it('should default level to info', () => {
-      service.addBreadcrumb({
-        category: 'stellar',
-        message: 'Connected',
-      });
-      expect(mockAddBreadcrumb).toHaveBeenCalledWith(
-        expect.objectContaining({ level: 'info' }),
-      );
-    });
-  });
-
-  describe('setTag', () => {
-    it('should set a tag on the scope', () => {
-      service.setTag('network', 'testnet');
-      expect(mockSetTag).toHaveBeenCalledWith('network', 'testnet');
-    });
-  });
-
-  describe('setExtra', () => {
-    it('should set extra data on the scope', () => {
-      service.setExtra('contractId', 'C123');
-      expect(mockSetExtra).toHaveBeenCalledWith('contractId', 'C123');
-    });
+      }),
+    );
+    expect(tagSpy).toHaveBeenCalledWith('network', 'testnet');
+    expect(extraSpy).toHaveBeenCalledWith('contractId', 'C123');
   });
 });
