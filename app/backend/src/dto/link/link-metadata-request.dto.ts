@@ -96,6 +96,55 @@ export class LinkMetadataRequestDto {
   privacy?: boolean;
 
   @ApiPropertyOptional({
+    description: 'X-Ray v2: Stealth address mode enabled',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  stealthEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: Ephemeral public key (32 bytes hex). If provided, used to derive stealth address.',
+    example: 'a1b2...c3d4',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-fA-F0-9]{64}$/, {
+    message: 'Ephemeral public key must be a 32-byte hex string',
+  })
+  ephPub?: string;
+
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: Recipient spend public key (32 bytes hex)',
+    example: 'd4e5...f12a',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-fA-F0-9]{64}$/, {
+    message: 'Spend public key must be a 32-byte hex string',
+  })
+  spendPubKey?: string;
+
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: Encrypted recipient address (iv:authTag:ciphertext)',
+  })
+  @IsOptional()
+  @IsString()
+  encryptedRecipient?: string;
+
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: Multi-sig threshold for withdrawal',
+    example: 1,
+    minimum: 1,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Type(() => Number)
+  multiSigThreshold?: number;
+
+  @ApiPropertyOptional({
     description: 'Expiration in days (1-365)',
     example: 30,
     minimum: 1,

@@ -47,6 +47,8 @@ pub enum QuickexError {
     StealthAddressAlreadyUsed = 401,
     /// No stealth escrow found for the given stealth address.
     StealthEscrowNotFound = 402,
+    /// X-Ray v2: Not enough signers authorized the stealth withdrawal.
+    InsufficientSigners = 403,
     // Internal/unexpected conditions (900-999)
     InternalError = 900,
     InvalidTimeout = 901,

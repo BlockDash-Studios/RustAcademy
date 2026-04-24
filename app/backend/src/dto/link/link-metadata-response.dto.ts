@@ -52,6 +52,41 @@ export class LinkMetadataResponseDto {
   })
   privacy!: boolean;
 
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: Stealth address mode enabled',
+    example: false,
+  })
+  stealthEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: One-time stealth address (32 bytes hex)',
+    example: 'e9f1...2a3b',
+  })
+  stealthAddress?: string;
+
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: Ephemeral public key (32 bytes hex)',
+    example: 'a1b2...c3d4',
+  })
+  ephPub?: string;
+
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: Recipient spend public key (32 bytes hex)',
+    example: 'd4e5...f12a',
+  })
+  spendPubKey?: string;
+
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: Encrypted recipient address (iv:authTag:ciphertext)',
+  })
+  encryptedRecipient?: string;
+
+  @ApiPropertyOptional({
+    description: 'X-Ray v2: Multi-sig threshold for withdrawal',
+    example: 1,
+  })
+  multiSigThreshold?: number;
+
   @ApiProperty({
     description: 'Expiration date',
     example: '2026-02-24T12:00:00.000Z',

@@ -2,6 +2,7 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { LinkConstraints, AssetCode, MemoType } from './constants';
 import { LinkMetadataRequestDto, LinkMetadataResponseDto } from '../dto';
 import { LinkValidationError, LinkErrorCode } from './errors';
+import { CryptoUtils } from '../common/utils/crypto.utils';
 import {
   PathPreviewService,
   type PathPreviewRow,
@@ -29,6 +30,29 @@ export class LinksService {
     const destination = this.validateDestination(request.destination);
     const referenceId = this.validateReferenceId(request.referenceId);
 
+    // X-Ray v2: Stealth Address Logic
+    let stealthAddress: string | undefined;
+    let ephPub = request.ephPub;
+    let encryptedRecipient = request.encryptedRecipient;
+
+    if (request.stealthEnabled && request.spendPubKey) {
+      // If ephPub not provided by client, server generates one (non-custodial: server doesn't keep priv key)
+      if (!ephPub) {
+        const keypair = CryptoUtils.generateEphemeralKeypair();
+        ephPub = keypair.publicKey;
+        // In a real production app, the server would return the eph_priv to the client 
+        // via a secure one-time channel or have the client generate it locally.
+      }
+
+      const sharedSecret = CryptoUtils.deriveSharedSecret(ephPub, request.spendPubKey);
+      stealthAddress = CryptoUtils.deriveStealthAddress(request.spendPubKey, sharedSecret);
+
+      // If destination is provided, encrypt it using the shared secret
+      if (destination && !encryptedRecipient) {
+        encryptedRecipient = CryptoUtils.encryptRecipientData(destination, sharedSecret);
+      }
+    }
+
     // Normalize asset symbol to canonical form
     const normalizedAsset = this.normalizeAssetSymbol(asset);
 
@@ -46,6 +70,8 @@ export class LinksService {
       destination,
       referenceId,
       acceptedAssets,
+      stealthAddress,
+      ephPub,
     );
 
     const warnings: string[] = [];
@@ -81,10 +107,16 @@ export class LinksService {
       memoType,
       asset: normalizedAsset,
       privacy,
+      stealthEnabled: request.stealthEnabled,
+      stealthAddress,
+      ephPub,
+      spendPubKey: request.spendPubKey,
+      encryptedRecipient,
+      multiSigThreshold: request.multiSigThreshold,
       expiresAt,
       canonical,
       username,
-      destination,
+      destination: request.stealthEnabled ? null : destination, // Hide destination if stealth enabled
       referenceId,
       acceptedAssets,
       swapOptions,
@@ -365,6 +397,8 @@ export class LinksService {
     destination?: string | null,
     referenceId?: string | null,
     acceptedAssets?: string[] | null,
+    stealthAddress?: string,
+    ephPub?: string,
   ): string {
     const params = new URLSearchParams();
     params.set('amount', amount);
@@ -372,11 +406,13 @@ export class LinksService {
 
     if (memo) params.set('memo', memo);
     if (username) params.set('username', username);
-    if (destination) params.set('destination', destination);
+    if (destination && !stealthAddress) params.set('destination', destination);
     if (referenceId) params.set('ref', referenceId);
     if (acceptedAssets && acceptedAssets.length > 0) {
       params.set('acceptedAssets', acceptedAssets.join(','));
     }
+    if (stealthAddress) params.set('stealth', stealthAddress);
+    if (ephPub) params.set('eph', ephPub);
 
     return params.toString();
   }
@@ -394,7 +430,9 @@ export class LinksService {
     }
 
     // Link type classification
-    if (request.privacy) {
+    if (request.stealthEnabled) {
+      metadata.linkType = 'stealth';
+    } else if (request.privacy) {
       metadata.linkType = 'private';
     } else if (request.username) {
       metadata.linkType = 'username';
@@ -457,7 +495,7 @@ export class LinksService {
 
     if (request.memo) score += 1;
     if (request.expirationDays) score += 1;
-    if (request.privacy) score += 1;
+    if (request.privacy || request.stealthEnabled) score += 1;
     if (request.destination) score += 1;
 
     if (score >= 3) return 'high';

@@ -690,11 +690,12 @@ impl QuickexContract {
     /// `eph_pub`.  The contract re-derives the stealth address; if it matches,
     /// funds are transferred to `recipient`.
     ///
-    /// The `recipient` address is only revealed at withdrawal time and is not
-    /// linked to any prior on-chain activity.
+    /// If `multi_sig_threshold` > 1, then `signers` must contain enough
+    /// authorized addresses.
     ///
     /// # Arguments
     /// * `recipient`       – Address to receive the funds (must authorize).
+    /// * `signers`         – Optional list of additional signers for multi-sig.
     /// * `eph_pub`         – Ephemeral public key from the registration event.
     /// * `spend_pub`       – Recipient's spend public key (32 bytes).
     /// * `stealth_address` – The one-time stealth address to withdraw from.
@@ -704,10 +705,12 @@ impl QuickexContract {
     /// * `AlreadySpent`           – already withdrawn or refunded.
     /// * `EscrowExpired`          – escrow has passed its expiry.
     /// * `StealthAddressMismatch` – re-derived address does not match.
+    /// * `InsufficientSigners`    – not enough signers authorized.
     /// * `ContractPaused`         – contract is paused.
     pub fn stealth_withdraw(
         env: Env,
         recipient: Address,
+        signers: Vec<Address>,
         eph_pub: BytesN<32>,
         spend_pub: BytesN<32>,
         stealth_address: BytesN<32>,
@@ -715,7 +718,7 @@ impl QuickexContract {
         if admin::is_paused(&env) {
             return Err(QuickexError::ContractPaused);
         }
-        stealth::stealth_withdraw(&env, recipient, eph_pub, spend_pub, stealth_address)
+        stealth::stealth_withdraw(&env, recipient, signers, eph_pub, spend_pub, stealth_address)
     }
 
     /// Get the status of a stealth escrow (read-only).

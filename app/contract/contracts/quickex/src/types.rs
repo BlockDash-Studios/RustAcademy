@@ -107,6 +107,8 @@ pub struct StealthDepositParams {
     pub stealth_address: BytesN<32>,
     /// Seconds until expiry; 0 = no expiry.
     pub timeout_secs: u64,
+    /// X-Ray v2: Multi-sig threshold for withdrawal (default: 1).
+    pub multi_sig_threshold: u32,
 }
 
 /// Stealth escrow entry for Privacy v2 (Issue #157).
@@ -135,6 +137,8 @@ pub struct StealthEscrowEntry {
     pub created_at: u64,
     /// Expiry timestamp; `0` means no expiry.
     pub expires_at: u64,
+    /// X-Ray v2: Multi-sig threshold for withdrawal.
+    pub multi_sig_threshold: u32,
 }
 
 /// Fee configuration for the platform.

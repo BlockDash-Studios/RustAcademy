@@ -109,6 +109,7 @@ pub fn register_ephemeral_key(
         spend_pub,
         stealth_address,
         timeout_secs,
+        multi_sig_threshold,
     } = params;
 
     if amount <= 0 {
@@ -151,6 +152,7 @@ pub fn register_ephemeral_key(
         status: EscrowStatus::Pending,
         created_at: now,
         expires_at,
+        multi_sig_threshold: if multi_sig_threshold > 0 { multi_sig_threshold } else { 1 },
     };
 
     put_stealth_escrow(env, &stealth_address, &entry);
@@ -177,18 +179,19 @@ pub fn register_ephemeral_key(
 /// `eph_pub` from the registration event.  The contract re-derives the
 /// stealth address and, if it matches, transfers funds to `recipient`.
 ///
-/// The `recipient` address is the caller's *real* on-chain address for
-/// receiving the tokens – it is only revealed at withdrawal time and is
-/// not linked to the original stealth address in any prior transaction.
+/// If the escrow has a `multi_sig_threshold` > 1, then all `signers` must
+/// authorize the transaction.
 ///
 /// # Errors
 /// - [`StealthEscrowNotFound`]  – no escrow for this stealth address.
 /// - [`AlreadySpent`]           – escrow already withdrawn or refunded.
 /// - [`EscrowExpired`]          – escrow has passed its expiry.
 /// - [`StealthAddressMismatch`] – re-derived address does not match.
+/// - [`InsufficientSigners`]    – not enough signers authorized the call.
 pub fn stealth_withdraw(
     env: &Env,
     recipient: Address,
+    signers: soroban_sdk::Vec<Address>,
     eph_pub: BytesN<32>,
     spend_pub: BytesN<32>,
     stealth_address: BytesN<32>,
@@ -204,6 +207,16 @@ pub fn stealth_withdraw(
 
     if entry.expires_at > 0 && env.ledger().timestamp() >= entry.expires_at {
         return Err(QuickexError::EscrowExpired);
+    }
+
+    // X-Ray v2: Verify multi-sig threshold
+    if entry.multi_sig_threshold > 1 {
+        if signers.len() < entry.multi_sig_threshold {
+            return Err(QuickexError::InsufficientSigners);
+        }
+        for signer in signers.iter() {
+            signer.require_auth();
+        }
     }
 
     // Verify the caller knows the correct spend_pub for this stealth address.

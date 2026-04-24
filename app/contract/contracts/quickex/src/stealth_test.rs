@@ -6,7 +6,7 @@ use crate::{
 };
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Address, BytesN, Env,
+    token, Address, BytesN, Env, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -47,6 +47,7 @@ fn make_params(
     spend_pub: BytesN<32>,
     stealth_address: BytesN<32>,
     timeout_secs: u64,
+    multi_sig_threshold: u32,
 ) -> StealthDepositParams {
     StealthDepositParams {
         sender,
@@ -56,6 +57,7 @@ fn make_params(
         spend_pub,
         stealth_address,
         timeout_secs,
+        multi_sig_threshold,
     }
 }
 
@@ -86,6 +88,7 @@ fn test_stealth_full_flow() {
         spend_pub.clone(),
         stealth_address.clone(),
         0,
+        1,
     ));
 
     assert_eq!(returned_stealth, stealth_address);
@@ -94,13 +97,60 @@ fn test_stealth_full_flow() {
         Some(EscrowStatus::Pending)
     );
 
-    let ok = client.stealth_withdraw(&recipient, &eph_pub, &spend_pub, &stealth_address);
+    let signers = Vec::new(&env);
+    let ok = client.stealth_withdraw(&recipient, &signers, &eph_pub, &spend_pub, &stealth_address);
     assert!(ok);
 
     assert_eq!(
         client.get_stealth_status(&stealth_address),
         Some(EscrowStatus::Spent)
     );
+
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&recipient), amount);
+}
+
+/// X-Ray v2: Multi-sig threshold withdrawal.
+#[test]
+fn test_stealth_multi_sig_flow() {
+    let (env, client) = setup();
+    let token = create_test_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let amount: i128 = 5_000;
+
+    let eph_pub: BytesN<32> = BytesN::from_array(&env, &[20u8; 32]);
+    let spend_pub: BytesN<32> = BytesN::from_array(&env, &[21u8; 32]);
+    let stealth_address = compute_stealth_address(&env, &eph_pub, &spend_pub);
+
+    mint(&env, &token, &sender, amount);
+
+    client.register_ephemeral_key(&make_params(
+        sender,
+        token.clone(),
+        amount,
+        eph_pub.clone(),
+        spend_pub.clone(),
+        stealth_address.clone(),
+        0,
+        2, // Threshold of 2
+    ));
+
+    // Withdraw with only 1 signer must fail.
+    let mut signers = Vec::new(&env);
+    signers.push_back(signer1.clone());
+    let err = client
+        .try_stealth_withdraw(&recipient, &signers, &eph_pub, &spend_pub, &stealth_address)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, QuickexError::InsufficientSigners);
+
+    // Withdraw with 2 signers must succeed.
+    signers.push_back(signer2.clone());
+    let ok = client.stealth_withdraw(&recipient, &signers, &eph_pub, &spend_pub, &stealth_address);
+    assert!(ok);
 
     let token_client = token::Client::new(&env, &token);
     assert_eq!(token_client.balance(&recipient), amount);
@@ -129,6 +179,7 @@ fn test_register_wrong_stealth_address_fails() {
             spend_pub,
             wrong_stealth,
             0,
+            1,
         ))
         .unwrap_err()
         .unwrap();
@@ -158,6 +209,7 @@ fn test_register_duplicate_stealth_address_fails() {
         spend_pub.clone(),
         stealth_address.clone(),
         0,
+        1,
     ));
 
     let err = client
@@ -169,6 +221,7 @@ fn test_register_duplicate_stealth_address_fails() {
             spend_pub,
             stealth_address,
             0,
+            1,
         ))
         .unwrap_err()
         .unwrap();
@@ -199,12 +252,14 @@ fn test_stealth_withdraw_wrong_spend_pub_fails() {
         spend_pub,
         stealth_address.clone(),
         0,
+        1,
     ));
 
     let wrong_spend_pub: BytesN<32> = BytesN::from_array(&env, &[99u8; 32]);
+    let signers = Vec::new(&env);
 
     let err = client
-        .try_stealth_withdraw(&recipient, &eph_pub, &wrong_spend_pub, &stealth_address)
+        .try_stealth_withdraw(&recipient, &signers, &eph_pub, &wrong_spend_pub, &stealth_address)
         .unwrap_err()
         .unwrap();
 
@@ -234,12 +289,14 @@ fn test_stealth_double_withdraw_fails() {
         spend_pub.clone(),
         stealth_address.clone(),
         0,
+        1,
     ));
 
-    client.stealth_withdraw(&recipient, &eph_pub, &spend_pub, &stealth_address);
+    let signers = Vec::new(&env);
+    client.stealth_withdraw(&recipient, &signers, &eph_pub, &spend_pub, &stealth_address);
 
     let err = client
-        .try_stealth_withdraw(&recipient, &eph_pub, &spend_pub, &stealth_address)
+        .try_stealth_withdraw(&recipient, &signers, &eph_pub, &spend_pub, &stealth_address)
         .unwrap_err()
         .unwrap();
 
@@ -269,12 +326,14 @@ fn test_stealth_withdraw_after_expiry_fails() {
         spend_pub.clone(),
         stealth_address.clone(),
         100,
+        1,
     ));
 
     env.ledger().with_mut(|l| l.timestamp += 200);
+    let signers = Vec::new(&env);
 
     let err = client
-        .try_stealth_withdraw(&recipient, &eph_pub, &spend_pub, &stealth_address)
+        .try_stealth_withdraw(&recipient, &signers, &eph_pub, &spend_pub, &stealth_address)
         .unwrap_err()
         .unwrap();
 
@@ -301,6 +360,7 @@ fn test_stealth_register_zero_amount_fails() {
             spend_pub,
             stealth_address,
             0,
+            1,
         ))
         .unwrap_err()
         .unwrap();
@@ -343,6 +403,7 @@ fn test_stealth_register_fails_when_paused() {
             spend_pub,
             stealth_address,
             0,
+            1,
         ))
         .unwrap_err()
         .unwrap();
