@@ -187,6 +187,59 @@ pub(crate) fn publish_escrow_disputed(env: &Env, commitment: BytesN<32>, arbiter
     .publish(env);
 }
 
+#[contractevent(topics = ["TOPIC_ESCROW", "EvidenceWindowUpdated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvidenceWindowUpdatedEvent {
+    #[topic]
+    pub escrow_id: BytesN<32>,
+
+    pub evidence_window_end: u64,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_evidence_window_updated(
+    env: &Env,
+    commitment: BytesN<32>,
+    evidence_window_end: u64,
+) {
+    EvidenceWindowUpdatedEvent {
+        escrow_id: commitment,
+        evidence_window_end,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_ESCROW", "DisputeResolved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeResolvedEvent {
+    #[topic]
+    pub escrow_id: BytesN<32>,
+
+    #[topic]
+    pub resolver: Address,
+
+    /// `true` if resolved for owner (refund), `false` if for recipient (spent).
+    pub resolved_for_owner: bool,
+
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_dispute_resolved(
+    env: &Env,
+    commitment: BytesN<32>,
+    resolver: Address,
+    resolved_for_owner: bool,
+) {
+    DisputeResolvedEvent {
+        escrow_id: commitment,
+        resolver,
+        resolved_for_owner,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
 pub(crate) fn publish_escrow_refunded(
     env: &Env,
     owner: Address,

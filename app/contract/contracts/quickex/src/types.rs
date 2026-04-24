@@ -49,6 +49,11 @@ pub struct EscrowEntry {
     pub expires_at: u64,
     /// Optional arbiter address for dispute resolution.
     pub arbiter: Option<Address>,
+    /// Ledger timestamp when the evidence window ends (Dispute v2).
+    /// Set when a dispute is opened. After this timestamp, the arbiter's
+    /// resolution becomes final, or an auto-resolution is triggered.
+    /// A value of `0` means no evidence window has been set.
+    pub evidence_window_end: u64,
 }
 
 /// Privacy-aware view of an escrow entry.

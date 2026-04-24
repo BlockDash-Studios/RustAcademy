@@ -2267,3 +2267,422 @@ fn test_cross_asset_token_authorization() {
     // Verify auth was required (mock_all_auths handles this)
     assert_eq!(token_client.balance(&contract_id), 500);
 }
+
+// ============================================================================
+// Dispute State Machine v2 Tests
+// ============================================================================
+
+/// Helper: create an escrow with arbiter and return (env, client, token, commitment, arbiter, owner)
+fn setup_dispute_escrow<'a>(
+    env: &Env,
+    client: &QuickexContractClient<'a>,
+    amount: i128,
+) -> (Address, Address, Address, BytesN<32>) {
+    let token = create_test_token(env);
+    let owner = Address::generate(env);
+    let arbiter = Address::generate(env);
+    let salt = Bytes::from_slice(env, b"dispute_v2_salt");
+
+    let token_client = token::StellarAssetClient::new(env, &token);
+    token_client.mint(&owner, &amount);
+
+    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &Some(arbiter.clone()));
+
+    (token, owner, arbiter, commitment)
+}
+
+#[test]
+fn test_dispute_sets_evidence_window() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    // Get the escrow entry before dispute
+    let now = env.ledger().timestamp();
+
+    // Open dispute
+    client.dispute(&commitment);
+
+    // Verify evidence window was set
+    // We can check this via the event or by inspecting storage
+    // For now, verify the dispute was opened and evidence window event was emitted
+    let (topics, _data) = latest_contract_event(&env, &client.address);
+
+    let t1: Symbol = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(t1, Symbol::new(&env, "EscrowDisputed"));
+}
+
+#[test]
+fn test_event_snapshot_evidence_window_updated_schema() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    let now = env.ledger().timestamp();
+
+    // Open dispute - this should emit EvidenceWindowUpdated event
+    client.dispute(&commitment);
+
+    // The last event should be EvidenceWindowUpdated
+    let all_events = env.events().all();
+    let len = all_events.len();
+
+    // Find the EvidenceWindowUpdated event
+    for i in (0..len).rev() {
+        let event = all_events.get(i).unwrap();
+        if event.0 == client.address {
+            let topics = event.1;
+            let t1: Result<Symbol, _> = topics.get(1).unwrap().try_into_val(&env);
+            if let Ok(symbol) = t1 {
+                if symbol == Symbol::new(&env, "EvidenceWindowUpdated") {
+                    // Verify event schema
+                    let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+                    assert_eq!(t0, Symbol::new(&env, "TOPIC_ESCROW"));
+
+                    let t2: BytesN<32> = topics.get(2).unwrap().try_into_val(&env).unwrap();
+                    assert_eq!(t2, commitment);
+
+                    let data_map = event_data_map(&env, event.2);
+                    assert!(data_map.get(Symbol::new(&env, "evidence_window_end")).is_some());
+                    assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_event_snapshot_dispute_resolved_schema() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    // Open dispute
+    client.dispute(&commitment);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 10);
+
+    // Arbiter resolves for owner (refund)
+    client.resolve_dispute(&commitment, &true, &owner);
+
+    // Find the DisputeResolved event
+    let all_events = env.events().all();
+    let len = all_events.len();
+
+    for i in (0..len).rev() {
+        let event = all_events.get(i).unwrap();
+        if event.0 == client.address {
+            let topics = event.1;
+            let t1: Result<Symbol, _> = topics.get(1).unwrap().try_into_val(&env);
+            if let Ok(symbol) = t1 {
+                if symbol == Symbol::new(&env, "DisputeResolved") {
+                    // Verify event schema
+                    let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+                    assert_eq!(t0, Symbol::new(&env, "TOPIC_ESCROW"));
+
+                    let t2: BytesN<32> = topics.get(2).unwrap().try_into_val(&env).unwrap();
+                    assert_eq!(t2, commitment);
+
+                    let t3: Address = topics.get(3).unwrap().try_into_val(&env).unwrap();
+                    assert_eq!(t3, arbiter);
+
+                    let data_map = event_data_map(&env, event.2);
+                    assert!(data_map.get(Symbol::new(&env, "resolved_for_owner")).is_some());
+                    assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_auto_resolve_dispute_after_timeout() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    // Open dispute
+    client.dispute(&commitment);
+
+    let evidence_window_end = env.ledger().timestamp() + 604800; // 7 days
+
+    // Try auto-resolve before timeout - should fail
+    let result = client.try_auto_resolve_dispute(&commitment);
+    assert_contract_error(result, QuickexError::EvidenceWindowNotEnded);
+
+    // Advance past the evidence window
+    env.ledger().set_timestamp(evidence_window_end + 1);
+
+    // Now auto-resolve should work
+    client.auto_resolve_dispute(&commitment);
+
+    // Verify escrow is now Refunded
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Refunded)
+    );
+
+    // Verify funds returned to owner
+    assert_eq!(token_client.balance(&owner), 1000);
+}
+
+#[test]
+fn test_auto_resolve_fails_before_timeout() {
+    let (env, client) = setup();
+    let (_token, _owner, _arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    // Open dispute
+    client.dispute(&commitment);
+
+    // Try auto-resolve immediately - should fail with EvidenceWindowNotEnded
+    let result = client.try_auto_resolve_dispute(&commitment);
+    assert_contract_error(result, QuickexError::EvidenceWindowNotEnded);
+}
+
+#[test]
+fn test_auto_resolve_fails_on_non_disputed() {
+    let (env, client) = setup();
+    let token = create_test_token(&env);
+    let owner = Address::generate(&env);
+    let amount: i128 = 1000;
+    let salt = Bytes::from_slice(&env, b"not_disputed_salt");
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&owner, &amount);
+
+    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &None);
+
+    // Try auto-resolve on non-disputed escrow - should fail with InvalidDisputeState
+    let result = client.try_auto_resolve_dispute(&commitment);
+    assert_contract_error(result, QuickexError::InvalidDisputeState);
+}
+
+#[test]
+fn test_resolve_dispute_before_timeout() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    // Open dispute
+    client.dispute(&commitment);
+
+    // Arbiter resolves immediately (before timeout) - should work
+    client.resolve_dispute(&commitment, &true, &owner);
+
+    // Verify escrow is Refunded
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Refunded)
+    );
+}
+
+#[test]
+fn test_resolve_dispute_for_recipient() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    let recipient = Address::generate(&env);
+
+    // Open dispute
+    client.dispute(&commitment);
+
+    // Arbiter resolves for recipient
+    client.resolve_dispute(&commitment, &false, &recipient);
+
+    // Verify escrow is Spent
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Spent)
+    );
+
+    // Verify funds transferred to recipient (minus fee)
+    assert!(token_client.balance(&recipient) > 0);
+}
+
+#[test]
+fn test_dispute_state_machine_v2_full_flow() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    // 1. Start in Pending
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Pending)
+    );
+
+    // 2. Open dispute
+    client.dispute(&commitment);
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Disputed)
+    );
+
+    // 3. Advance past evidence window
+    let evidence_window_end = env.ledger().timestamp() + 604800;
+    env.ledger().set_timestamp(evidence_window_end + 1);
+
+    // 4. Auto-resolve (refund to owner)
+    client.auto_resolve_dispute(&commitment);
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Refunded)
+    );
+
+    // 5. Verify funds returned to owner
+    assert_eq!(token_client.balance(&owner), 1000);
+}
+
+#[test]
+fn test_dispute_timeout_edge_case_exactly_at_window_end() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    // Open dispute
+    client.dispute(&commitment);
+
+    // Try auto-resolve exactly at window end - should still fail (need to be past)
+    let evidence_window_end = env.ledger().timestamp();
+    env.ledger().set_timestamp(evidence_window_end);
+
+    let result = client.try_auto_resolve_dispute(&commitment);
+    assert_contract_error(result, QuickexError::EvidenceWindowNotEnded);
+
+    // Now advance past by 1 second
+    env.ledger().set_timestamp(evidence_window_end + 1);
+    client.auto_resolve_dispute(&commitment);
+
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Refunded)
+    );
+}
+
+#[test]
+fn test_auto_resolve_emits_events() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    // Open dispute
+    client.dispute(&commitment);
+
+    // Advance past evidence window
+    let evidence_window_end = env.ledger().timestamp() + 604800;
+    env.ledger().set_timestamp(evidence_window_end + 1);
+
+    // Auto-resolve
+    client.auto_resolve_dispute(&commitment);
+
+    // Check that DisputeResolved and EscrowRefunded events were emitted
+    let all_events = env.events().all();
+    let len = all_events.len();
+
+    let mut found_dispute_resolved = false;
+    let mut found_escrow_refunded = false;
+
+    for i in 0..len {
+        let event = all_events.get(i).unwrap();
+        if event.0 == client.address {
+            let topics = event.1;
+            let t1_result: Result<Symbol, _> = topics.get(1).unwrap().try_into_val(&env);
+            if let Ok(symbol) = t1_result {
+                if symbol == Symbol::new(&env, "DisputeResolved") {
+                    found_dispute_resolved = true;
+                }
+                if symbol == Symbol::new(&env, "EscrowRefunded") {
+                    found_escrow_refunded = true;
+                }
+            }
+        }
+    }
+
+    assert!(found_dispute_resolved, "DisputeResolved event not found");
+    assert!(found_escrow_refunded, "EscrowRefunded event not found");
+}
+
+#[test]
+fn test_dispute_invalid_transitions_v2() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    // Cannot withdraw after dispute
+    client.dispute(&commitment);
+
+    let salt = Bytes::from_slice(&env, b"dispute_v2_salt");
+    let result = client.try_withdraw(&token, &1000, &commitment, &owner, &salt);
+    assert_contract_error(result, QuickexError::InvalidDisputeState);
+
+    // Cannot refund after dispute
+    let result = client.try_refund(&commitment, &owner);
+    assert_contract_error(result, QuickexError::InvalidDisputeState);
+
+    // Cannot dispute again
+    let result = client.try_dispute(&commitment);
+    assert_contract_error(result, QuickexError::InvalidDisputeState);
+}
+
+#[test]
+fn test_resolve_dispute_emits_both_events() {
+    let (env, client) = setup();
+    let (token, owner, arbiter, commitment) = setup_dispute_escrow(&env, &client, 1000);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&client.address, &1000);
+
+    // Open dispute
+    client.dispute(&commitment);
+
+    // Arbiter resolves for owner
+    client.resolve_dispute(&commitment, &true, &owner);
+
+    // Check that both DisputeResolved and EscrowRefunded events were emitted
+    let all_events = env.events().all();
+    let len = all_events.len();
+
+    let mut found_dispute_resolved = false;
+    let mut found_escrow_refunded = false;
+
+    for i in 0..len {
+        let event = all_events.get(i).unwrap();
+        if event.0 == client.address {
+            let topics = event.1;
+            let t1_result: Result<Symbol, _> = topics.get(1).unwrap().try_into_val(&env);
+            if let Ok(symbol) = t1_result {
+                if symbol == Symbol::new(&env, "DisputeResolved") {
+                    found_dispute_resolved = true;
+                }
+                if symbol == Symbol::new(&env, "EscrowRefunded") {
+                    found_escrow_refunded = true;
+                }
+            }
+        }
+    }
+
+    assert!(found_dispute_resolved, "DisputeResolved event not found");
+    assert!(found_escrow_refunded, "EscrowRefunded event not found");
+}

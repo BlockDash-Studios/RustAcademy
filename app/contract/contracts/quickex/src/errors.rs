@@ -40,6 +40,10 @@ pub enum QuickexError {
     NotArbiter = 312,
     /// The requested operation is paused via granular pause flags.
     OperationPaused = 313,
+    /// Evidence window has not ended yet; must wait before timeout resolution.
+    EvidenceWindowNotEnded = 314,
+    /// Dispute has timed out; only auto-resolution is allowed.
+    DisputeTimedOut = 315,
     // Stealth address errors (400-499)
     /// Derived stealth address does not match the provided one.
     StealthAddressMismatch = 400,

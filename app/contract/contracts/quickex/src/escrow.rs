@@ -1,4 +1,4 @@
-//! Escrow core logic: deposit, withdraw, and refund.
+//! Escrow core logic: deposit, withdraw, refund, and dispute management.
 //!
 //! # State Machine
 //!
@@ -9,7 +9,15 @@
 //! Pending --> Disputed : dispute()        [any participant can call]
 //! Disputed --> Spent   : resolve_dispute() [arbiter decides for recipient]
 //! Disputed --> Refunded: resolve_dispute() [arbiter decides for owner]
+//! Disputed --> Refunded: auto-resolve     [timeout, evidence window ended]
 //! ```
+//!
+//! ## Dispute v2: Evidence Window
+//!
+//! When a dispute is opened via `dispute()`, an evidence window is started:
+//! - `evidence_window_end` is set to `now + DEFAULT_EVIDENCE_WINDOW_SECS` (7 days).
+//! - During the evidence window, only the arbiter can resolve the dispute.
+//! - After the evidence window ends, anyone can trigger an auto-resolution (refund to owner).
 //!
 //! ## Asset Type Handling
 //!
@@ -30,6 +38,27 @@
 //! - `refund` fails with [`InvalidOwner`] if caller ≠ `entry.owner`.
 //! - `dispute` requires an assigned arbiter and `Pending` status.
 //! - `resolve_dispute` can only be called by the assigned arbiter.
+//! - `auto_resolve_dispute` can be called by anyone after the evidence window ends.
+
+use soroban_sdk::{token, Address, Bytes, BytesN, Env};
+
+use crate::{
+    commitment,
+    errors::QuickexError,
+    events, fee,
+    storage::{get_escrow, get_platform_wallet, has_escrow, put_escrow},
+    types::{EscrowEntry, EscrowStatus},
+};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// Default evidence window duration in seconds (7 days).
+///
+/// When a dispute is opened, the evidence window ends after this many seconds.
+/// After the window ends, the dispute can be auto-resolved (refund to owner).
+pub const DEFAULT_EVIDENCE_WINDOW_SECS: u64 = 604_800;
 
 use soroban_sdk::{token, Address, Bytes, BytesN, Env};
 
@@ -360,6 +389,7 @@ pub fn refund(env: &Env, commitment: BytesN<32>, caller: Address) -> Result<(), 
 /// - Requires an assigned arbiter.
 /// - Escrow must be in `Pending` status.
 /// - Changes status to `Disputed`, locking funds until resolution.
+/// - Sets the evidence window end time to `now + DEFAULT_EVIDENCE_WINDOW_SECS`.
 ///
 /// # Errors
 /// - [`CommitmentNotFound`] – no escrow for the given commitment.
@@ -378,11 +408,16 @@ pub fn dispute(env: &Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
         return Err(QuickexError::InvalidDisputeState);
     }
 
+    let now = env.ledger().timestamp();
+    let evidence_window_end = now.saturating_add(DEFAULT_EVIDENCE_WINDOW_SECS);
+
     let mut updated = entry.clone();
     updated.status = EscrowStatus::Disputed;
+    updated.evidence_window_end = evidence_window_end;
     put_escrow(env, &commitment_bytes, &updated);
 
-    events::publish_escrow_disputed(env, commitment, arbiter.clone());
+    events::publish_escrow_disputed(env, commitment.clone(), arbiter.clone());
+    events::publish_evidence_window_updated(env, commitment, evidence_window_end);
 
     Ok(())
 }
@@ -396,6 +431,7 @@ pub fn dispute(env: &Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
 /// - Only callable by the assigned arbiter.
 /// - Escrow must be in `Disputed` status.
 /// - Arbiter decides whether funds go to owner (refund) or recipient (spend).
+/// - Emits `DisputeResolved` event on successful resolution.
 ///
 /// # Arguments
 /// - `commitment`: The escrow commitment hash
@@ -460,6 +496,9 @@ pub fn resolve_dispute(
         }
     }
 
+    // Emit the appropriate event
+    events::publish_dispute_resolved(env, commitment.clone(), arbiter.clone(), resolve_for_owner);
+
     if resolve_for_owner {
         events::publish_escrow_refunded(env, entry.owner, commitment, entry.token, entry.amount);
     } else {
@@ -472,6 +511,64 @@ pub fn resolve_dispute(
             fee_amount,
         );
     }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// auto_resolve_dispute
+// ---------------------------------------------------------------------------
+
+/// Auto-resolve a disputed escrow after the evidence window has ended.
+///
+/// - Can be called by anyone after `evidence_window_end` has passed.
+/// - Automatically resolves to REFUND (funds returned to owner).
+/// - This incentivizes the arbiter to resolve before the timeout.
+///
+/// # Arguments
+/// - `commitment`: The escrow commitment hash
+///
+/// # Errors
+/// - [`CommitmentNotFound`] – no escrow for the given commitment.
+/// - [`InvalidDisputeState`] – escrow is not in `Disputed` status.
+/// - [`EvidenceWindowNotEnded`] – evidence window has not ended yet.
+pub fn auto_resolve_dispute(env: &Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
+    let commitment_bytes: Bytes = commitment.clone().into();
+    let entry: EscrowEntry =
+        get_escrow(env, &commitment_bytes).ok_or(QuickexError::CommitmentNotFound)?;
+
+    // Guard: escrow must be in Disputed state
+    if entry.status != EscrowStatus::Disputed {
+        return Err(QuickexError::InvalidDisputeState);
+    }
+
+    // Guard: evidence window must have ended
+    let now = env.ledger().timestamp();
+    if entry.evidence_window_end == 0 || now < entry.evidence_window_end {
+        return Err(QuickexError::EvidenceWindowNotEnded);
+    }
+
+    // Auto-resolve to refund (pro-owner)
+    let mut updated = entry.clone();
+    updated.status = EscrowStatus::Refunded;
+    put_escrow(env, &commitment_bytes, &updated);
+
+    // Transfer funds back to owner
+    let token_client = token::Client::new(env, &entry.token);
+    token_client.transfer(
+        &env.current_contract_address(),
+        &entry.owner,
+        &entry.amount,
+    );
+
+    // Emit events
+    events::publish_dispute_resolved(
+        env,
+        commitment.clone(),
+        entry.owner.clone(), // Resolved by timeout, owner gets refund
+        true,                // resolved_for_owner = true
+    );
+    events::publish_escrow_refunded(env, entry.owner, commitment, entry.token, entry.amount);
 
     Ok(())
 }

@@ -55,6 +55,7 @@ use types::{EscrowEntry, EscrowStatus, FeeConfig, PrivacyAwareEscrowView, Stealt
 /// Pending --> Disputed : dispute()        [any participant can call]
 /// Disputed --> Spent   : resolve_dispute() [arbiter decides for recipient]
 /// Disputed --> Refunded: resolve_dispute() [arbiter decides for owner]
+/// Disputed --> Refunded: auto_resolve_dispute() [timeout, evidence window ended]
 /// ```
 #[contract]
 pub struct QuickexContract;
@@ -361,6 +362,24 @@ impl QuickexContract {
         recipient: Address,
     ) -> Result<(), QuickexError> {
         escrow::resolve_dispute(&env, commitment, resolve_for_owner, recipient)
+    }
+
+    /// Auto-resolve a disputed escrow after the evidence window has ended.
+    ///
+    /// Can be called by anyone after the evidence window ends. Automatically
+    /// resolves to refund (funds returned to owner). This incentivizes
+    /// the arbiter to resolve before the timeout.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `commitment` - 32-byte commitment hash identifying the escrow
+    ///
+    /// # Errors
+    /// * `CommitmentNotFound` - No escrow exists for the commitment
+    /// * `InvalidDisputeState` - Escrow is not in `Disputed` status
+    /// * `EvidenceWindowNotEnded` - Evidence window has not ended yet
+    pub fn auto_resolve_dispute(env: Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
+        escrow::auto_resolve_dispute(&env, commitment)
     }
 
     /// Initialize the contract with an admin address (one-time only).
