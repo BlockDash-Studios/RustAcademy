@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import Link from "next/link";
 import { LocaleSwitcher } from "@/components/LocaleSwitcher";
@@ -37,6 +37,7 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4">
+          <NotificationBell />
           <LocaleSwitcher />
           <span aria-hidden="true" className="text-neutral-300 md:hidden">
             ☰

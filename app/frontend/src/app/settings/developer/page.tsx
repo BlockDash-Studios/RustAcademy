@@ -6,6 +6,10 @@ import {
   type NewKeyForm,
 } from "@/app/settings/developer/api-key-types";
 import { getQuickexApiBase } from "@/lib/api";
+import {
+  type ApiKey,
+  type NewKeyForm,
+} from "@/app/settings/developer/api-key-types";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 

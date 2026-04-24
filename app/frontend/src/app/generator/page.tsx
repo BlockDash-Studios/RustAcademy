@@ -143,7 +143,7 @@ export default function Generator() {
     return () => {
       cancelled = true;
     };
-  }, [apiBase]);
+  }, [apiBase, t]);
 
   const recipientRef = useMemo(() => {
     const asset = verifiedAssets.find(

@@ -52,8 +52,8 @@ export default function RootLayout({
               <a href="#">Terms</a>
               <a href="#">Privacy</a>
             </div>
-          </div>
-        </footer>
+          </footer>
+        </NotificationCenterProvider>
       </body>
     </html>
   );

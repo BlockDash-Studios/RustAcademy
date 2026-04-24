@@ -491,3 +491,13 @@ export default function Dashboard() {
     </div>
   );
 }
+
+export default function Dashboard() {
+  return (
+    <Suspense
+      fallback={<p className="text-neutral-200">Loading dashboard...</p>}
+    >
+      <DashboardContent />
+    </Suspense>
+  );
+}
