@@ -45,6 +45,9 @@ export default function RootLayout({
               <Link href="/settings" className="hover:text-white transition">
                 Settings
               </Link>
+              <Link href="/admin" className="hover:text-white transition">
+                Admin
+              </Link>
             </div>
 
             <div className="md:hidden text-neutral-400">☰</div>

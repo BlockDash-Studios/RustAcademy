@@ -58,6 +58,12 @@ export default function Dashboard() {
           <Link href="/marketplace" className="flex items-center gap-3 px-4 py-3 text-neutral-500 hover:text-white hover:bg-white/5 rounded-2xl font-semibold">
             <span>🏪</span> Marketplace
           </Link>
+          <Link
+            href="/admin"
+            className="flex items-center gap-3 px-4 py-3 text-neutral-500 hover:text-white hover:bg-white/5 rounded-2xl font-semibold"
+          >
+            <span>🛠️</span> Admin Console
+          </Link>
         </nav>
       </aside>
 
