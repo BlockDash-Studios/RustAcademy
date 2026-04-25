@@ -500,4 +500,76 @@ export class SupabaseService {
     });
     if (error) this.handleError(error);
   }
+
+  // ---------------------------------------------------------------------------
+  // Invitation Flow
+  // ---------------------------------------------------------------------------
+
+  async createInvite(orgId: string, email: string, role: string, expiresAt: Date) {
+    const { data, error } = await this.client
+      .from("organization_invites")
+      .insert({
+        org_id: orgId,
+        email,
+        role,
+        status: "pending",
+        expires_at: expiresAt.toISOString(),
+      })
+      .select()
+      .single();
+    if (error) this.handleError(error);
+    return data;
+  }
+
+  async acceptInvite(id: string) {
+    const { data, error } = await this.client
+      .from("organization_invites")
+      .update({ status: "accepted" })
+      .eq("id", id)
+      .eq("status", "pending")
+      .gt("expires_at", new Date().toISOString())
+      .select()
+      .single();
+    if (error) this.handleError(error);
+    return data;
+  }
+
+  async revokeInvite(id: string) {
+    const { error } = await this.client
+      .from("organization_invites")
+      .update({ status: "revoked" })
+      .eq("id", id);
+    if (error) this.handleError(error);
+  }
+
+  async listInvites(orgId: string) {
+    const { data, error } = await this.client
+      .from("organization_invites")
+      .select("*")
+      .eq("org_id", orgId);
+    if (error) this.handleError(error);
+    return data ?? [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Unified Admin Search
+  // ---------------------------------------------------------------------------
+
+  async adminSearch(query: string) {
+    const pattern = `%${query}%`;
+
+    // Search across multiple tables (simulated unified search)
+    const [usernames, transactions, listings] = await Promise.all([
+      this.client.from("usernames").select("id, username").ilike("username", pattern).limit(10),
+      this.client.from("payment_records").select("id, sender_public_key, receiver_public_key").or(`sender_public_key.ilike.${pattern},receiver_public_key.ilike.${pattern}`).limit(10),
+      this.client.from("username_marketplace").select("id, username").ilike("username", pattern).limit(10),
+    ]);
+
+    const results = [];
+    (usernames.data ?? []).forEach(u => results.push({ type: 'profile', label: u.username, id: u.id }));
+    (transactions.data ?? []).forEach(t => results.push({ type: 'transaction', label: `TX ${t.id.slice(0,8)}`, id: t.id }));
+    (listings.data ?? []).forEach(l => results.push({ type: 'listing', label: `Listing ${l.username}`, id: l.id }));
+
+    return results;
+  }
 }

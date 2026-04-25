@@ -118,6 +118,14 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
       return "webhooks";
     }
 
+    if (path.startsWith("/admin/search")) {
+      return "search";
+    }
+
+    if (path.includes("/invites") || path.includes("/auth")) {
+      return "auth";
+    }
+
     if (this.getUserId(req) || this.getApiKeyValue(req)) {
       return "authenticated";
     }

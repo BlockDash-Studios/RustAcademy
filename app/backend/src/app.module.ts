@@ -32,6 +32,8 @@ import { ApiKeysModule } from "./api-keys/api-keys.module";
 import { MarketplaceModule } from "./marketplace/marketplace.module";
 import { SentryModule } from "./sentry";
 import { FiatRampsModule } from "./fiat-ramps/fiat-ramps.module";
+import { OrgsModule } from "./orgs/orgs.module";
+import { SearchModule } from "./search/search.module";
 import { CustomThrottlerGuard } from "./auth/guards/custom-throttler.guard";
 import { throttlerModuleProfiles } from "./config/rate-limit.config";
 
@@ -67,6 +69,8 @@ type AppImport =
       ApiKeysModule,
       MarketplaceModule,
       FiatRampsModule,
+      OrgsModule,
+      SearchModule,
     ];
 
     // In development, if SUPABASE_URL points to a localhost placeholder (i.e. you don't

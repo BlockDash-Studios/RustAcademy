@@ -1,4 +1,4 @@
-export type RateLimitGroup = "public" | "authenticated" | "webhooks";
+export type RateLimitGroup = "public" | "authenticated" | "webhooks" | "auth" | "search" | "apiKey";
 export type RateLimitWindow = "burst" | "sustained";
 export type RateLimitKeyType = "user_id" | "api_key" | "ip";
 
@@ -84,6 +84,18 @@ export const throttlerConfig: RateLimitConfig = {
           process.env["RATE_LIMIT_WEBHOOKS_SUSTAINED_TTL_MS"] ?? 60_000,
         ),
       },
+    },
+    auth: {
+      burst: { limit: 5, ttlMs: 10_000 },
+      sustained: { limit: 10, ttlMs: 60_000 },
+    },
+    search: {
+      burst: { limit: 10, ttlMs: 10_000 },
+      sustained: { limit: 30, ttlMs: 60_000 },
+    },
+    apiKey: {
+      burst: { limit: 50, ttlMs: 10_000 },
+      sustained: { limit: 100, ttlMs: 60_000 },
     },
   },
   keyOrder: parseKeyOrder(process.env["RATE_LIMIT_KEY_ORDER"]),
