@@ -1,16 +1,22 @@
 import { Module } from "@nestjs/common";
 
 import { SupabaseModule } from "../supabase/supabase.module";
+import { MetricsModule } from "../metrics/metrics.module";
+import { MetricsService } from "../metrics/metrics.service";
 import { NotificationService } from "./notification.service";
 import { NotificationPreferencesRepository } from "./notification-preferences.repository";
+import { InAppNotificationRepository } from "./in-app-notification.repository";
 import { NotificationLogRepository } from "./notification-log.repository";
 import { NotificationPreferencesController } from "./notification-preferences.controller";
+import { InAppNotificationController } from "./in-app-notification.controller";
+import { NotificationTemplateService } from "./notification-template.service";
 import {
   NOTIFICATION_PROVIDERS,
   SendGridEmailProvider,
   ExpoPushProvider,
   WebhookProvider,
   NoopNotificationProvider,
+  InAppNotificationProvider,
 } from "./providers/notification-provider.interface";
 import { TelegramRepository } from "./telegram/telegram.repository";
 import { TelegramBotService } from "./telegram/telegram-bot.service";
@@ -32,25 +38,30 @@ import { WebhookRetryScheduler } from "./webhook-retry.scheduler";
  * ScheduleModule is registered once at AppModule level.
  */
 @Module({
-  imports: [SupabaseModule],
+  imports: [SupabaseModule, MetricsModule],
   controllers: [
     NotificationPreferencesController,
     TelegramController,
     WebhooksController,
+    InAppNotificationController,
   ],
   providers: [
     NotificationPreferencesRepository,
+    InAppNotificationRepository,
     NotificationLogRepository,
     TelegramRepository,
     TelegramBotService,
     TelegramNotificationProvider,
     WebhookRetryScheduler,
     WebhookService,
+    NotificationTemplateService,
     {
       provide: NOTIFICATION_PROVIDERS,
       useFactory: (
         telegramBot: TelegramBotService,
         telegramRepo: TelegramRepository,
+        inAppRepo: InAppNotificationRepository,
+        metrics: MetricsService,
       ) => {
         const providers = [];
 
@@ -69,7 +80,7 @@ import { WebhookRetryScheduler } from "./webhook-retry.scheduler";
           providers.push(new NoopNotificationProvider("push"));
         }
 
-        providers.push(new WebhookProvider());
+        providers.push(new WebhookProvider(metrics));
 
         // Add Telegram provider if bot is initialized
         const telegramToken = process.env["TELEGRAM_BOT_TOKEN"];
@@ -80,10 +91,12 @@ import { WebhookRetryScheduler } from "./webhook-retry.scheduler";
         } else {
           providers.push(new NoopNotificationProvider("telegram"));
         }
+        
+        providers.push(new InAppNotificationProvider(inAppRepo));
 
         return providers;
       },
-      inject: [TelegramBotService, TelegramRepository],
+      inject: [TelegramBotService, TelegramRepository, InAppNotificationRepository, MetricsService],
     },
     NotificationService,
   ],

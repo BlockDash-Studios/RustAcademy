@@ -3,6 +3,7 @@ import { EventEmitterModule } from "@nestjs/event-emitter";
 import { NotificationService } from "./notification.service";
 import { NotificationPreferencesRepository } from "./notification-preferences.repository";
 import { NotificationLogRepository } from "./notification-log.repository";
+import { NotificationTemplateService } from "./notification-template.service";
 import { NOTIFICATION_PROVIDERS } from "./providers/notification-provider.interface";
 
 describe("NotificationService (Event Hook Verification)", () => {
@@ -40,6 +41,7 @@ describe("NotificationService (Event Hook Verification)", () => {
         { provide: NotificationPreferencesRepository, useValue: mockPrefsRepo },
         { provide: NotificationLogRepository, useValue: mockLogRepo },
         { provide: NOTIFICATION_PROVIDERS, useValue: [] },
+        NotificationTemplateService,
       ],
     }).compile();
 

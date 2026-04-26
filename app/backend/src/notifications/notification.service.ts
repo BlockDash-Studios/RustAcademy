@@ -3,6 +3,7 @@ import { OnEvent } from "@nestjs/event-emitter";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
 import { NotificationPreferencesRepository } from "./notification-preferences.repository";
+import { NotificationTemplateService } from "./notification-template.service";
 import { NotificationLogRepository } from "./notification-log.repository";
 import { NotificationRateLimiter } from "./notification-rate-limiter";
 import {
@@ -42,6 +43,7 @@ export class NotificationService implements OnModuleInit {
     private readonly providers: INotificationProvider[],
     private readonly prefsRepo: NotificationPreferencesRepository,
     private readonly logRepo: NotificationLogRepository,
+    private readonly templateService: NotificationTemplateService,
   ) {}
 
   onModuleInit(): void {
@@ -61,11 +63,8 @@ export class NotificationService implements OnModuleInit {
       eventType: "EscrowDeposited",
       eventId: event.pagingToken,
       recipientPublicKey: event.owner,
-      title: "Escrow Deposit Confirmed",
-      body:
-        "Your escrow of " +
-        this.formatAmount(event.amount) +
-        " has been deposited.",
+      title: "", // Will be rendered by template
+      body: "", // Will be rendered by template
       occurredAt: new Date(
         Number(event.contractTimestamp) * 1000,
       ).toISOString(),
@@ -83,11 +82,8 @@ export class NotificationService implements OnModuleInit {
       eventType: "EscrowWithdrawn",
       eventId: event.pagingToken,
       recipientPublicKey: event.owner,
-      title: "Escrow Withdrawn",
-      body:
-        "Your escrow of " +
-        this.formatAmount(event.amount) +
-        " has been released.",
+      title: "",
+      body: "",
       occurredAt: new Date(
         Number(event.contractTimestamp) * 1000,
       ).toISOString(),
@@ -105,11 +101,8 @@ export class NotificationService implements OnModuleInit {
       eventType: "EscrowRefunded",
       eventId: event.pagingToken,
       recipientPublicKey: event.owner,
-      title: "Escrow Refunded",
-      body:
-        "Your escrow of " +
-        this.formatAmount(event.amount) +
-        " has been refunded.",
+      title: "",
+      body: "",
       occurredAt: new Date(
         Number(event.contractTimestamp) * 1000,
       ).toISOString(),
@@ -128,13 +121,8 @@ export class NotificationService implements OnModuleInit {
       eventType: "payment.received",
       eventId: event.txHash,
       recipientPublicKey: event.recipientPublicKey,
-      title: "Payment Received",
-      body:
-        "You received " +
-        this.formatAmount(amountStroops) +
-        " from " +
-        event.sender.slice(0, 8) +
-        "...",
+      title: "",
+      body: "",
       occurredAt: new Date().toISOString(),
       amountStroops,
       txHash: event.txHash,
@@ -150,11 +138,8 @@ export class NotificationService implements OnModuleInit {
       eventType: "username.claimed",
       eventId: "username:" + event.username,
       recipientPublicKey: event.publicKey,
-      title: "Username Registered",
-      body:
-        "Your username @" +
-        event.username +
-        " has been successfully registered.",
+      title: "",
+      body: "",
       occurredAt: new Date().toISOString(),
       username: event.username,
     };
@@ -162,6 +147,12 @@ export class NotificationService implements OnModuleInit {
   }
 
   async dispatch(payload: NotificationPayload): Promise<void> {
+    // 1. Render content via templates
+    const { title, body } = this.templateService.render(payload);
+    payload.title = title;
+    payload.body = body;
+
+    // 2. Load preferences
     let preferences: NotificationPreference[];
     try {
       preferences = await this.prefsRepo.getEnabledPreferences(
@@ -177,12 +168,25 @@ export class NotificationService implements OnModuleInit {
       return;
     }
 
-    if (preferences.length === 0) return;
+    // 3. Ensure 'in_app' channel is included by default if not explicitly disabled
+    const inAppPref = preferences.find((p) => p.channel === "in_app");
+    if (!inAppPref) {
+      preferences.push({
+        id: "default-in-app",
+        publicKey: payload.recipientPublicKey,
+        channel: "in_app",
+        enabled: true,
+        events: null,
+        minAmountStroops: 0n,
+      });
+    }
 
+    // 4. Filter by event type and amount
     const filtered = preferences.filter((pref) =>
       this.matchesPreference(payload, pref),
     );
 
+    // 5. Send to all matched channels
     await Promise.allSettled(
       filtered.map((pref) => this.sendToChannel(pref, payload)),
     );

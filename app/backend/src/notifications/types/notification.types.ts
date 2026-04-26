@@ -2,7 +2,7 @@
 // Channels
 // ---------------------------------------------------------------------------
 
-export type NotificationChannel = "email" | "push" | "webhook" | "telegram";
+export type NotificationChannel = "email" | "push" | "webhook" | "telegram" | "in_app";
 
 // ---------------------------------------------------------------------------
 // Notification domain events
@@ -196,6 +196,23 @@ export interface WebhookDeliveryResult {
   httpStatus?: number;
   responseBody?: string;
   error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// In-app notification storage
+// ---------------------------------------------------------------------------
+
+export interface InAppNotification {
+  id: string;
+  publicKey: string;
+  eventType: NotificationEventType;
+  eventId: string;
+  title: string;
+  body: string;
+  metadata: Record<string, unknown>;
+  isRead: boolean;
+  occurredAt: string;
+  createdAt: string;
 }
 
 export interface WebhookStats {

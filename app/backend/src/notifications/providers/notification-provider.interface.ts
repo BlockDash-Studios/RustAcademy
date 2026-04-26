@@ -1,4 +1,6 @@
 import { Logger } from "@nestjs/common";
+import { InAppNotificationRepository } from "../in-app-notification.repository";
+import { MetricsService } from "../../metrics/metrics.service";
 import * as crypto from "crypto";
 
 import type {
@@ -191,6 +193,8 @@ export class WebhookProvider implements INotificationProvider {
   private readonly logger = new Logger(WebhookProvider.name);
   private readonly maxResponseBodyLength = 1000;
 
+  constructor(private readonly metrics?: MetricsService) {}
+
   async send(
     preference: NotificationPreference,
     payload: BaseNotificationPayload,
@@ -315,6 +319,40 @@ export class WebhookProvider implements INotificationProvider {
     } catch {
       return false;
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// In-app provider
+// ---------------------------------------------------------------------------
+
+export class InAppNotificationProvider implements INotificationProvider {
+  readonly channel: NotificationChannel = "in_app";
+  private readonly logger = new Logger(InAppNotificationProvider.name);
+
+  constructor(private readonly repository: InAppNotificationRepository) {}
+
+  async send(
+    preference: NotificationPreference,
+    payload: BaseNotificationPayload,
+  ): Promise<ProviderSendResult> {
+    await this.repository.create({
+      publicKey: preference.publicKey,
+      eventType: payload.eventType,
+      eventId: payload.eventId,
+      title: payload.title,
+      body: payload.body,
+      metadata: payload.metadata ?? {},
+      occurredAt: payload.occurredAt,
+    });
+
+    this.logger.debug(
+      `In-app notification stored for ${preference.publicKey.slice(0, 8)}...: ${payload.eventType}`,
+    );
+
+    return {
+      messageId: `inapp:${payload.eventId}`,
+    };
   }
 }
 
