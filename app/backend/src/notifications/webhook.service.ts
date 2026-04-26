@@ -13,6 +13,9 @@ import type {
   WebhookStatsDto,
 } from "./dto/webhook.dto";
 
+import { AuditService } from "../common/audit/audit.service";
+import { AuditAction } from "../common/audit/audit.types";
+
 @Injectable()
 export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
@@ -21,11 +24,14 @@ export class WebhookService {
     private readonly prefsRepo: NotificationPreferencesRepository,
     private readonly logRepo: NotificationLogRepository,
     private readonly retryScheduler: WebhookRetryScheduler,
+    private readonly auditService: AuditService,
   ) {}
 
   async createWebhook(
     publicKey: string,
     dto: CreateWebhookDto,
+    actor: string = 'system',
+    requestId?: string,
   ): Promise<WebhookResponseDto> {
     const secret = dto.secret ?? this.generateSecret();
 
@@ -42,6 +48,8 @@ export class WebhookService {
         enabled: true,
       },
     );
+
+    await this.auditService.log(actor, AuditAction.WEBHOOK_CREATE, preference.id, { publicKey, url: dto.webhookUrl }, requestId);
 
     return this.toResponse(preference);
   }
@@ -61,6 +69,8 @@ export class WebhookService {
     id: string,
     publicKey: string,
     dto: UpdateWebhookDto,
+    actor: string = 'system',
+    requestId?: string,
   ): Promise<WebhookResponseDto | null> {
     const existing = await this.prefsRepo.getWebhookById(id);
     if (!existing || existing.publicKey !== publicKey) {
@@ -82,22 +92,27 @@ export class WebhookService {
       },
     );
 
+    await this.auditService.log(actor, AuditAction.WEBHOOK_UPDATE, id, { publicKey, changes: dto }, requestId);
+
     return this.toResponse(updated);
   }
 
-  async deleteWebhook(id: string, publicKey: string): Promise<boolean> {
+  async deleteWebhook(id: string, publicKey: string, actor: string = 'system', requestId?: string): Promise<boolean> {
     const existing = await this.prefsRepo.getWebhookById(id);
     if (!existing || existing.publicKey !== publicKey) {
       return false;
     }
 
     await this.prefsRepo.deleteWebhook(id);
+    await this.auditService.log(actor, AuditAction.WEBHOOK_DELETE, id, { publicKey }, requestId);
     return true;
   }
 
   async regenerateSecret(
     id: string,
     publicKey: string,
+    actor: string = 'system',
+    requestId?: string,
   ): Promise<{ secret: string } | null> {
     const existing = await this.prefsRepo.getWebhookById(id);
     if (!existing || existing.publicKey !== publicKey) {
@@ -106,6 +121,7 @@ export class WebhookService {
 
     const newSecret = this.generateSecret();
     await this.prefsRepo.regenerateWebhookSecret(id, newSecret);
+    await this.auditService.log(actor, AuditAction.WEBHOOK_UPDATE, id, { publicKey, action: 'regenerate_secret' }, requestId);
 
     return { secret: newSecret };
   }

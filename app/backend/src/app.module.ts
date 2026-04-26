@@ -35,6 +35,7 @@ import { FiatRampsModule } from "./fiat-ramps/fiat-ramps.module";
 import { RefundsModule } from "./refunds/refunds.module";
 import { CustomThrottlerGuard } from "./auth/guards/custom-throttler.guard";
 import { throttlerModuleProfiles } from "./config/rate-limit.config";
+import { AuditModule } from "./common/audit/audit.module";
 
 type AppImport =
   | Type<unknown>
@@ -69,6 +70,7 @@ type AppImport =
       MarketplaceModule,
       FiatRampsModule,
       RefundsModule,
+      AuditModule,
     ];
 
     // In development, if SUPABASE_URL points to a localhost placeholder (i.e. you don't

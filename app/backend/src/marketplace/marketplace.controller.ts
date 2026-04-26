@@ -10,7 +10,9 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
+  Request,
 } from '@nestjs/common';
+import { Request as ExpressRequest } from 'express';
 import {
   ApiBody,
   ApiOperation,
@@ -36,12 +38,16 @@ export class MarketplaceController {
   @ApiResponse({ status: 400, description: 'Invalid input' })
   @ApiResponse({ status: 403, description: 'Username not owned by this wallet' })
   @ApiResponse({ status: 409, description: 'Username already listed' })
-  async listUsername(@Body() body: ListUsernameDto) {
+  async listUsername(@Body() body: ListUsernameDto, @Request() req: ExpressRequest) {
     try {
+      const actor = body.sellerPublicKey;
+      const requestId = req['correlationId'];
       const listing = await this.marketplaceService.listUsername(
         body.username,
         body.sellerPublicKey,
         body.askingPrice,
+        actor,
+        requestId,
       );
       return { listing };
     } catch (err) {
@@ -95,9 +101,12 @@ export class MarketplaceController {
   async cancelListing(
     @Param('listingId') listingId: string,
     @Body() body: CancelListingDto,
+    @Request() req: ExpressRequest,
   ) {
     try {
-      await this.marketplaceService.cancelListing(listingId, body.sellerPublicKey);
+      const actor = body.sellerPublicKey;
+      const requestId = req['correlationId'];
+      await this.marketplaceService.cancelListing(listingId, body.sellerPublicKey, actor, requestId);
       return { ok: true };
     } catch (err) {
       if (err instanceof MarketplaceError) {
@@ -163,9 +172,12 @@ export class MarketplaceController {
     @Param('listingId') listingId: string,
     @Param('bidId') bidId: string,
     @Body() body: AcceptBidDto,
+    @Request() req: ExpressRequest,
   ) {
     try {
-      await this.marketplaceService.acceptBid(listingId, bidId, body.sellerPublicKey);
+      const actor = body.sellerPublicKey;
+      const requestId = req['correlationId'];
+      await this.marketplaceService.acceptBid(listingId, bidId, body.sellerPublicKey, actor, requestId);
       return { ok: true };
     } catch (err) {
       if (err instanceof MarketplaceError) {

@@ -12,7 +12,9 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  Request,
 } from "@nestjs/common";
+import { Request as ExpressRequest } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -56,14 +58,14 @@ export class WebhooksController {
     status: 400,
     description: "Invalid webhook URL or parameters",
   })
-  async createWebhook(
+  async create(
     @Param("publicKey") publicKey: string,
     @Body() dto: CreateWebhookDto,
-  ): Promise<WebhookResponseDto> {
-    this.logger.log(
-      `Creating webhook for ${publicKey.slice(0, 8)}... -> ${dto.webhookUrl}`,
-    );
-    return this.webhookService.createWebhook(publicKey, dto);
+    @Request() req: ExpressRequest,
+  ) {
+    const actor = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    return this.webhookService.createWebhook(publicKey, dto, actor, requestId);
   }
 
   @Get(":publicKey")
@@ -124,12 +126,15 @@ export class WebhooksController {
     type: WebhookResponseDto,
   })
   @ApiResponse({ status: 404, description: "Webhook not found" })
-  async updateWebhook(
+  async update(
     @Param("publicKey") publicKey: string,
     @Param("id") id: string,
     @Body() dto: UpdateWebhookDto,
-  ): Promise<WebhookResponseDto> {
-    const webhook = await this.webhookService.updateWebhook(id, publicKey, dto);
+    @Request() req: ExpressRequest,
+  ) {
+    const actor = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    const webhook = await this.webhookService.updateWebhook(id, publicKey, dto, actor, requestId);
     if (!webhook) {
       throw new NotFoundException("Webhook not found");
     }
@@ -143,11 +148,14 @@ export class WebhooksController {
   @ApiParam({ name: "id", description: "Webhook ID (UUID)" })
   @ApiResponse({ status: 204, description: "Webhook deleted" })
   @ApiResponse({ status: 404, description: "Webhook not found" })
-  async deleteWebhook(
+  async delete(
     @Param("publicKey") publicKey: string,
     @Param("id") id: string,
-  ): Promise<void> {
-    const deleted = await this.webhookService.deleteWebhook(id, publicKey);
+    @Request() req: ExpressRequest,
+  ) {
+    const actor = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    const deleted = await this.webhookService.deleteWebhook(id, publicKey, actor, requestId);
     if (!deleted) {
       throw new NotFoundException("Webhook not found");
     }
@@ -177,8 +185,11 @@ export class WebhooksController {
   async regenerateSecret(
     @Param("publicKey") publicKey: string,
     @Param("id") id: string,
-  ): Promise<{ secret: string }> {
-    const result = await this.webhookService.regenerateSecret(id, publicKey);
+    @Request() req: ExpressRequest,
+  ) {
+    const actor = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    const result = await this.webhookService.regenerateSecret(id, publicKey, actor, requestId);
     if (!result) {
       throw new NotFoundException("Webhook not found");
     }

@@ -18,17 +18,23 @@ const BCRYPT_ROUNDS = 10;
 const DEFAULT_QUOTA = 10_000;
 const KEY_PREFIX_LENGTH = 8; // chars used for prefix display / lookup
 
+import { AuditService } from '../common/audit/audit.service';
+import { AuditAction } from '../common/audit/audit.types';
+
 @Injectable()
 export class ApiKeysService {
   private readonly logger = new Logger(ApiKeysService.name);
 
-  constructor(private readonly repo: ApiKeysRepository) {}
+  constructor(
+    private readonly repo: ApiKeysRepository,
+    private readonly auditService: AuditService,
+  ) {}
 
   // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
 
-  async create(dto: CreateApiKeyDto): Promise<ApiKeyCreated> {
+  async create(dto: CreateApiKeyDto, actor: string = 'system', requestId?: string): Promise<ApiKeyCreated> {
     const rawKey = this.generateRawKey();
     const prefix = rawKey.slice(0, KEY_PREFIX_LENGTH + 3); // "qx_" + 8 chars
     const hash = await bcrypt.hash(rawKey, BCRYPT_ROUNDS);
@@ -43,6 +49,7 @@ export class ApiKeysService {
     });
 
     this.logger.log(`API key created: id=${record.id} name="${record.name}"`);
+    await this.auditService.log(actor, AuditAction.API_KEY_CREATE, record.id, { name: record.name }, requestId);
 
     return { ...this.toPublic(record), key: rawKey };
   }
@@ -52,15 +59,16 @@ export class ApiKeysService {
     return records.map((r) => this.toPublic(r));
   }
 
-  async revoke(id: string): Promise<void> {
+  async revoke(id: string, actor: string = 'system', requestId?: string): Promise<void> {
     const record = await this.repo.findById(id);
     if (!record) throw new NotFoundException('API key not found');
 
     await this.repo.revoke(id);
     this.logger.log(`API key revoked: id=${id}`);
+    await this.auditService.log(actor, AuditAction.API_KEY_REVOKE, id, { name: record.name }, requestId);
   }
 
-  async rotate(id: string): Promise<ApiKeyCreated> {
+  async rotate(id: string, actor: string = 'system', requestId?: string): Promise<ApiKeyCreated> {
     const record = await this.repo.findById(id);
     if (!record) throw new NotFoundException('API key not found');
 
@@ -74,6 +82,7 @@ export class ApiKeysService {
     });
 
     this.logger.log(`API key rotated: id=${id}`);
+    await this.auditService.log(actor, AuditAction.API_KEY_ROTATE, id, { name: record.name }, requestId);
 
     return { ...this.toPublic(updated), key: rawKey };
   }

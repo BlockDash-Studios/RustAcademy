@@ -7,7 +7,8 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
-  Req,
+  ParseUUIDPipe,
+  Request,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -15,15 +16,12 @@ import {
   ApiResponse,
   ApiHeader,
 } from '@nestjs/swagger';
-import { Request } from 'express';
+import { Request as ExpressRequest } from 'express';
 import { RefundsService } from './refunds.service';
 import { InitiateRefundDto } from './dto/initiate-refund.dto';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
-
-interface ApiKeyRequest extends Request {
-  apiKey: { id: string };
-}
+import { RefundAttemptRecord } from './refunds.types';
 
 @ApiTags('admin/refunds')
 @ApiHeader({
@@ -44,10 +42,11 @@ export class RefundsController {
   @ApiResponse({ status: 409, description: 'Entity is not in a refundable state' })
   async initiate(
     @Body() dto: InitiateRefundDto,
-    @Req() req: ApiKeyRequest,
-  ) {
-    const actorId: string = req.apiKey.id;
-    return this.refundsService.initiateRefund(dto, actorId);
+    @Request() req: ExpressRequest,
+  ): Promise<RefundAttemptRecord> {
+    const actorId = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    return this.refundsService.initiateRefund(dto, actorId, requestId);
   }
 
   @Post(':id/approve')
@@ -56,11 +55,12 @@ export class RefundsController {
   @ApiResponse({ status: 200, description: 'Refund approved' })
   @ApiResponse({ status: 409, description: 'Refund is not in pending state' })
   async approve(
-    @Param('id') id: string,
-    @Req() req: ApiKeyRequest,
-  ) {
-    const actorId: string = req.apiKey.id;
-    return this.refundsService.approveRefund(id, actorId);
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: ExpressRequest,
+  ): Promise<RefundAttemptRecord> {
+    const actorId = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    return this.refundsService.approveRefund(id, actorId, requestId);
   }
 
   @Post(':id/reject')
@@ -69,12 +69,13 @@ export class RefundsController {
   @ApiResponse({ status: 200, description: 'Refund rejected' })
   @ApiResponse({ status: 409, description: 'Refund is not in pending state' })
   async reject(
-    @Param('id') id: string,
-    @Body() body: { notes?: string },
-    @Req() req: ApiKeyRequest,
-  ) {
-    const actorId: string = req.apiKey.id;
-    return this.refundsService.rejectRefund(id, actorId, body.notes);
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('notes') notes: string,
+    @Request() req: ExpressRequest,
+  ): Promise<RefundAttemptRecord> {
+    const actorId = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    return this.refundsService.rejectRefund(id, actorId, notes, requestId);
   }
 
   @Get()

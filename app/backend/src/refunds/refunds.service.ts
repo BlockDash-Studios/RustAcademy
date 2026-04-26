@@ -17,15 +17,22 @@ import {
   isLinkRefundable,
 } from './refunds.eligibility';
 
+import { AuditService } from '../common/audit/audit.service';
+import { AuditAction } from '../common/audit/audit.types';
+
 @Injectable()
 export class RefundsService {
   private readonly logger = new Logger(RefundsService.name);
 
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly auditService: AuditService,
+  ) {}
 
   async initiateRefund(
     dto: InitiateRefundDto,
     actorId: string,
+    requestId?: string,
   ): Promise<RefundAttemptRecord> {
     const client = this.supabaseService.getClient();
 
@@ -69,12 +76,13 @@ export class RefundsService {
 
     // --- Audit log ---
     await this.appendAudit(record.id, actorId, 'initiated', dto.reasonCode, dto.notes);
+    await this.auditService.log(actorId, AuditAction.REFUND_INITIATE, record.id, { entityType: dto.entityType, entityId: dto.entityId }, requestId);
 
     this.logger.log(`Refund initiated id=${record.id} entity=${dto.entityType}:${dto.entityId}`);
     return record;
   }
 
-  async approveRefund(id: string, actorId: string): Promise<RefundAttemptRecord> {
+  async approveRefund(id: string, actorId: string, requestId?: string): Promise<RefundAttemptRecord> {
     const record = await this.getRefundById(id);
 
     if (record.status !== 'pending') {
@@ -95,6 +103,7 @@ export class RefundsService {
     if (error) throw error;
 
     await this.appendAudit(id, actorId, 'approved', null, null);
+    await this.auditService.log(actorId, AuditAction.REFUND_APPROVE, id, { status: 'approved' }, requestId);
     this.logger.log(`Refund approved id=${id}`);
     return data as RefundAttemptRecord;
   }
@@ -103,6 +112,7 @@ export class RefundsService {
     id: string,
     actorId: string,
     notes?: string,
+    requestId?: string,
   ): Promise<RefundAttemptRecord> {
     const record = await this.getRefundById(id);
 
@@ -124,6 +134,7 @@ export class RefundsService {
     if (error) throw error;
 
     await this.appendAudit(id, actorId, 'rejected', null, notes ?? null);
+    await this.auditService.log(actorId, AuditAction.REFUND_REJECT, id, { status: 'rejected', notes }, requestId);
     this.logger.log(`Refund rejected id=${id}`);
     return data as RefundAttemptRecord;
   }

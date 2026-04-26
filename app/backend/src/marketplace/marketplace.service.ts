@@ -4,17 +4,23 @@ import { SupabaseUniqueConstraintError } from '../supabase/supabase.errors';
 import { UsernamesService } from '../usernames/usernames.service';
 import { MarketplaceError, MarketplaceErrorCode } from './errors';
 
+import { AuditService } from '../common/audit/audit.service';
+import { AuditAction } from '../common/audit/audit.types';
+
 @Injectable()
 export class MarketplaceService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly usernames: UsernamesService,
+    private readonly auditService: AuditService,
   ) {}
 
   async listUsername(
     username: string,
     sellerPublicKey: string,
     askingPrice: number,
+    actor: string = 'system',
+    requestId?: string,
   ): Promise<MarketplaceListing> {
     const normalized = username.trim().toLowerCase();
 
@@ -35,7 +41,9 @@ export class MarketplaceService {
     }
 
     try {
-      return await this.supabase.createListing(normalized, sellerPublicKey, askingPrice);
+      const listing = await this.supabase.createListing(normalized, sellerPublicKey, askingPrice);
+      await this.auditService.log(actor, 'marketplace.list', listing.id, { username: normalized, askingPrice }, requestId);
+      return listing;
     } catch (err) {
       if (err instanceof SupabaseUniqueConstraintError) {
         throw new MarketplaceError(
@@ -65,7 +73,7 @@ export class MarketplaceService {
     return listing;
   }
 
-  async cancelListing(listingId: string, sellerPublicKey: string): Promise<void> {
+  async cancelListing(listingId: string, sellerPublicKey: string, actor: string = 'system', requestId?: string): Promise<void> {
     const listing = await this.getListing(listingId);
 
     if (listing.seller_public_key !== sellerPublicKey) {
@@ -83,6 +91,7 @@ export class MarketplaceService {
     }
 
     await this.supabase.cancelListing(listingId);
+    await this.auditService.log(actor, 'marketplace.cancel', listingId, { username: listing.username }, requestId);
   }
 
   async placeBid(
@@ -118,6 +127,8 @@ export class MarketplaceService {
     listingId: string,
     bidId: string,
     sellerPublicKey: string,
+    actor: string = 'system',
+    requestId?: string,
   ): Promise<void> {
     const listing = await this.getListing(listingId);
 
@@ -151,5 +162,6 @@ export class MarketplaceService {
     }
 
     await this.supabase.acceptBid(listingId, bidId, sellerPublicKey);
+    await this.auditService.log(actor, 'marketplace.accept_bid', listingId, { bidId, username: listing.username }, requestId);
   }
 }

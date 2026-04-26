@@ -7,7 +7,9 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Request,
 } from '@nestjs/common';
+import { Request as ExpressRequest } from 'express';
 import { ApiKeysService } from './api-keys.service';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 
@@ -20,8 +22,10 @@ export class ApiKeysController {
    * Creates a new API key. The raw key is returned ONCE in the response.
    */
   @Post()
-  create(@Body() dto: CreateApiKeyDto) {
-    return this.service.create(dto);
+  create(@Body() dto: CreateApiKeyDto, @Request() req: ExpressRequest) {
+    const actor = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    return this.service.create(dto, actor, requestId);
   }
 
   /**
@@ -47,8 +51,10 @@ export class ApiKeysController {
    * Revokes (soft-deletes) a key.
    */
   @Delete(':id')
-  revoke(@Param('id', ParseUUIDPipe) id: string) {
-    return this.service.revoke(id);
+  revoke(@Param('id', ParseUUIDPipe) id: string, @Request() req: ExpressRequest) {
+    const actor = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    return this.service.revoke(id, actor, requestId);
   }
 
   /**
@@ -56,7 +62,9 @@ export class ApiKeysController {
    * Invalidates the current key and issues a new one.
    */
   @Post(':id/rotate')
-  rotate(@Param('id', ParseUUIDPipe) id: string) {
-    return this.service.rotate(id);
+  rotate(@Param('id', ParseUUIDPipe) id: string, @Request() req: ExpressRequest) {
+    const actor = req['apiKey']?.id || 'system';
+    const requestId = req['correlationId'];
+    return this.service.rotate(id, actor, requestId);
   }
 }
