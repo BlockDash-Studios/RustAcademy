@@ -68,3 +68,5 @@ export class CursorRepository {
     this.logger.debug(`Cursor saved: ${streamId} → ${pagingToken}`);
   }
 }
+  /* Added by bounty-bot */
+}
