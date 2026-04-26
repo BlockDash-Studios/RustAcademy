@@ -16,6 +16,9 @@ mod events;
 mod fee;
 #[cfg(test)]
 mod fee_test;
+mod nonce;
+#[cfg(test)]
+mod nonce_registry_test;
 mod privacy;
 #[cfg(test)]
 mod role_test;
@@ -814,5 +817,45 @@ impl QuickexContract {
     /// Get all roles assigned to an account.
     pub fn get_roles(env: Env, account: Address) -> Vec<Role> {
         storage::get_roles(&env, &account)
+    }
+
+    // -----------------------------------------------------------------------
+    // Replay protection
+    // -----------------------------------------------------------------------
+
+    /// Verify and consume a one-time nonce for `signer`.
+    ///
+    /// Enforces:
+    /// 1. Expiry: if `expires_at > 0` and `now >= expires_at` → `SignatureExpired`.
+    /// 2. Uniqueness: if the (signer, nonce) pair was already consumed → `NonceAlreadyUsed`.
+    ///
+    /// On success the nonce is permanently recorded so it cannot be reused.
+    /// Callers should invoke this before executing any signature-gated operation.
+    ///
+    /// # Errors
+    /// * `SignatureExpired`   – payload has passed its expiry timestamp.
+    /// * `NonceAlreadyUsed`  – nonce was already consumed (replay detected).
+    pub fn verify_nonce(
+        env: Env,
+        signer: Address,
+        nonce: BytesN<32>,
+        expires_at: u64,
+    ) -> Result<(), QuickexError> {
+        nonce::verify_and_consume_nonce(&env, &signer, &nonce, expires_at)
+    }
+
+    /// Build the canonical domain-separated message hash for a signed payload.
+    ///
+    /// `SHA-256(contract_id || network_id || signer_xdr || nonce || BE(expires_at))`
+    ///
+    /// Clients should sign this hash off-chain and pass the nonce + expires_at
+    /// alongside the signature so the contract can verify and consume the nonce.
+    pub fn build_message_hash(
+        env: Env,
+        signer: Address,
+        nonce: BytesN<32>,
+        expires_at: u64,
+    ) -> BytesN<32> {
+        nonce::build_message_hash(&env, &signer, &nonce, expires_at)
     }
 }

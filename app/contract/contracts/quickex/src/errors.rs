@@ -50,6 +50,11 @@ pub enum QuickexError {
     StealthAddressAlreadyUsed = 401,
     /// No stealth escrow found for the given stealth address.
     StealthEscrowNotFound = 402,
+    // Replay protection (500-599)
+    /// Nonce has already been consumed; signature replay detected.
+    NonceAlreadyUsed = 500,
+    /// Signed message has passed its expiry ledger timestamp.
+    SignatureExpired = 501,
     // Internal/unexpected conditions (900-999)
     InternalError = 900,
     InvalidTimeout = 901,

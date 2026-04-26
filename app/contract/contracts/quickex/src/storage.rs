@@ -111,6 +111,9 @@ pub enum DataKey {
     EscrowIdMap(BytesN<32>),
     /// Roles assigned to an address.
     UserRole(Address),
+    /// Nonce registry entry keyed by (signer, nonce_bytes).
+    /// Value is the ledger timestamp at which the nonce was consumed.
+    Nonce(Address, BytesN<32>),
 }
 
 // -----------------------------------------------------------------------------
@@ -348,6 +351,27 @@ pub fn get_escrow_id_mapping(env: &Env, escrow_id: &BytesN<32>) -> Option<BytesN
 pub fn put_escrow_id_mapping(env: &Env, escrow_id: &BytesN<32>, commitment: &BytesN<32>) {
     let key = DataKey::EscrowIdMap(escrow_id.clone());
     env.storage().persistent().set(&key, commitment);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+}
+
+// -----------------------------------------------------------------------------
+// Nonce registry helpers
+// -----------------------------------------------------------------------------
+
+/// Returns `true` if the (signer, nonce) pair has already been consumed.
+pub fn nonce_used(env: &Env, signer: &Address, nonce: &BytesN<32>) -> bool {
+    env.storage()
+        .persistent()
+        .has(&DataKey::Nonce(signer.clone(), nonce.clone()))
+}
+
+/// Mark a (signer, nonce) pair as consumed, recording the current ledger timestamp.
+pub fn consume_nonce(env: &Env, signer: &Address, nonce: &BytesN<32>) {
+    let key = DataKey::Nonce(signer.clone(), nonce.clone());
+    let now = env.ledger().timestamp();
+    env.storage().persistent().set(&key, &now);
     env.storage()
         .persistent()
         .extend_ttl(&key, LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
