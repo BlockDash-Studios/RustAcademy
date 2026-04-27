@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -6,11 +6,12 @@ import {
     ScrollView,
     TouchableOpacity,
     Alert,
-    Share,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
+import * as Sharing from 'expo-sharing';
+import ViewShot from 'react-native-view-shot';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme/ThemeContext';
 
@@ -58,22 +59,57 @@ export default function TransactionDetailScreen() {
         source: string;
         destination: string;
         status: string;
+        receiptUrl?: string;
     }>();
+    const receiptViewRef = useRef<ViewShot>(null);
+    const [isCapturing, setIsCapturing] = useState(false);
 
     const handleCopy = async (text: string, label: string) => {
         await Clipboard.setStringAsync(text);
         Alert.alert('Copied', `${label} copied to clipboard.`);
     };
 
-    const handleShare = async () => {
+    const handleShareReceipt = async () => {
         try {
-            await Share.share({
-                message: `Transaction Details:\nAmount: ${params.amount} ${params.asset}\nHash: ${params.txHash}\nStatus: ${params.status}`,
+            if (!receiptViewRef.current) {
+                throw new Error('Receipt preview is unavailable.');
+            }
+
+            setIsCapturing(true);
+            const uri = await receiptViewRef.current.capture({
+                format: 'png',
+                quality: 0.95,
+                result: 'tmpfile',
+            });
+
+            const canShare = await Sharing.isAvailableAsync();
+            if (!canShare) {
+                Alert.alert('Sharing unavailable', 'Sharing is not supported on this device.');
+                return;
+            }
+
+            await Sharing.shareAsync(uri, {
+                mimeType: 'image/png',
+                dialogTitle: 'Share Receipt',
             });
         } catch (error) {
-            console.error(error);
+            const message = error instanceof Error ? error.message : 'Unable to share receipt.';
+            Alert.alert('Share failed', message);
+        } finally {
+            setIsCapturing(false);
         }
     };
+
+    const handleCopyReceiptLink = async () => {
+        if (!params.receiptUrl) {
+            return;
+        }
+
+        await Clipboard.setStringAsync(params.receiptUrl);
+        Alert.alert('Copied', 'Receipt link copied to clipboard.');
+    };
+
+    const statusLabel = params.status ? `${params.status.charAt(0).toUpperCase()}${params.status.slice(1).toLowerCase()}` : 'Pending';
 
     const formatDate = (iso: string) => {
         return new Date(iso).toLocaleString('en-US', {
@@ -96,26 +132,64 @@ export default function TransactionDetailScreen() {
                     <Ionicons name="chevron-back" size={24} color={theme.textPrimary} />
                 </TouchableOpacity>
                 <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>Transaction Receipt</Text>
-                <TouchableOpacity onPress={handleShare} style={styles.iconButton}>
+                <TouchableOpacity onPress={handleShareReceipt} style={styles.iconButton}>
                     <Ionicons name="share-outline" size={24} color={theme.textPrimary} />
                 </TouchableOpacity>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-                {/* Hero Section */}
-                <View style={styles.hero}>
-                    <View style={[styles.statusBadge, { backgroundColor: params.status === 'Success' ? theme.status.success + '20' : theme.status.warning + '20' }]}>
-                        <View style={[styles.statusDot, { backgroundColor: params.status === 'Success' ? theme.status.success : theme.status.warning }]} />
-                        <Text style={[styles.statusText, { color: params.status === 'Success' ? theme.status.success : theme.status.warning }]}>
-                            {params.status || 'Pending'}
+                <View style={styles.actionRow}>
+                    <TouchableOpacity onPress={handleShareReceipt} style={[styles.primaryButton, { backgroundColor: theme.buttonPrimaryBg }]}> 
+                        <Text style={[styles.primaryButtonText, { color: theme.buttonPrimaryText }]}> 
+                            {isCapturing ? 'Preparing...' : 'Share Receipt'}
                         </Text>
-                    </View>
-                    <Text style={[styles.amount, { color: theme.textPrimary }]}>
-                        {parseFloat(params.amount || '0').toFixed(2)}
-                    </Text>
-                    <Text style={[styles.assetCode, { color: theme.textSecondary }]}>{params.asset}</Text>
-                    <Text style={[styles.timestamp, { color: theme.textMuted }]}>{formatDate(params.timestamp)}</Text>
+                    </TouchableOpacity>
+                    {params.receiptUrl ? (
+                        <TouchableOpacity onPress={handleCopyReceiptLink} style={[styles.secondaryButton, { borderColor: theme.border }]}> 
+                            <Text style={[styles.secondaryButtonText, { color: theme.textPrimary }]}>Copy Link</Text> 
+                        </TouchableOpacity>
+                    ) : null}
                 </View>
+
+                <ViewShot ref={receiptViewRef} options={{ format: 'png', quality: 0.95, result: 'tmpfile' }} style={[styles.receiptCapture, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}> 
+                    <View style={[styles.receiptBrandHeader, { backgroundColor: theme.primary }]}> 
+                        <Text style={styles.receiptBrandTitle}>QuickEx Receipt</Text> 
+                        <Text style={styles.receiptBrandSubtitle}>Secure payment confirmation</Text> 
+                    </View>
+
+                    <View style={[styles.hero, { alignItems: 'flex-start', paddingHorizontal: 20, paddingTop: 24, paddingBottom: 8, marginBottom: 0 }]}> 
+                        <View style={[styles.statusBadge, { backgroundColor: statusLabel === 'Success' ? theme.status.success + '20' : theme.status.warning + '20' }]}> 
+                            <View style={[styles.statusDot, { backgroundColor: statusLabel === 'Success' ? theme.status.success : theme.status.warning }]} /> 
+                            <Text style={[styles.statusText, { color: statusLabel === 'Success' ? theme.status.success : theme.status.warning }]}> 
+                                {statusLabel}
+                            </Text>
+                        </View>
+                        <Text style={[styles.amount, { color: theme.textPrimary, fontSize: 36, marginTop: 12 }]}> 
+                            {parseFloat(params.amount || '0').toFixed(2)}
+                        </Text>
+                        <Text style={[styles.assetCode, { color: theme.textSecondary }]}>{params.asset}</Text>
+                        <Text style={[styles.timestamp, { color: theme.textMuted }]}>{formatDate(params.timestamp)}</Text>
+                    </View>
+
+                    <View style={styles.card}> 
+                        <View style={[styles.receiptDetailsRow, { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]}> 
+                            <Text style={[styles.receiptDetailLabel, { color: theme.textSecondary }]}>Transaction Hash</Text> 
+                            <Text style={[styles.receiptDetailValue, { color: theme.textPrimary }]}>{shorten(params.txHash)}</Text> 
+                        </View> 
+                        <View style={[styles.receiptDetailsRow, { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]}> 
+                            <Text style={[styles.receiptDetailLabel, { color: theme.textSecondary }]}>From</Text> 
+                            <Text style={[styles.receiptDetailValue, { color: theme.textPrimary }]}>{shorten(params.source)}</Text> 
+                        </View> 
+                        <View style={[styles.receiptDetailsRow, { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]}> 
+                            <Text style={[styles.receiptDetailLabel, { color: theme.textSecondary }]}>To</Text> 
+                            <Text style={[styles.receiptDetailValue, { color: theme.textPrimary }]}>{shorten(params.destination)}</Text> 
+                        </View> 
+                        <View style={[styles.receiptDetailsRow, { paddingBottom: 20 }]}> 
+                            <Text style={[styles.receiptDetailLabel, { color: theme.textSecondary }]}>Memo</Text> 
+                            <Text style={[styles.receiptDetailValue, { color: theme.textPrimary }]}>{params.memo || 'None'}</Text> 
+                        </View> 
+                    </View> 
+                </ViewShot>
 
                 {/* Timeline Section */}
                 <View style={styles.section}>
@@ -426,5 +500,67 @@ const styles = StyleSheet.create({
     eventDescription: {
         fontSize: 13,
         lineHeight: 18,
+    },
+    actionRow: {
+        flexDirection: 'row',
+        gap: 12,
+        marginBottom: 16,
+    },
+    primaryButton: {
+        flex: 1,
+        borderRadius: 14,
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    primaryButtonText: {
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    secondaryButton: {
+        borderRadius: 14,
+        borderWidth: 1,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        justifyContent: 'center',
+    },
+    secondaryButtonText: {
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    receiptCapture: {
+        borderRadius: 24,
+        overflow: 'hidden',
+        marginBottom: 24,
+        borderWidth: 1,
+    },
+    receiptBrandHeader: {
+        padding: 20,
+    },
+    receiptBrandTitle: {
+        color: 'white',
+        fontSize: 18,
+        fontWeight: '800',
+    },
+    receiptBrandSubtitle: {
+        color: 'white',
+        fontSize: 12,
+        marginTop: 4,
+    },
+    receiptDetailsRow: {
+        paddingHorizontal: 20,
+        paddingVertical: 16,
+        backgroundColor: 'transparent',
+    },
+    receiptDetailLabel: {
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 0.5,
+        marginBottom: 4,
+        textTransform: 'uppercase',
+    },
+    receiptDetailValue: {
+        fontSize: 14,
+        fontWeight: '600',
     },
 });
