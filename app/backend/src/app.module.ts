@@ -35,7 +35,8 @@ import { FiatRampsModule } from "./fiat-ramps/fiat-ramps.module";
 import { RefundsModule } from "./refunds/refunds.module";
 import { ExportsModule } from "./exports/exports.module";
 import { JobQueueModule } from "./job-queue/job-queue.module";
-import { SignedPayloadModule } from "./signed-payload/signed-payload.module";
+import { AuditModule } from "./audit/audit.module";
+import { FeatureFlagsModule } from "./feature-flags/feature-flags.module";
 import { CustomThrottlerGuard } from "./auth/guards/custom-throttler.guard";
 import { throttlerModuleProfiles } from "./config/rate-limit.config";
 
@@ -74,7 +75,8 @@ type AppImport =
       RefundsModule,
       ExportsModule,
       JobQueueModule,
-      SignedPayloadModule,
+      AuditModule,
+      FeatureFlagsModule,
     ];
 
     // In development, if SUPABASE_URL points to a localhost placeholder (i.e. you don't
