@@ -1,4 +1,5 @@
 import { registerAs } from '@nestjs/config';
+import { VERIFIED_STELLAR_ASSETS } from '../stellar/verified-assets.constant';
 
 export type Network = 'testnet' | 'mainnet';
 
@@ -33,19 +34,22 @@ export const NETWORK_ENV_KEY = 'STELLAR_NETWORK';
 export const DEFAULT_NETWORK: Network = 'testnet';
 
 export const USDC_ISSUER =
-  'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2K34P4D5NXJ6Z4GJ5B7G';
+  VERIFIED_STELLAR_ASSETS.find((asset) => asset.code === 'USDC')?.issuer ?? '';
 
-export const SUPPORTED_ASSETS = [
-  {
-    type: 'native',
-    code: 'XLM',
-  },
-  {
-    type: 'credit_alphanum4',
-    code: 'USDC',
-    issuer: USDC_ISSUER,
-  },
-] as const satisfies readonly SupportedAsset[];
+export const SUPPORTED_ASSETS = VERIFIED_STELLAR_ASSETS.map((asset) => {
+  if (asset.type === 'native') {
+    return {
+      type: 'native',
+      code: 'XLM',
+    } as const;
+  }
+
+  return {
+    type: asset.type,
+    code: asset.code,
+    issuer: asset.issuer ?? '',
+  };
+}) satisfies readonly SupportedAsset[];
 
 export const HORIZON_BASE_URLS: Record<Network, string> = {
   testnet: 'https://horizon-testnet.stellar.org',
@@ -76,7 +80,12 @@ export class UnsupportedAssetError extends Error {
 }
 
 export function normalizeAssetCode(code: string): string {
-  return code.trim().toUpperCase();
+  const trimmed = code.trim();
+  const verified = VERIFIED_STELLAR_ASSETS.find(
+    (asset) => asset.code.toLowerCase() === trimmed.toLowerCase(),
+  );
+
+  return verified?.code ?? trimmed.toUpperCase();
 }
 
 export function normalizeAsset(input: AssetInput): NormalizedAsset {
@@ -92,7 +101,7 @@ export function normalizeAsset(input: AssetInput): NormalizedAsset {
   const issuer =
     type === 'native' || typeof input.issuer !== 'string'
       ? undefined
-      : input.issuer;
+      : input.issuer.trim();
 
   return {
     type,

@@ -39,10 +39,38 @@ describe('stellar config', () => {
       );
     });
 
-    it('rejects issued assets with mismatched issuer', () => {
+    it('accepts every verified Stellar asset with its configured issuer', () => {
+      for (const asset of SUPPORTED_ASSETS) {
+        expect(isSupportedAsset(asset)).toBe(true);
+      }
+    });
+
+    it('normalizes mixed-case aliases to verified asset codes', () => {
+      const yxlm = SUPPORTED_ASSETS.find((asset) => asset.code === 'yXLM') as {
+        code: 'yXLM';
+        issuer: string;
+        type: 'credit_alphanum4';
+      };
+
       expect(
-        isSupportedAsset({ code: 'USDC', issuer: 'GBADISSUER' }),
-      ).toBe(false);
+        assertSupportedAsset({ code: 'yxlm', issuer: yxlm.issuer }),
+      ).toEqual(yxlm);
+    });
+
+    it('rejects issued assets with mismatched issuer', () => {
+      expect(isSupportedAsset({ code: 'USDC', issuer: 'GBADISSUER' })).toBe(
+        false,
+      );
+    });
+
+    it('rejects issued assets when the issuer is missing', () => {
+      expect(isSupportedAsset({ code: 'USDC' })).toBe(false);
+    });
+
+    it('trims issuer input before matching supported assets', () => {
+      expect(
+        isSupportedAsset({ code: 'USDC', issuer: ` ${USDC_ISSUER} ` }),
+      ).toBe(true);
     });
 
     it('rejects unknown asset codes', () => {
