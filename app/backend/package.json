@@ -10,6 +10,8 @@
     "start": "node dist/main",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "type-check": "tsc --noEmit",
+    "validate:env": "ts-node --transpile-only scripts/validate-env.ts",
+    "validate:env:strict": "ts-node --transpile-only scripts/validate-env.ts --strict",
     "test": "jest",
     "test:unit": "jest --config jest.unit.config.ts",
     "test:int": "jest --config jest.int.config.ts",

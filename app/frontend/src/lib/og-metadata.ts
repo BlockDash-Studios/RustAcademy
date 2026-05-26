@@ -9,19 +9,17 @@
  *  - memo                  → only included when it is a short, non-sensitive label
  */
 
+import { getClientEnv, getServerEnv } from "@/lib/env";
+
 export const SITE_NAME = "QuickEx";
 export const SITE_DESCRIPTION = "Privacy-focused payments on Stellar";
 
 /** Resolved at build/request time from the environment. Falls back to a relative path. */
 export function getSiteUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
-    process.env.NEXT_PUBLIC_QUICKEX_API_URL?.replace(/\/$/, "").replace(
-      /:4000$/,
-      ":3000",
-    ) ??
-    "https://quickex.to"
-  );
+  const env = getClientEnv();
+  if (env?.siteUrl) return env.siteUrl;
+  if (env?.apiBaseUrl) return env.apiBaseUrl.replace(/:4000$/, ":3000");
+  return "https://quickex.to";
 }
 
 /** The default OG image served from /public */
@@ -49,9 +47,11 @@ export async function fetchPaymentMeta(params: {
   acceptedAssets?: string;
 }): Promise<SafePaymentMeta | null> {
   try {
+    const serverEnv = getServerEnv();
+    const clientEnv = getClientEnv();
     const apiBase =
-      process.env.QUICKEX_INTERNAL_API_URL?.replace(/\/$/, "") ??
-      process.env.NEXT_PUBLIC_QUICKEX_API_URL?.replace(/\/$/, "") ??
+      serverEnv.internalApiUrl ??
+      clientEnv?.apiBaseUrl ??
       "http://localhost:4000";
 
     const qs = new URLSearchParams({ username: params.username, amount: params.amount });

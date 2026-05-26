@@ -2,10 +2,12 @@ import type { Metadata } from "next";
 import { Header } from "@/components/Header";
 import { NotificationCenterProvider } from "@/components/NotificationCenterProvider";
 import { ErrorReportingShell } from "@/components/ErrorReportingShell";
+import { MisconfigurationScreen } from "@/components/MisconfigurationScreen";
+import { getClientEnv, getClientEnvIssues } from "@/lib/env";
 import "./globals.css";
 
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ?? "https://quickex.to";
+const env = getClientEnv();
+const siteUrl = env?.siteUrl ?? "https://quickex.to";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -51,6 +53,18 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // If critical env validation failed, render the dedicated Misconfiguration
+  // screen instead of attempting to boot. The screen owns its own <html>/<body>.
+  if (!env) {
+    const issues = getClientEnvIssues().filter((i) => i.severity === "error");
+    return (
+      <MisconfigurationScreen
+        issues={issues}
+        showDevHint={process.env.NODE_ENV !== "production"}
+      />
+    );
+  }
+
   return (
     <html lang="en">
       <body className="bg-neutral-950 text-white antialiased">

@@ -1,5 +1,6 @@
 import i18n from "i18next";
 import { getQuickexApiBase } from "@/lib/api";
+import { getClientEnv } from "@/lib/env";
 
 export type DateRange = "24h" | "7d" | "30d" | "all";
 
@@ -114,7 +115,8 @@ function resolveAnalyticsPublicKey(): string {
     }
   }
 
-  const fromEnv = process.env.NEXT_PUBLIC_QUICKEX_ANALYTICS_PUBLIC_KEY?.trim();
+  const env = getClientEnv();
+  const fromEnv = env?.analyticsPublicKey;
   if (fromEnv && PUBLIC_KEY_REGEX.test(fromEnv)) {
     return fromEnv;
   }

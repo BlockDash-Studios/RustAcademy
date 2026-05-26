@@ -5,14 +5,54 @@ on:
     branches: [ main, develop ]
     paths:
       - 'app/backend/**'
+      - '.github/workflows/backend.yml'
   pull_request:
     branches: [ main, develop ]
     paths:
       - 'app/backend/**'
+      - '.github/workflows/backend.yml'
 
 jobs:
+  validate-env:
+    name: Validate Env Schema
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Fail-fast contract — missing required vars must fail validation
+        env:
+          NODE_ENV: production
+          # Deliberately omit SUPABASE_URL / SUPABASE_ANON_KEY / NETWORK
+        run: |
+          if pnpm run validate:env; then
+            echo "::error::validate:env unexpectedly succeeded with required vars missing"
+            exit 1
+          else
+            echo "validate:env correctly failed when required vars are missing"
+          fi
+
+      - name: Validate with minimal valid env
+        env:
+          NODE_ENV: production
+          NETWORK: testnet
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_ANON_KEY: ci-anon-key
+        run: pnpm run validate:env
+
   build-and-test:
     name: Build and Test
+    needs: validate-env
     runs-on: ubuntu-latest
     defaults:
       run:

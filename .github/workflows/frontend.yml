@@ -1,0 +1,76 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'app/frontend/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'app/frontend/**'
+      - '.github/workflows/frontend.yml'
+
+jobs:
+  validate-env:
+    name: Validate Production Env
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/frontend
+    env:
+      # Acceptance criterion: builds fail fast when critical env vars are
+      # missing. This job runs `validate:env` with NODE_ENV=production and
+      # *no* values, so it must exit non-zero — proving the gate works.
+      NODE_ENV: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Fail-fast contract — production env without required vars must fail
+        run: |
+          if pnpm run validate:env; then
+            echo "::error::validate:env unexpectedly succeeded with no envs set in production mode"
+            exit 1
+          else
+            echo "validate:env correctly failed when required vars are missing"
+          fi
+
+  build-and-check:
+    name: Build, Validate Env, Scan Bundle
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/frontend
+    env:
+      NODE_ENV: production
+      # Minimal valid production env for the CI build. Override in repo
+      # secrets / variables to point at the real backend.
+      NEXT_PUBLIC_QUICKEX_API_URL: ${{ vars.NEXT_PUBLIC_QUICKEX_API_URL || 'https://api.example.com' }}
+      NEXT_PUBLIC_SITE_URL: ${{ vars.NEXT_PUBLIC_SITE_URL || 'https://quickex.to' }}
+      NEXT_PUBLIC_STELLAR_NETWORK: ${{ vars.NEXT_PUBLIC_STELLAR_NETWORK || 'testnet' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Validate env
+        run: pnpm run validate:env
+      - name: Lint
+        run: pnpm run lint
+      - name: Build
+        # `prebuild` runs validate:env again, `postbuild` runs the
+        # bundle-secret scanner — so this single step covers all three gates.
+        run: pnpm run build

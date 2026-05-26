@@ -4,7 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "validate:env": "node scripts/validate-env.mjs",
+    "validate:env:strict": "node scripts/validate-env.mjs --strict",
+    "check:bundle-secrets": "node scripts/check-bundle-secrets.mjs",
+    "prebuild": "node scripts/validate-env.mjs",
     "build": "next build",
+    "postbuild": "node scripts/check-bundle-secrets.mjs",
     "start": "next start",
     "lint": "eslint"
   },

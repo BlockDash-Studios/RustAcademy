@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getClientEnv } from "@/lib/env";
 
 export function NetworkBadge() {
   const [network, setNetwork] = useState<string | undefined>(undefined);
+  const [explicit, setExplicit] = useState(false);
 
   useEffect(() => {
-    setNetwork(process.env.NEXT_PUBLIC_STELLAR_NETWORK);
+    const env = getClientEnv();
+    setNetwork(env?.stellarNetwork);
+    setExplicit(Boolean(env?.stellarNetwork));
   }, []);
 
   if (!network) return null;
@@ -31,7 +35,7 @@ export function NetworkBadge() {
     >
       {label}
 
-      {!process.env.NEXT_PUBLIC_STELLAR_NETWORK && (
+      {!explicit && (
         <span className="ml-2 opacity-50 font-normal italic">(default)</span>
       )}
     </div>

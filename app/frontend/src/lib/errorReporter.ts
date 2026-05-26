@@ -1,3 +1,5 @@
+import { getClientEnv } from "@/lib/env";
+
 export type ErrorContext = {
   requestId?: string;
   correlationId?: string;
@@ -34,9 +36,11 @@ export function redactPII(value: unknown): unknown {
 
 class ErrorReporter {
   async captureError(error: Error, context?: ErrorContext): Promise<void> {
-    const enabled = process.env.NEXT_PUBLIC_ERROR_REPORTING_ENABLED === "true";
-    const environment = process.env.NEXT_PUBLIC_VERCEL_ENV || process.env.NODE_ENV || "unknown";
-    const appVersion = process.env.NEXT_PUBLIC_APP_VERSION || "unknown";
+    const env = getClientEnv();
+    const enabled = env?.errorReportingEnabled ?? false;
+    const environment =
+      env?.vercelEnv ?? process.env.NODE_ENV ?? "unknown";
+    const appVersion = env?.appVersion ?? "unknown";
     const errorPayload = {
       timestamp: new Date().toISOString(),
       error: redactPII({
@@ -56,7 +60,7 @@ class ErrorReporter {
       return;
     }
 
-    const url = process.env.NEXT_PUBLIC_ERROR_REPORTING_URL;
+    const url = env?.errorReportingUrl;
     if (!url) {
       console.warn(
         "Client error reporting URL is not configured. Error payload:",
