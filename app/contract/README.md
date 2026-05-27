@@ -45,6 +45,31 @@ cargo test -- --nocapture
 cargo tarpaulin --ignore-tests
 ```
 
+## Performance Benchmarks
+
+The contract includes a comprehensive performance benchmark suite to track execution costs and detect regressions. See [PERFORMANCE_BENCHMARKS.md](contracts/quickex/PERFORMANCE_BENCHMARKS.md) for detailed documentation.
+
+```bash
+# Run all performance benchmarks
+cargo test perf_bench_ --release -- --nocapture
+
+# Run specific benchmark
+cargo test perf_bench_create_fulfill_flow --release -- --nocapture
+
+# Generate CI report
+cargo test perf_bench_generate_ci_report --release -- --nocapture
+
+# Use helper scripts
+./run_benchmarks.sh all           # Linux/Mac
+run_benchmarks.bat all            # Windows
+```
+
+**Key Features:**
+- Tracks CPU instruction counts and memory usage
+- Defines regression thresholds for all core flows
+- Automatically fails CI on cost increases
+- Publishes results as CI artifacts
+
 ## Quality Checks
 
 ```bash

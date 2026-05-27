@@ -6,6 +6,10 @@ mod admin;
 mod bench_test;
 mod commitment;
 #[cfg(test)]
+mod perf_bench;
+#[cfg(test)]
+mod perf_bench_validation;
+#[cfg(test)]
 mod commitment_test;
 mod errors;
 mod escrow;

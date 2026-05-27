@@ -41,3 +41,24 @@ jobs:
 
       - name: Run tests
         run: cargo test
+
+      - name: Run performance benchmarks
+        run: |
+          echo "Running performance benchmarks..."
+          cargo test perf_bench_ --release -- --nocapture > perf_bench_results.txt 2>&1 || true
+          cat perf_bench_results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-benchmarks
+          path: app/contract/perf_bench_results.txt
+          retention-days: 90
+
+      - name: Check for performance regressions
+        run: |
+          echo "Checking for performance regressions..."
+          cargo test perf_bench_create_fulfill_flow --release -- --nocapture
+          cargo test perf_bench_refund_flow --release -- --nocapture
+          cargo test perf_bench_dispute_resolution_flow --release -- --nocapture
