@@ -192,6 +192,22 @@ pub fn is_emergency_mode(env: &Env) -> bool {
     env.storage().persistent().get(&key).unwrap_or(false)
 }
 
+/// Check whether a given feature is permitted while emergency mode is active.
+///
+/// During emergency mode most operations should be blocked. A small set of
+/// safe entrypoints (e.g. withdrawals, refunds) are allowed so users can
+/// recover funds. This helper centralises that allowlist.
+pub fn is_feature_allowed_in_emergency(env: &Env, flag: PauseFlag) -> bool {
+    if !is_emergency_mode(env) {
+        return true;
+    }
+
+    match flag {
+        PauseFlag::Withdrawal | PauseFlag::Refund => true,
+        _ => false,
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Escrow helpers
 // -----------------------------------------------------------------------------

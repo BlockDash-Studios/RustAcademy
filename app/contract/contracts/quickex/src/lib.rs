@@ -211,7 +211,7 @@ impl QuickexContract {
         timeout_secs: u64,
         arbiter: Option<Address>,
     ) -> Result<BytesN<32>, QuickexError> {
-        if storage::is_emergency_mode(&env) {
+        if !storage::is_feature_allowed_in_emergency(&env, storage::PauseFlag::Deposit) {
             return Err(QuickexError::ContractPaused);
         }
         if admin::is_paused(&env) {
@@ -346,7 +346,7 @@ impl QuickexContract {
         timeout_secs: u64,
         arbiter: Option<Address>,
     ) -> Result<(), QuickexError> {
-        if storage::is_emergency_mode(&env) {
+        if !storage::is_feature_allowed_in_emergency(&env, storage::PauseFlag::DepositWithCommitment) {
             return Err(QuickexError::ContractPaused);
         }
         if admin::is_paused(&env) {
@@ -677,7 +677,20 @@ impl QuickexContract {
         if storage::is_emergency_mode(&env) {
             return Err(QuickexError::ContractPaused);
         }
-        admin::set_paused(&env, caller, new_state)
+        admin::set_paused(&env, caller, new_state, Bytes::new(&env))
+    }
+
+    /// Pause/unpause with an explicit reason string (Admin only).
+    pub fn set_paused_with_reason(
+        env: Env,
+        caller: Address,
+        new_state: bool,
+        reason: Bytes,
+    ) -> Result<(), QuickexError> {
+        if storage::is_emergency_mode(&env) {
+            return Err(QuickexError::ContractPaused);
+        }
+        admin::set_paused(&env, caller, new_state, reason)
     }
 
     /// Check if the function is currently paused.

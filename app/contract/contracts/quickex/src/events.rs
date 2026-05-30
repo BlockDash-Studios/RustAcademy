@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, Address, BytesN, Env};
+use soroban_sdk::{contractevent, Address, Bytes, BytesN, Env};
 
 /// Canonical event schema version.
 ///
@@ -10,7 +10,7 @@ use soroban_sdk::{contractevent, Address, BytesN, Env};
 /// History:
 ///   v1 – original schema (no version field)
 ///   v2 – added `schema_version` to every event payload (this release)
-pub const EVENT_SCHEMA_VERSION: u32 = 2;
+pub const EVENT_SCHEMA_VERSION: u32 = 3;
 
 /// Testnet event topic namespace used as topic[0] for every QuickEx event.
 #[allow(dead_code)]
@@ -75,7 +75,7 @@ pub const EVENT_SCHEMAS: &[EventSchema] = &[
     EventSchema {
         name: "ContractPaused",
         topics: &[EVENT_TOPIC_ADMIN, "ContractPaused", "admin"],
-        payload_keys: &["paused", "schema_version", "timestamp"],
+        payload_keys: &["paused", "reason", "schema_version", "timestamp"],
         schema_version: EVENT_SCHEMA_VERSION,
     },
     EventSchema {
@@ -333,15 +333,17 @@ pub struct ContractPausedEvent {
 
     pub schema_version: u32,
     pub paused: bool,
+    pub reason: Bytes,
     pub timestamp: u64,
 }
 
 #[allow(dead_code)]
-pub(crate) fn publish_contract_paused(env: &Env, admin: Address, paused: bool) {
+pub(crate) fn publish_contract_paused(env: &Env, admin: Address, paused: bool, reason: Bytes) {
     ContractPausedEvent {
         admin,
         schema_version: EVENT_SCHEMA_VERSION,
         paused,
+        reason,
         timestamp: env.ledger().timestamp(),
     }
     .publish(env);

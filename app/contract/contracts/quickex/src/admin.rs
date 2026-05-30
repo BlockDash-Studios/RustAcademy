@@ -6,7 +6,7 @@ use crate::events::{
 use crate::fee_router;
 use crate::storage;
 use crate::types::{FeeConfig, PerAssetFeeConfig, Role};
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{Address, Bytes, Env, Vec};
 
 /// Initialize the contract with an admin address.
 ///
@@ -129,11 +129,16 @@ pub fn set_admin(env: &Env, caller: Address, new_admin: Address) -> Result<(), Q
 }
 
 /// Set the paused state (**Admin or Operator only**).
-pub fn set_paused(env: &Env, caller: Address, new_state: bool) -> Result<(), QuickexError> {
+pub fn set_paused(
+    env: &Env,
+    caller: Address,
+    new_state: bool,
+    reason: Bytes,
+) -> Result<(), QuickexError> {
     require_any_role(env, &caller, &[Role::Admin, Role::Operator])?;
 
     storage::set_paused(env, new_state);
-    publish_contract_paused(env, caller, new_state);
+    publish_contract_paused(env, caller, new_state, reason);
     Ok(())
 }
 
