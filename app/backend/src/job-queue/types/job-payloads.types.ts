@@ -103,3 +103,24 @@ export interface StellarReconnectPayload {
   /** Last cursor position before disconnection */
   lastCursor: string;
 }
+
+/**
+ * Testnet reindex job payload
+ * Used for reindexing Soroban events over a specific ledger range
+ */
+export interface TestnetReindexPayload {
+  /** Contract ID to reindex events for */
+  contractId: string;
+  
+  /** Starting ledger sequence */
+  fromLedger: number;
+  
+  /** Ending ledger sequence */
+  toLedger: number;
+  
+  /** Whether to force reprocessing of already-indexed ranges */
+  force: boolean;
+  
+  /** Public key of the operator requesting the reindex */
+  requesterPublicKey: string;
+}

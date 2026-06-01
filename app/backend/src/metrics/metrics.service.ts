@@ -18,6 +18,10 @@ export class MetricsService implements OnModuleInit {
   private sorobanIndexerUnknownSchemaVersion: client.Counter<string>;
   private parityCheckResults: client.Gauge<string>;
   private shadowTrafficRequests: client.Counter<string>;
+  private testnetResetTotal: client.Counter<string>;
+  private testnetReindexTotal: client.Counter<string>;
+  private testnetResetRecordsRemoved: client.Histogram<string>;
+  private testnetCheckpointsReset: client.Histogram<string>;
   private initialized = false;
 
   onModuleInit() {
@@ -112,6 +116,30 @@ export class MetricsService implements OnModuleInit {
         labelNames: ["method", "route", "status_code", "shadow_status"],
       });
 
+      this.testnetResetTotal = new client.Counter({
+        name: "testnet_reset_total",
+        help: "Total number of testnet reset operations",
+        labelNames: ["status"],
+      });
+
+      this.testnetReindexTotal = new client.Counter({
+        name: "testnet_reindex_total",
+        help: "Total number of testnet reindex operations",
+        labelNames: ["status"],
+      });
+
+      this.testnetResetRecordsRemoved = new client.Histogram({
+        name: "testnet_reset_records_removed",
+        help: "Number of records removed during testnet reset",
+        buckets: [10, 100, 1000, 10000, 100000],
+      });
+
+      this.testnetCheckpointsReset = new client.Histogram({
+        name: "testnet_checkpoints_reset",
+        help: "Number of checkpoints reset during testnet reset",
+        buckets: [1, 5, 10, 50, 100],
+      });
+
       this.register.registerMetric(this.httpRequestDuration);
       this.register.registerMetric(this.httpRequestTotal);
       this.register.registerMetric(this.rateLimitedRequestsTotal);
@@ -126,6 +154,10 @@ export class MetricsService implements OnModuleInit {
       this.register.registerMetric(this.sorobanIndexerUnknownSchemaVersion);
       this.register.registerMetric(this.parityCheckResults);
       this.register.registerMetric(this.shadowTrafficRequests);
+      this.register.registerMetric(this.testnetResetTotal);
+      this.register.registerMetric(this.testnetReindexTotal);
+      this.register.registerMetric(this.testnetResetRecordsRemoved);
+      this.register.registerMetric(this.testnetCheckpointsReset);
 
       this.initialized = true;
     } catch (error) {
@@ -309,6 +341,29 @@ export class MetricsService implements OnModuleInit {
       this.shadowTrafficRequests
         .labels(method, route, statusCode.toString(), shadowStatus)
         .inc();
+    } catch (error) {}
+  }
+
+  recordTestnetReset(recordsRemoved: number, checkpointsReset: number) {
+    if (!this.initialized || !this.testnetResetTotal) return;
+    try {
+      this.testnetResetTotal.labels("success").inc();
+      this.testnetResetRecordsRemoved?.observe(recordsRemoved);
+      this.testnetCheckpointsReset?.observe(checkpointsReset);
+    } catch (error) {}
+  }
+
+  recordTestnetResetFailure() {
+    if (!this.initialized || !this.testnetResetTotal) return;
+    try {
+      this.testnetResetTotal.labels("failure").inc();
+    } catch (error) {}
+  }
+
+  recordTestnetReindex(status: "success" | "failure", ledgersProcessed?: number) {
+    if (!this.initialized || !this.testnetReindexTotal) return;
+    try {
+      this.testnetReindexTotal.labels(status).inc();
     } catch (error) {}
   }
 }

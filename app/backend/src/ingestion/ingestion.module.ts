@@ -3,6 +3,7 @@ import { Module, forwardRef } from "@nestjs/common";
 import { SupabaseModule } from "../supabase/supabase.module";
 import { JobQueueModule } from "../job-queue/job-queue.module";
 import { MetricsModule } from "../metrics/metrics.module";
+import { AuditModule } from "../audit/audit.module";
 import { CursorRepository } from "./cursor.repository";
 import { EscrowEventRepository } from "./escrow-event.repository";
 import { PrivacyEventRepository } from "./privacy-event.repository";
@@ -14,12 +15,14 @@ import { StellarIngestionService } from "./stellar-ingestion.service";
 import { SorobanEventIndexerService } from "./soroban-event-indexer.service";
 import { SorobanIndexerController } from "./soroban-indexer.controller";
 import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
+import { TestnetResetService } from "./testnet-reset.service";
 
 @Module({
   imports: [
     SupabaseModule,
     forwardRef(() => JobQueueModule),
     MetricsModule,
+    AuditModule,
   ],
   controllers: [SorobanIndexerController],
   providers: [
@@ -33,6 +36,7 @@ import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
     StellarIngestionService,
     SorobanEventIndexerService,
     IngestionBootstrapService,
+    TestnetResetService,
   ],
   exports: [
     StellarIngestionService,
@@ -40,6 +44,7 @@ import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
     SorobanEventParser,
     CursorRepository,
     EscrowEventRepository,
+    TestnetResetService,
   ],
 })
 export class IngestionModule {}

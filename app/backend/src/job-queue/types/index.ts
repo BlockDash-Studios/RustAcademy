@@ -1,7 +1,8 @@
 /**
- * Job Queue System - Type Exports
+ * Job Queue System - Job Payload Type Definitions
  * 
- * Central export point for all job queue type definitions
+ * This module defines the payload interfaces for all supported job types.
+ * Each job type has a specific payload structure validated at enqueue time.
  */
 
 // Core types
@@ -21,4 +22,5 @@ export {
   ExportGenerationPayload,
   ReconciliationPayload,
   StellarReconnectPayload,
+  TestnetReindexPayload,
 } from './job-payloads.types';

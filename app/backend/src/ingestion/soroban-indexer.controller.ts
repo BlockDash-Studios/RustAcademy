@@ -5,11 +5,16 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  UseGuards,
 } from "@nestjs/common";
-import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { ApiOperation, ApiResponse, ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Min } from "class-validator";
 
 import { SorobanEventIndexerService, LedgerRangeResult } from "./soroban-event-indexer.service";
+import { TestnetResetService, TestnetResetResult } from "./testnet-reset.service";
+import { ApiKeyGuard } from "../auth/guards/api-key.guard";
+import { RequireScopes } from "../auth/decorators/require-scopes.decorator";
+import { ActorPublicKey } from "../auth/decorators/actor-public-key.decorator";
 
 class ReindexDto {
   @IsString()
@@ -42,7 +47,10 @@ class ReindexDto {
 export class SorobanIndexerController {
   private running = false;
 
-  constructor(private readonly indexer: SorobanEventIndexerService) {}
+  constructor(
+    private readonly indexer: SorobanEventIndexerService,
+    private readonly testnetResetService: TestnetResetService,
+  ) {}
 
   @Post("reindex")
   @HttpCode(HttpStatus.OK)
@@ -71,5 +79,34 @@ export class SorobanIndexerController {
     } finally {
       this.running = false;
     }
+  }
+
+  /**
+   * Reset all testnet event data and reinitialize checkpoints.
+   * Only allowed on testnet — blocks on mainnet for safety.
+   *
+   * POST /admin/testnet/reset
+   * Authorization: Bearer <api-key>
+   *
+   * Response: TestnetResetResult with truncated table counts and audit log ID
+   */
+  @Post("admin/testnet/reset")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ApiKeyGuard)
+  @RequireScopes("admin")
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Reset all testnet event data (testnet only, admin required)",
+    description:
+      "Wipes all testnet-specific event tables and resets indexer checkpoints. " +
+      "Used for reproducible demos and contributor testing. " +
+      "BLOCKED on mainnet for safety. " +
+      "Audit logged with full operation details.",
+  })
+  @ApiResponse({ status: 200, description: "Testnet reset completed" })
+  @ApiResponse({ status: 403, description: "Not running on testnet" })
+  @ApiResponse({ status: 401, description: "Unauthorized (missing or invalid API key)" })
+  async resetTestnetData(@ActorPublicKey() requesterPublicKey: string): Promise<TestnetResetResult> {
+    return await this.testnetResetService.resetTestnetData(requesterPublicKey);
   }
 }
