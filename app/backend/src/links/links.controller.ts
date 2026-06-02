@@ -6,6 +6,7 @@ import {
   HttpStatus,
   BadRequestException,
   UseGuards,
+  Inject,
 } from "@nestjs/common";
 import {
   ApiTags,
@@ -18,6 +19,8 @@ import { LinksService } from "./links.service";
 import { LinkMetadataRequestDto, LinkMetadataResponseDto } from "../dto";
 import { LinkValidationError } from "./errors";
 import { ApiKeyGuard } from "../auth/guards/api-key.guard";
+import { ContractCompatibilityService } from "../contracts/contract-compatibility.service";
+import { ContractCompatibilityMetadata } from "../contracts/dto/contract-compatibility.dto";
 
 @ApiTags("links")
 @ApiHeader({
@@ -29,7 +32,11 @@ import { ApiKeyGuard } from "../auth/guards/api-key.guard";
 @UseGuards(ApiKeyGuard)
 @Controller("links")
 export class LinksController {
-  constructor(private readonly linksService: LinksService) {}
+  constructor(
+    private readonly linksService: LinksService,
+    @Inject('ContractCompatibilityService')
+    private readonly compatibilityService: ContractCompatibilityService,
+  ) {}
 
   @Post("metadata")
   @HttpCode(HttpStatus.OK)
@@ -54,12 +61,20 @@ export class LinksController {
   })
   async generateMetadata(
     @Body() request: LinkMetadataRequestDto,
-  ): Promise<{ success: boolean; data: LinkMetadataResponseDto }> {
+  ): Promise<{ success: boolean; data: LinkMetadataResponseDto; compatibility?: ContractCompatibilityMetadata }> {
     try {
       const metadata = await this.linksService.generateMetadata(request);
+      
+      // Get compatibility metadata for this endpoint
+      const compatibility = await this.compatibilityService.getEndpointCompatibilityMetadata(
+        'links/metadata',
+        'POST',
+      );
+
       return {
         success: true,
         data: metadata,
+        compatibility: compatibility || undefined,
       };
     } catch (error) {
       if (error instanceof LinkValidationError) {

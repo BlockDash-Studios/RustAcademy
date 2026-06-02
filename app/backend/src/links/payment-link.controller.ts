@@ -5,15 +5,22 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  Inject,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { PaymentLinkService } from "./payment-link.service";
 import { PaymentLinkStatusDto } from "../dto/link/payment-link-status.dto";
+import { ContractCompatibilityService } from "../contracts/contract-compatibility.service";
+import { ContractCompatibilityMetadata } from "../contracts/dto/contract-compatibility.dto";
 
 @ApiTags("payment-links")
 @Controller("payment-links")
 export class PaymentLinkController {
-  constructor(private readonly paymentLinkService: PaymentLinkService) {}
+  constructor(
+    private readonly paymentLinkService: PaymentLinkService,
+    @Inject('ContractCompatibilityService')
+    private readonly compatibilityService: ContractCompatibilityService,
+  ) {}
 
   @Get("status")
   @HttpCode(HttpStatus.OK)
@@ -62,7 +69,7 @@ export class PaymentLinkController {
     @Query("asset") asset?: string,
     @Query("memo") memo?: string,
     @Query("acceptedAssets") acceptedAssets?: string,
-  ): Promise<PaymentLinkStatusDto> {
+  ): Promise<{ data: PaymentLinkStatusDto; compatibility?: ContractCompatibilityMetadata }> {
     if (!username) {
       throw new BadRequestException("username is required");
     }
@@ -76,12 +83,23 @@ export class PaymentLinkController {
       ? acceptedAssets.split(",").map((a) => a.trim())
       : undefined;
 
-    return this.paymentLinkService.getPaymentLinkStatus({
+    const data = await this.paymentLinkService.getPaymentLinkStatus({
       username,
       amount: amountNum,
       asset: asset || "XLM",
       memo,
       acceptedAssets: acceptedAssetsArray,
     });
+
+    // Get compatibility metadata for this endpoint
+    const compatibility = await this.compatibilityService.getEndpointCompatibilityMetadata(
+      'payment-links/status',
+      'GET',
+    );
+
+    return {
+      data,
+      compatibility: compatibility || undefined,
+    };
   }
 }

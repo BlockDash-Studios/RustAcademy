@@ -125,6 +125,15 @@ request header. The resolved value is echoed back in:
 |---|---|---|
 | `CONTRACT_NOT_CONFIGURED` | 503 | QUICKEX_CONTRACT_ID is not set on the server |
 | `SIMULATION_FAILED` | 422 | Soroban transaction simulation failed |
+| `CONTRACT_VERSION_UNSUPPORTED` | 409 | Client contract version is not supported by this endpoint |
+| `CONTRACT_VERSION_TOO_LOW` | 409 | Client contract version is below the minimum required version |
+| `CONTRACT_VERSION_TOO_HIGH` | 409 | Client contract version exceeds the maximum supported version |
+| `CONTRACT_VERSION_MISMATCH` | 409 | Contract version mismatch (generic) |
+| `CONTRACT_NOT_FOUND` | 409 | Contract not found in the registry |
+| `CONTRACT_NOT_DEPLOYED` | 409 | Contract not deployed on this network |
+| `CONTRACT_VERSION_DEPRECATED` | 409 | Contract version is deprecated but still functional |
+| `SCHEMA_VERSION_MISMATCH` | 409 | Schema version mismatch between client and server |
+| `INVALID_CONTRACT_REQUIREMENTS` | 400 | Invalid contract requirements provided |
 
 ---
 
@@ -167,6 +176,15 @@ request header. The resolved value is echoed back in:
 | `REFUND_NOT_REFUNDABLE` | 409 | Refunds | The entity is not in a state that allows refunding |
 | `CONTRACT_NOT_CONFIGURED` | 503 | Soroban | Server configuration issue; contact the QuickEx team |
 | `SIMULATION_FAILED` | 422 | Soroban | Transaction would fail on-chain; check contract parameters |
+| `CONTRACT_VERSION_UNSUPPORTED` | 409 | Contract | Client upgrade required; check `details.compatibility` for details |
+| `CONTRACT_VERSION_TOO_LOW` | 409 | Contract | Upgrade client to a newer version |
+| `CONTRACT_VERSION_TOO_HIGH` | 409 | Contract | Server needs upgrade; contact support |
+| `CONTRACT_VERSION_MISMATCH` | 409 | Contract | Verify contract version requirements |
+| `CONTRACT_NOT_FOUND` | 409 | Contract | Contract not in registry; may need deployment |
+| `CONTRACT_NOT_DEPLOYED` | 409 | Contract | Contract not deployed on this network |
+| `CONTRACT_VERSION_DEPRECATED` | 409 | Contract | Upgrade recommended before deprecation deadline |
+| `SCHEMA_VERSION_MISMATCH` | 409 | Contract | Client and server schema versions don't match |
+| `INVALID_CONTRACT_REQUIREMENTS` | 400 | Contract | Fix contract requirements format and retry |
 
 ---
 

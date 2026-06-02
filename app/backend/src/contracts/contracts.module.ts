@@ -17,6 +17,8 @@ import { ContractViewsService } from './views/contract-views.service';
   providers: [
     ContractRegistryService,
     ContractChangeWebhookService,
+    ContractCompatibilityService,
+    ContractCompatibilityGuard,
     ApiKeyGuard,
     ContractViewsService
   ],
