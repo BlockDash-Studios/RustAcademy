@@ -11,13 +11,14 @@ We use VS Code Dev Containers for a seamless onboarding experience. After clonin
 1. **Clone the repository:**
    ```sh
    git clone <repo-url>
-   cd QiuckEx
+   cd RustAcademy
    ```
 2. **Open in VS Code.**
 3. **Install the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) if prompted.**
 4. **Reopen in Container.**
 
 The container will install:
+
 - Node.js (LTS)
 - pnpm
 - Rust toolchain (for Soroban)
