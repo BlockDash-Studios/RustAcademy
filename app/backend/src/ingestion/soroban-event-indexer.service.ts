@@ -8,20 +8,16 @@ import {
   SorobanEventParser,
   RawHorizonContractEvent,
 } from "./soroban-event.parser";
-import { IndexerCheckpointRepository } from "./indexer-checkpoint.repository";
+import { IndexerCheckpointRepository, IndexMode } from "./indexer-checkpoint.repository";
 import { EscrowEventRepository } from "./escrow-event.repository";
 import { PrivacyEventRepository } from "./privacy-event.repository";
 import { AdminEventRepository } from "./admin-event.repository";
 import { StealthEventRepository } from "./stealth-event.repository";
-import type {
-  RustAcademyContractEvent,
-  EscrowEvent,
-  AdminEvent,
-  StealthEvent,
-} from "./types/contract-event.types";
+import type { RustAcademyContractEvent } from "./types/contract-event.types";
 
-/** Number of events fetched per Horizon page. */
 const PAGE_LIMIT = 200;
+const MAX_RETRIES = 5;
+const INITIAL_BACKOFF_MS = 1000;
 
 export interface LedgerRangeResult {
   fromLedger: number;
@@ -37,24 +33,11 @@ export interface DualReadConfig {
   effectiveTime?: Date;
 }
 
-/**
- * Polls Soroban contract events by ledger range from Horizon's REST API.
- *
- * Responsibilities:
- *  - Fetch events page-by-page for a given [fromLedger, toLedger] range.
- *  - Parse each event with schema-version awareness.
- *  - Persist all event domains idempotently (escrow, privacy, admin, stealth).
- *  - Advance the durable checkpoint after each page so a crash is recoverable.
- *  - Emit domain events for downstream consumers.
- *
- * Reconciliation / reindex: calling `indexLedgerRange` with `force=true` skips
- * the checkpoint read and re-processes the full range. Idempotent upserts ensure
- * no duplicates are created.
- */
 @Injectable()
 export class SorobanEventIndexerService {
   private readonly logger = new Logger(SorobanEventIndexerService.name);
   private readonly horizonUrl: string;
+  private readonly parser: SorobanEventParser;
 
   constructor(
     private readonly config: AppConfigService,
@@ -68,7 +51,6 @@ export class SorobanEventIndexerService {
   ) {
     this.horizonUrl = HORIZON_BASE_URLS[this.config.network];
 
-    // Wire the parser's unknown-schema-version callback to metrics.
     this.parser = new SorobanEventParser((eventName, version, pagingToken) => {
       this.logger.warn(
         `Unknown schema_version=${version} for event ${eventName} paging_token=${pagingToken}`,
@@ -77,23 +59,6 @@ export class SorobanEventIndexerService {
     });
   }
 
-  private readonly parser: SorobanEventParser;
-
-  // ---------------------------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Index all contract events in [fromLedger, toLedger] with dual-read support.
-   *
-   * @param contractId      Soroban contract address (current).
-   * @param fromLedger      Inclusive start ledger.
-   * @param toLedger        Inclusive end ledger.
-   * @param dualReadConfig  Optional dual-read configuration for transition windows.
-   * @param force           When true, ignore the stored checkpoint and reindex the
-   *                        full range (reconciliation mode). Idempotency prevents
-   *                        duplicate records.
-   */
   async indexLedgerRange(
     contractId: string,
     fromLedger: number,
@@ -101,68 +66,44 @@ export class SorobanEventIndexerService {
     dualReadConfig?: DualReadConfig,
     force = false,
   ): Promise<LedgerRangeResult> {
-    const effectiveFrom = force
-      ? fromLedger
-      : await this.resolveStartLedger(contractId, fromLedger);
-
-    if (effectiveFrom > toLedger) {
-      this.logger.log(
-        `Contract ${contractId}: ledger range [${effectiveFrom}, ${toLedger}] already indexed; skipping.`,
-      );
-      return {
-        fromLedger,
-        toLedger,
-        processed: 0,
-        persisted: 0,
-        skippedUnknownSchema: 0,
-      };
-    }
-
-    const inDualReadWindow = this.isInDualReadWindow(
-      effectiveFrom,
-      dualReadConfig,
-    );
-    const logSuffix = inDualReadWindow ? " (dual-read mode)" : "";
-
-    this.logger.log(
-      `Indexing contract ${contractId} ledgers [${effectiveFrom}, ${toLedger}]${force ? " (force reindex)" : ""}${logSuffix}`,
-    );
-
+    const network = this.config.network;
     let processed = 0;
     let persisted = 0;
     let skippedUnknownSchema = 0;
 
-    // In dual-read mode, index both current and previous contract IDs
+    const inDualReadWindow = this.isInDualReadWindow(fromLedger, dualReadConfig);
+
     if (inDualReadWindow && dualReadConfig?.previousContractId) {
-      const previousResult = await this.indexContractWithCursor(
+      const mode: IndexMode = "dual-read-previous";
+      const prevResult = await this.runIndexingEngine(
         dualReadConfig.previousContractId,
-        effectiveFrom,
+        fromLedger,
         dualReadConfig.effectiveLedger ?? toLedger,
-        undefined,
+        network,
+        mode,
+        force
       );
-      processed += previousResult.processed;
-      persisted += previousResult.persisted;
-      skippedUnknownSchema += previousResult.skippedUnknownSchema;
+      processed += prevResult.processed;
+      persisted += prevResult.persisted;
+      skippedUnknownSchema += prevResult.skippedUnknownSchema;
     }
 
-    // Always index the current contract ID
-    const currentResult = await this.indexContractWithCursor(
+    const currentMode: IndexMode = inDualReadWindow ? "dual-read-current" : "normal";
+    const currentResult = await this.runIndexingEngine(
       contractId,
-      effectiveFrom,
+      fromLedger,
       toLedger,
-      undefined,
+      network,
+      currentMode,
+      force
     );
+
     processed += currentResult.processed;
     persisted += currentResult.persisted;
     skippedUnknownSchema += currentResult.skippedUnknownSchema;
 
-    this.logger.log(
-      `Indexed contract ${contractId} [${effectiveFrom}, ${toLedger}]: ` +
-        `processed=${processed} persisted=${persisted} skippedUnknownSchema=${skippedUnknownSchema}`,
-    );
-
     return {
-      fromLedger: effectiveFrom,
+      fromLedger,
       toLedger,
       processed,
       persisted,
@@ -170,23 +111,47 @@ export class SorobanEventIndexerService {
     };
   }
 
+  private async runIndexingEngine(
+    contractId: string,
+    fromLedger: number,
+    toLedger: number,
+    network: string,
+    mode: IndexMode,
+    force: boolean
+  ) {
+    let currentCursor: string | null = null;
+    let startLedgerValue = fromLedger;
+
+    if (!force) {
+      const checkpoint = await this.checkpointRepo.getCheckpoint(contractId, network, mode);
+      if (checkpoint) {
+        if (checkpoint.lastLedger >= toLedger && !checkpoint.pagingToken) {
+          this.logger.log(`Range [${fromLedger}, ${toLedger}] already fully indexed for stream ${mode}.`);
+          return { processed: 0, persisted: 0, skippedUnknownSchema: 0 };
+        }
+        startLedgerValue = checkpoint.lastLedger;
+        currentCursor = checkpoint.pagingToken;
+      }
+    }
+
+    return this.indexContractWithCursor(contractId, startLedgerValue, toLedger, network, mode, currentCursor);
+  }
+
   private async indexContractWithCursor(
     contractId: string,
     fromLedger: number,
     toLedger: number,
-    cursor: string | undefined,
-  ): Promise<{
-    processed: number;
-    persisted: number;
-    skippedUnknownSchema: number;
-  }> {
+    network: string,
+    mode: IndexMode,
+    cursor: string | null,
+  ): Promise<{ processed: number; persisted: number; skippedUnknownSchema: number }> {
     let processed = 0;
     let persisted = 0;
     let skippedUnknownSchema = 0;
-    let nextCursor = cursor;
+    let nextCursor: string | undefined = cursor || undefined;
 
     while (true) {
-      const { records, nextCursor: returnedCursor } = await this.fetchPage(
+      const { records, nextCursor: returnedCursor } = await this.fetchPageWithRetry(
         contractId,
         fromLedger,
         toLedger,
@@ -209,118 +174,121 @@ export class SorobanEventIndexerService {
         this.eventEmitter.emit(`stellar.${event.eventType}`, event);
       }
 
-      // Advance checkpoint after each page
       const lastRecord = records[records.length - 1];
       if (lastRecord) {
-        await this.checkpointRepo.saveLastLedger(contractId, lastRecord.ledger);
+        nextCursor = returnedCursor;
+        await this.checkpointRepo.saveCheckpoint({
+          contractId,
+          network,
+          mode,
+          lastLedger: lastRecord.ledger,
+          pagingToken: nextCursor || null,
+        });
       }
 
       if (!returnedCursor || records.length < PAGE_LIMIT) break;
-      nextCursor = returnedCursor;
     }
 
-    // Final checkpoint
-    await this.checkpointRepo.saveLastLedger(contractId, toLedger);
+    await this.checkpointRepo.saveCheckpoint({
+      contractId,
+      network,
+      mode,
+      lastLedger: toLedger,
+      pagingToken: null,
+    });
 
     return { processed, persisted, skippedUnknownSchema };
   }
 
-  private isInDualReadWindow(
-    currentLedger: number,
-    config?: DualReadConfig,
-  ): boolean {
-    if (!config?.previousContractId || !config?.effectiveLedger) {
-      return false;
-    }
-    return currentLedger < config.effectiveLedger;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Returns the ledger to start from, taking the stored checkpoint into account.
-   * If a checkpoint exists and is ahead of `fromLedger`, we resume from checkpoint+1.
-   */
-  private async resolveStartLedger(
-    contractId: string,
-    fromLedger: number,
-  ): Promise<number> {
-    const last = await this.checkpointRepo.getLastLedger(contractId);
-    if (last !== null && last >= fromLedger) {
-      return last + 1;
-    }
-    return fromLedger;
-  }
-
-  /**
-   * Fetches one page of contract events from Horizon for the given ledger range.
-   * Uses the `start_ledger` + `end_ledger` query params (Horizon v2 API).
-   */
-  private async fetchPage(
+  private async fetchPageWithRetry(
     contractId: string,
     fromLedger: number,
     toLedger: number,
     cursor?: string,
-  ): Promise<{
-    records: RawHorizonContractEvent[];
-    nextCursor: string | undefined;
-  }> {
-    const url = new URL(`${this.horizonUrl}/contract_events`);
-    url.searchParams.set("contract_id", contractId);
-    url.searchParams.set("start_ledger", String(fromLedger));
-    url.searchParams.set("end_ledger", String(toLedger));
-    url.searchParams.set("limit", String(PAGE_LIMIT));
-    url.searchParams.set("order", "asc");
-    if (cursor) url.searchParams.set("cursor", cursor);
+  ): Promise<{ records: RawHorizonContractEvent[]; nextCursor: string | undefined }> {
+    let attempts = 0;
+    while (attempts < MAX_RETRIES) {
+      try {
+        const startTime = Date.now();
+        const url = new URL(`${this.horizonUrl}/contract_events`);
+        url.searchParams.set("contract_id", contractId);
+        url.searchParams.set("start_ledger", String(fromLedger));
+        url.searchParams.set("end_ledger", String(toLedger));
+        url.searchParams.set("limit", String(PAGE_LIMIT));
+        url.searchParams.set("order", "asc");
+        if (cursor) url.searchParams.set("cursor", cursor);
 
-    const res = await fetch(url.toString(), {
-      headers: { Accept: "application/json" },
-    });
+        const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+        this.metrics.recordExternalCall("Horizon", "fetchContractEvents", Date.now() - startTime);
 
-    if (!res.ok) {
-      throw new Error(`Horizon returned ${res.status} for ${url.toString()}`);
+        if (res.status === 429 || res.status >= 500) {
+          this.metrics.recordError("Horizon", `HTTP_${res.status}`);
+          throw new Error(`Transient status engine error code: ${res.status}`);
+        }
+
+        if (!res.ok) {
+          throw new Error(`Fatal Horizon terminal exception context: ${res.status}`);
+        }
+
+        const body = (await res.json()) as {
+          _embedded?: { records?: RawHorizonContractEvent[] };
+          _links?: { next?: { href?: string } };
+        };
+
+        const records = body._embedded?.records ?? [];
+        const nextHref = body._links?.next?.href;
+        const nextCursor = nextHref ? (new URL(nextHref).searchParams.get("cursor") ?? undefined) : undefined;
+
+        return { records, nextCursor };
+      } catch (error) {
+        attempts++;
+        if (attempts >= MAX_RETRIES) throw error;
+        const delay = INITIAL_BACKOFF_MS * Math.pow(2, attempts);
+        this.logger.warn(`Horizon fetch failure. Retrying in ${delay}ms... Error: ${error.message}`);
+        await new Promise((res) => setTimeout(res, delay));
+      }
     }
-
-    // Horizon HAL response: { _embedded: { records: [...] }, _links: { next: { href } } }
-    const body = (await res.json()) as {
-      _embedded?: { records?: RawHorizonContractEvent[] };
-      _links?: { next?: { href?: string } };
-    };
-
-    const records = body._embedded?.records ?? [];
-    const nextHref = body._links?.next?.href;
-    const nextCursor = nextHref
-      ? (new URL(nextHref).searchParams.get("cursor") ?? undefined)
-      : undefined;
-
-    return { records, nextCursor };
+    throw new Error("Maximum transaction call bounds exceeded.");
   }
 
-  private async persistEvent(event: RustAcademyContractEvent): Promise<void> {
-    switch (event.eventType) {
+  private isInDualReadWindow(currentLedger: number, config?: DualReadConfig): boolean {
+    if (!config?.previousContractId || !config?.effectiveLedger) return false;
+    return currentLedger < config.effectiveLedger;
+  }
+
+private async persistEvent(event: RustAcademyContractEvent): Promise<void> {
+    // Cast to an unknown dictionary first to safely extract the runtime eventType string
+    const dynamicEvent = event as unknown as Record<string, unknown>;
+    const eventType = dynamicEvent.eventType as string;
+
+    switch (eventType) {
       case "EscrowDeposited":
       case "EscrowWithdrawn":
       case "EscrowRefunded":
-        await this.escrowRepo.upsertEvent(event as EscrowEvent);
+        await this.escrowRepo.upsertEvent(
+          event as unknown as Parameters<EscrowEventRepository["upsertEvent"]>[0]
+        );
         break;
       case "PrivacyToggled":
-        await this.privacyRepo.upsertEvent(event);
+        await this.privacyRepo.upsertEvent(
+          event as unknown as Parameters<PrivacyEventRepository["upsertEvent"]>[0]
+        );
         break;
       case "ContractPaused":
       case "AdminChanged":
       case "ContractUpgraded":
-        await this.adminRepo.upsertEvent(event as AdminEvent);
+        await this.adminRepo.upsertEvent(
+          event as unknown as Parameters<AdminEventRepository["upsertEvent"]>[0]
+        );
         break;
       case "EphemeralKeyRegistered":
       case "StealthWithdrawn":
-        await this.stealthRepo.upsertEvent(event as StealthEvent);
+        await this.stealthRepo.upsertEvent(
+          event as unknown as Parameters<StealthEventRepository["upsertEvent"]>[0]
+        );
         break;
       default:
-        this.logger.debug(
-          `Event ${(event as RustAcademyContractEvent).eventType} not persisted.`,
-        );
+        this.logger.debug(`Event ${eventType} not persisted.`);
     }
   }
 }
