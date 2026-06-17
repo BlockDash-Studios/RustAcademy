@@ -85,6 +85,15 @@ export class PublishContractRegistryDto {
   @IsString()
   deploymentId?: string;
 
+  @ApiPropertyOptional({
+    example: 0,
+    description: "Expected current registry version for optimistic concurrency. If provided, the operation will fail if the registry has been modified since this version.",
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  expectedVersion?: number;
+
   @ApiProperty({ type: [ContractRegistryEntryDto] })
   @IsArray()
   @ArrayMinSize(1)
