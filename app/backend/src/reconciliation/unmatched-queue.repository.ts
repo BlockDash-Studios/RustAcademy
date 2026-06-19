@@ -6,12 +6,18 @@ import {
   UnmatchedTransaction,
   UnmatchedStatus,
 } from "./types/auto-match.types";
+import {
+  applyCursorFilter,
+  clampLimit,
+  decodeCursor,
+  paginateResult,
+} from "../common/pagination/cursor.util";
 
 /** Paginated result returned by {@link UnmatchedQueueRepository.listPending}. */
 export interface UnmatchedPage {
   items: UnmatchedTransaction[];
-  total: number;
-  hasMore: boolean;
+  next_cursor: string | null;
+  has_more: boolean;
 }
 
 /**
@@ -70,32 +76,52 @@ export class UnmatchedQueueRepository {
       return null;
     }
 
-    return data as UnmatchedTransaction | null;
-  }
-
-  /**
-   * Return a page of pending (unreviewed) transactions, newest first.
+    rUses cursor-based pagination to ensure deterministic results
+   * even when data changes between requests.
    *
-   * @param limit  - Max rows to return (capped at 100).
-   * @param offset - Zero-based row offset for pagination.
+   * @param limit  - Max rows to return (capped at 100, default 20).
+   * @param cursor - Opaque cursor string from a previous response, or undefined for first page.
    */
-  async listPending(limit: number, offset: number): Promise<UnmatchedPage> {
-    const effectiveLimit = Math.min(100, Math.max(1, limit));
+  async listPending(
+    limit?: number,
+    cursor?: string,
+  ): Promise<UnmatchedPage> {
+    const effectiveLimit = clampLimit(limit);
+    const decodedCursor = cursor ? decodeCursor(cursor) : null;
 
-    const { data, error, count } = await this.supabase
+    let query = this.supabase
       .getClient()
       .from("unmatched_transactions")
-      .select("*", { count: "exact" })
-      .eq("status", UnmatchedStatus.Pending)
-      .order("ingested_at", { ascending: false })
-      .range(offset, offset + effectiveLimit - 1);
+      .select("*")
+      .eq("status", UnmatchedStatus.Pending);
+
+    query = applyCursorFilter(
+      query,
+      decodedCursor,
+      "ingested_at",
+      false, // descending order
+      effectiveLimit,
+    );
+
+    const { data, error } = await query;
 
     if (error) {
       this.logger.error(
         `Failed to list unmatched transactions: ${error.message}`,
       );
-      return { items: [], total: 0, hasMore: false };
+      return { items: [], next_cursor: null, has_more: false };
     }
+
+    const { data: pageData, next_cursor, has_more } = paginateResult(
+      (data ?? []) as UnmatchedTransaction[],
+      effectiveLimit,
+      "ingested_at",
+    );
+
+    return {
+      items: pageData,
+      next_cursor,
+      has_more
 
     const total = count ?? 0;
     return {

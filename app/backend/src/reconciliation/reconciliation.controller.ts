@@ -179,18 +179,14 @@ export class ReconciliationController {
   })
   @ApiResponse({
     status: 200,
-    description: "Paginated list of unmatched transactions",
+    description: "Paginated list of unmatched transactions (cursor-based)",
   })
   async listUnmatched(
     @Query("limit") limit?: string,
-    @Query("offset") offset?: string,
+    @Query("cursor") cursor?: string,
   ) {
-    const parsedLimit = Math.min(
-      100,
-      Math.max(1, parseInt(limit ?? "20", 10) || 20),
-    );
-    const parsedOffset = Math.max(0, parseInt(offset ?? "0", 10) || 0);
-    return this.unmatchedQueue.listPending(parsedLimit, parsedOffset);
+    const parsedLimit = limit ? parseInt(limit, 10) : undefined;
+    return this.unmatchedQueue.listPending(parsedLimit, cursor);
   }
 
   @Get("unmatched/:id")

@@ -6,8 +6,13 @@ export class NotificationsController {
   constructor(private readonly inAppRepo: InAppNotificationRepository) {}
 
   @Get('in-app')
-  getInApp(@Req() req, @Query('page') page = 1, @Query('limit') limit = 20) {
-    return this.inAppRepo.findByUser(req.user.publicKey, page, limit);
+  getInApp(
+    @Req() req,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const parsedLimit = limit ? parseInt(limit, 10) : undefined;
+    return this.inAppRepo.findByUser(req.user.publicKey, parsedLimit, cursor);
   }
   
   @Post('in-app/:id/read')
