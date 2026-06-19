@@ -1,4 +1,4 @@
-import { Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { xdr, scValToNative, Address } from "@stellar/stellar-sdk";
 
 import type {
@@ -19,6 +19,7 @@ import {
   RustAcademy_EVENT_TOPICS,
   type RustAcademyEventTopic,
 } from "./event-schema";
+import type { ContractEventDriftService } from "./contract-event-drift.service";
 
 /** Maximum schema version this indexer understands. */
 export const MAX_SUPPORTED_SCHEMA_VERSION = 2;
@@ -63,29 +64,87 @@ interface TopicLayout {
  * Legacy events used Topic[0] = event name. The parser keeps a compatibility
  * path for those events and marks them with schemaVersion=1.
  */
+@Injectable()
 export class SorobanEventParser {
   private readonly logger = new Logger(SorobanEventParser.name);
 
   constructor(
-    private readonly onUnknownSchemaVersion?: UnknownSchemaVersionHandler,
+    @Optional() private readonly onUnknownSchemaVersion?: UnknownSchemaVersionHandler,
+    @Optional() private readonly driftService?: ContractEventDriftService,
   ) {}
 
   /**
    * Attempt to parse a raw Horizon contract event.
    * Returns null when the event is unrecognised, malformed, or carries an
    * unsupported schema version.
+   *
+   * All rejection paths are recorded in `ContractEventDriftService` so they
+   * are visible in monitoring and the parser health endpoint.
    */
   parse(raw: RawHorizonContractEvent): RustAcademyContractEvent | null {
     try {
       const topics = raw.topic.map((t) => xdr.ScVal.fromXDR(t, "base64"));
       const dataVal = xdr.ScVal.fromXDR(raw.value.xdr, "base64");
 
-      if (topics.length === 0) return null;
+      if (topics.length === 0) {
+        this.driftService?.recordDrift({
+          reason: "parse_error",
+          contractId: raw.contract_id,
+          eventName: "unknown",
+          schemaVersion: 0,
+          pagingToken: raw.paging_token,
+        });
+        return null;
+      }
 
       const layout = this.resolveTopicLayout(topics);
-      if (!layout) return null;
+
+      if (!layout) {
+        // Classify: is the first topic symbol a recognisable name that's just
+        // in the wrong namespace, or is it truly unknown?
+        const firstSym = this.decodeSymbol(topics[0]);
+        const secondSym = topics[1] ? this.decodeSymbol(topics[1]) : null;
+
+        // Canonical layout: topic[0]=namespace, topic[1]=eventName
+        const canonicalTopics = new Set<string>(Object.values(RustAcademy_EVENT_TOPICS));
+        if (firstSym && canonicalTopics.has(firstSym) && secondSym) {
+          // Namespace matched but event name is not in the registry
+          if (!this.driftService?.isKnownEvent(secondSym)) {
+            this.driftService?.recordDrift({
+              reason: "unknown_event_name",
+              contractId: raw.contract_id,
+              eventName: secondSym,
+              schemaVersion: 0,
+              pagingToken: raw.paging_token,
+            });
+          } else {
+            // Topic mismatch: event name is known but under a different topic
+            const contract = this.driftService?.getContract(secondSym);
+            if (contract) {
+              this.driftService?.recordDrift({
+                reason: "topic_mismatch",
+                contractId: raw.contract_id,
+                eventName: secondSym,
+                schemaVersion: 0,
+                pagingToken: raw.paging_token,
+              });
+            }
+          }
+        } else if (firstSym && !this.driftService?.isKnownEvent(firstSym)) {
+          // Legacy layout attempt: topic[0] = event name, but it's not known
+          this.driftService?.recordDrift({
+            reason: "unknown_event_name",
+            contractId: raw.contract_id,
+            eventName: firstSym ?? "unknown",
+            schemaVersion: 0,
+            pagingToken: raw.paging_token,
+          });
+        }
+        return null;
+      }
 
       const schemaVersion = this.extractSchemaVersionFromData(dataVal);
+
       if (schemaVersion > MAX_SUPPORTED_SCHEMA_VERSION) {
         this.logger.warn(
           `Skipping event ${layout.eventName} paging_token=${raw.paging_token}: ` +
@@ -96,6 +155,13 @@ export class SorobanEventParser {
           schemaVersion,
           raw.paging_token,
         );
+        this.driftService?.recordDrift({
+          reason: "schema_version_too_high",
+          contractId: raw.contract_id,
+          eventName: layout.eventName,
+          schemaVersion,
+          pagingToken: raw.paging_token,
+        });
         return null;
       }
 
@@ -103,8 +169,34 @@ export class SorobanEventParser {
         this.logger.warn(
           `Unsupported ${layout.eventName} schema version ${schemaVersion}`,
         );
+        this.driftService?.recordDrift({
+          reason: "incompatible_schema_version",
+          contractId: raw.contract_id,
+          eventName: layout.eventName,
+          schemaVersion,
+          pagingToken: raw.paging_token,
+        });
         return null;
       }
+
+      // ── Field drift detection ──────────────────────────────────────────
+      // We extract the observed payload keys here (names only, no values) and
+      // compare against the schema contract before dispatching to the per-event
+      // parser.  This is purely diagnostic — we still attempt the full parse.
+      const observedFieldNames = this.extractFieldNames(dataVal);
+      const fieldDrift = this.driftService?.detectFieldDrift(
+        layout.eventName,
+        raw.contract_id,
+        raw.paging_token,
+        schemaVersion,
+        observedFieldNames,
+      );
+      if (fieldDrift) {
+        // Record the mismatch but continue parsing — the event might still be
+        // partially parseable and the data can be used for analytics.
+        this.driftService?.recordDrift(fieldDrift);
+      }
+      // ──────────────────────────────────────────────────────────────────
 
       const base = {
         schemaVersion,
@@ -115,78 +207,102 @@ export class SorobanEventParser {
         contractTimestamp: this.extractTimestampFromData(dataVal),
       };
 
+      let parsed: RustAcademyContractEvent | null = null;
+
       switch (layout.eventName) {
         case "EscrowDeposited":
-          return this.parseEscrowDeposited(
+          parsed = this.parseEscrowDeposited(
             topics,
             dataVal,
             base,
             layout.indexedOffset,
           );
+          break;
         case "EscrowWithdrawn":
-          return this.parseEscrowWithdrawn(
+          parsed = this.parseEscrowWithdrawn(
             topics,
             dataVal,
             base,
             layout.indexedOffset,
           );
+          break;
         case "EscrowRefunded":
-          return this.parseEscrowRefunded(
+          parsed = this.parseEscrowRefunded(
             topics,
             dataVal,
             base,
             layout.indexedOffset,
           );
+          break;
         case "PrivacyToggled":
-          return this.parsePrivacyToggled(
+          parsed = this.parsePrivacyToggled(
             topics,
             dataVal,
             base,
             layout.indexedOffset,
           );
+          break;
         case "ContractPaused":
-          return this.parseContractPaused(
+          parsed = this.parseContractPaused(
             topics,
             dataVal,
             base,
             layout.indexedOffset,
           );
+          break;
         case "AdminChanged":
-          return this.parseAdminChanged(
+          parsed = this.parseAdminChanged(
             topics,
             dataVal,
             base,
             layout.indexedOffset,
           );
+          break;
         case "ContractUpgraded":
-          return this.parseContractUpgraded(
+          parsed = this.parseContractUpgraded(
             topics,
             dataVal,
             base,
             layout.indexedOffset,
           );
+          break;
         case "EphemeralKeyRegistered":
-          return this.parseEphemeralKeyRegistered(
+          parsed = this.parseEphemeralKeyRegistered(
             topics,
             dataVal,
             base,
             layout.indexedOffset,
           );
+          break;
         case "StealthWithdrawn":
-          return this.parseStealthWithdrawn(
+          parsed = this.parseStealthWithdrawn(
             topics,
             dataVal,
             base,
             layout.indexedOffset,
           );
+          break;
         default:
           this.logger.debug(`Unrecognised event name: ${layout.eventName}`);
           return null;
       }
+
+      if (parsed !== null) {
+        this.driftService?.recordProcessed();
+      }
+
+      return parsed;
     } catch (err) {
       this.logger.warn(
         `Failed to parse contract event ${raw.paging_token}: ${(err as Error).message}`,
       );
+      this.driftService?.recordDrift({
+        reason: "parse_error",
+        contractId: raw.contract_id,
+        eventName: "unknown",
+        schemaVersion: 0,
+        pagingToken: raw.paging_token,
+      });
       return null;
     }
   }
@@ -487,6 +603,19 @@ export class SorobanEventParser {
     }
 
     return result;
+  }
+
+  /**
+   * Extract only the field *names* from an XDR map (no values).
+   * Used for schema drift detection — we never log raw payload values.
+   */
+  private extractFieldNames(data: xdr.ScVal): string[] {
+    try {
+      const mapEntries = data.map();
+      return mapEntries.map((entry) => entry.key().sym().toString());
+    } catch {
+      return [];
+    }
   }
 
   private extractSchemaVersionFromData(data: xdr.ScVal): number {

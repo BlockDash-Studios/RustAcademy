@@ -18,6 +18,7 @@ import { EscrowEventRepository } from "./escrow-event.repository";
 import { JobQueueService } from "../job-queue/job-queue.service";
 import { JobType } from "../job-queue/types";
 import { StellarReconnectPayload } from "../job-queue/types/job-payloads.types";
+import { ContractEventDriftService } from "./contract-event-drift.service";
 import type {
   EscrowEvent,
   RustAcademyContractEvent,
@@ -67,6 +68,7 @@ export class StellarIngestionService implements OnModuleInit, OnModuleDestroy {
     private readonly parser: SorobanEventParser,
     private readonly eventEmitter: EventEmitter2,
     private readonly jobQueueService: JobQueueService,
+    private readonly driftService: ContractEventDriftService,
   ) {}
 
   onModuleInit(): void {
@@ -376,7 +378,8 @@ export class StellarIngestionService implements OnModuleInit, OnModuleDestroy {
     const event = this.parser.parse(raw);
 
     if (!event) {
-      // Unrecognised or non- RustAcademy event; still advance cursor.
+      // The parser and drift service have already classified and counted the
+      // rejection. Still advance the cursor so we don't re-process the event.
       await this.safeUpdateCursor(streamId, raw.paging_token, raw.ledger);
       return;
     }
