@@ -33,6 +33,7 @@ import {
   RecentlyActiveResponseDto,
   PublicProfileDto,
 } from "../dto";
+import { ResponseDto } from "../common/decorators/response-dto.decorator";
 import { UsernamesService } from "./usernames.service";
 import {
   UsernameConflictError,
@@ -50,6 +51,7 @@ export class UsernamesController {
   ) {}
 
   @Post()
+  @ResponseDto(CreateUsernameResponseDto)
   @ApiOperation({
     summary: "Create a new username",
     description:
@@ -116,6 +118,7 @@ export class UsernamesController {
   }
 
   @Get()
+  @ResponseDto(ListUsernamesResponseDto)
   @ApiOperation({
     summary: "List usernames for a wallet",
     description:
@@ -146,6 +149,7 @@ export class UsernamesController {
 
   @Get("search")
   @Throttle({ default: { limit: 20, ttl: 60000 } }) // 20 requests per minute
+  @ResponseDto(SearchUsernamesResponseDto)
   @ApiOperation({
     summary: "Search public profiles",
     description:
@@ -199,6 +203,7 @@ export class UsernamesController {
 
   @Get("trending")
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
+  @ResponseDto(TrendingCreatorsResponseDto)
   @ApiOperation({
     summary: "Get trending creators",
     description:
@@ -254,6 +259,7 @@ export class UsernamesController {
 
   @Get("recently-active")
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
+  @ResponseDto(RecentlyActiveResponseDto)
   @ApiOperation({
     summary: "Get recently active users",
     description:

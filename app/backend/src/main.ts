@@ -12,6 +12,7 @@ import helmet from "helmet";
 import { WinstonModule } from "nest-winston";
 import { winstonConfig } from "./common/logging/winston.config";
 import { LoggingInterceptor } from "./common/interceptors/logging.interceptor";
+import { ResponseValidationInterceptor } from "./common/interceptors/response-validation.interceptor";
 // ----------------------------------------
 
 import { buildCorsOptions } from "./config/cors.config";
@@ -130,7 +131,7 @@ async function bootstrap() {
     }),
   );
 
-  app.useGlobalInterceptors(new LoggingInterceptor());
+  app.useGlobalInterceptors(new LoggingInterceptor(), new ResponseValidationInterceptor());
 
   // Register Sentry exception filter FIRST so it captures errors,
   // then the existing HTTP exception filter handles the response.
