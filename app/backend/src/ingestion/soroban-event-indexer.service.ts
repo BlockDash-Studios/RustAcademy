@@ -165,7 +165,6 @@ export class SorobanEventIndexerService {
           // Push individual rejection metrics from the drift service snapshot
           // so Prometheus counters stay in sync with the in-process drift state.
           const snapshot = this.driftService.getHealthSnapshot();
-          const totals = snapshot.totals;
           this.metrics.recordParserRejection(
             "any",           // aggregated label for total rejections
             contractId,

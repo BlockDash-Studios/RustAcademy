@@ -44,7 +44,7 @@ import { MetricsService } from "../metrics/metrics.service";
         driftService: ContractEventDriftService,
       ) =>
         new SorobanEventParser(
-          (eventName, version, pagingToken) => {
+          (eventName, version) => {
             metrics.recordUnknownSchemaVersion(eventName, version);
           },
           driftService,
