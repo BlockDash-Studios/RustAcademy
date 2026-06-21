@@ -1,6 +1,6 @@
 export type RefundableEntityType = 'payment' | 'escrow' | 'link';
 
-export type RefundStatus = 'pending' | 'approved' | 'rejected' | 'failed';
+export type RefundStatus = 'pending' | 'approved' | 'submitted' | 'confirmed' | 'failed' | 'rejected';
 
 export type RefundReasonCode =
   | 'DUPLICATE'
@@ -19,6 +19,13 @@ export interface RefundAttemptRecord {
   actor_id: string;
   created_at: string;
   updated_at: string;
+  on_chain_tx_hash: string | null;
+  contract_id: string | null;
+  network: string | null;
+  failure_reason: string | null;
+  retry_count: number;
+  last_attempted_at: string | null;
+  is_retryable: boolean;
 }
 
 export interface RefundAuditRecord {

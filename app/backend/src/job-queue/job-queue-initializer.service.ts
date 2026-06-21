@@ -17,6 +17,7 @@ import {
   ExportGenerationHandler,
   ReconciliationHandler,
   StellarReconnectHandler,
+  RefundJobHandler,
 } from './handlers';
 
 /**
@@ -37,6 +38,7 @@ export class JobQueueInitializer implements OnModuleInit {
     private readonly exportGenerationHandler: ExportGenerationHandler,
     private readonly reconciliationHandler: ReconciliationHandler,
     private readonly stellarReconnectHandler: StellarReconnectHandler,
+    private readonly refundJobHandler: RefundJobHandler,
   ) {}
 
   /**
@@ -117,6 +119,20 @@ export class JobQueueInitializer implements OnModuleInit {
         initialDelayMs: 1000,         // 1 second
         maxDelayMs: 60000,            // 1 minute
         visibilityTimeoutMs: 120000,  // 2 minutes
+      },
+    );
+
+    // Register refund handler
+    // Requirements: BE-12 refund workflow
+    this.registry.registerHandler(
+      JobType.REFUND,
+      this.refundJobHandler,
+      {
+        maxAttempts: 5,
+        backoffStrategy: 'exponential',
+        initialDelayMs: 60000,        // 1 minute
+        maxDelayMs: 3600000,          // 1 hour
+        visibilityTimeoutMs: 600000,  // 10 minutes
       },
     );
 
