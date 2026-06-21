@@ -7,6 +7,7 @@ mod bench_test;
 mod commitment;
 #[cfg(test)]
 mod commitment_test;
+mod dispute;
 mod errors;
 mod escrow;
 mod escrow_id;
@@ -49,9 +50,9 @@ mod upgrade_test;
 use errors::RustAcademyError;
 use storage::*;
 use types::{
-    ContractHealth, DeploymentMetadata, EscrowEntry, EscrowStatus, FeatureFlags, FeeConfig,
-    OracleFeeConfig, PerAssetFeeConfig, PrivacyAwareEscrowView, Role, SchemaCompatibility,
-    StealthDepositParams, SupportedVersions, UpgradeState,
+    ContractHealth, DeploymentMetadata, DisputeExpiryAction, EscrowEntry, EscrowStatus,
+    FeatureFlags, FeeConfig, OracleFeeConfig, PerAssetFeeConfig, PrivacyAwareEscrowView, Role,
+    SchemaCompatibility, StealthDepositParams, SupportedVersions, UpgradeState,
 };
 
 pub use types::FeeRatio;
@@ -623,6 +624,65 @@ impl RustAcademyContract {
     ) -> Result<(), RustAcademyError> {
         admin::guard_dispute(&env)?;
         escrow::resolve_dispute_multi_sig(&env, commitment, recipient)
+    }
+
+    // -----------------------------------------------------------------------
+    // Dispute timeout / auto-resolution (Issue #49)
+    // -----------------------------------------------------------------------
+
+    /// Set the global dispute resolution timeout in seconds.
+    ///
+    /// Requires Admin or Operator role. Emits `DisputeTimeoutConfigSet`.
+    pub fn set_dispute_timeout(
+        env: Env,
+        caller: Address,
+        timeout_secs: u64,
+    ) -> Result<(), RustAcademyError> {
+        hook::assert_not_reentrant(&env)?;
+        dispute::set_timeout(&env, caller, timeout_secs)
+    }
+
+    /// Get the current global dispute resolution timeout in seconds.
+    pub fn get_dispute_timeout(env: Env) -> u64 {
+        storage::get_dispute_timeout(&env)
+    }
+
+    /// Set the global default action for expired disputes.
+    ///
+    /// Requires Admin or Operator role. Emits `DisputeExpiryActionSet`.
+    pub fn set_dispute_expiry_action(
+        env: Env,
+        caller: Address,
+        action: DisputeExpiryAction,
+    ) -> Result<(), RustAcademyError> {
+        hook::assert_not_reentrant(&env)?;
+        dispute::set_expiry_action(&env, caller, action)
+    }
+
+    /// Get the current global default action for expired disputes.
+    pub fn get_dispute_expiry_action(env: Env) -> DisputeExpiryAction {
+        storage::get_dispute_expiry_action(&env)
+    }
+
+    /// Get the dispute expiry metadata for an escrow, if any.
+    pub fn get_dispute_expiry(
+        env: Env,
+        commitment: BytesN<32>,
+    ) -> Option<crate::types::DisputeExpiry> {
+        let commitment_bytes: Bytes = commitment.into();
+        storage::get_dispute_expiry(&env, &commitment_bytes)
+    }
+
+    /// Resolve a disputed escrow that has passed its resolution timeout.
+    ///
+    /// Can be called by anyone once the timeout has elapsed. The outcome is
+    /// deterministic and based on the snapshotted expiry action.
+    pub fn resolve_expired_dispute(
+        env: Env,
+        commitment: BytesN<32>,
+    ) -> Result<(), RustAcademyError> {
+        hook::assert_not_reentrant(&env)?;
+        dispute::resolve_expired_dispute(&env, commitment)
     }
 
     /// Initialize the contract with an admin address (one-time only).

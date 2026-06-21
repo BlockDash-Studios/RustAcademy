@@ -142,6 +142,37 @@ pub struct DisputeVote {
     pub voted_at: u64,
 }
 
+/// Deterministic outcome for a dispute that has passed its resolution timeout.
+///
+/// Used by the auto-resolution path to transition stale disputes into a terminal
+/// state without requiring an arbiter vote.
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DisputeExpiryAction {
+    /// Refund the escrowed funds back to the original owner.
+    RefundOwner,
+    /// Pay the escrowed funds to the assigned arbiter.
+    PayArbiter,
+}
+
+impl Default for DisputeExpiryAction {
+    fn default() -> Self {
+        DisputeExpiryAction::RefundOwner
+    }
+}
+
+/// Dispute timeout metadata stored per escrow.
+///
+/// Recorded when a dispute is opened and consulted during auto-resolution.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeExpiry {
+    /// Ledger timestamp after which the dispute may be auto-resolved.
+    pub expires_at: u64,
+    /// Deterministic action to take once the timeout is reached.
+    pub action: DisputeExpiryAction,
+}
+
 /// Parameters for registering an ephemeral key (stealth deposit).
 ///
 /// Bundles the 8 arguments of `register_ephemeral_key` into a single struct
