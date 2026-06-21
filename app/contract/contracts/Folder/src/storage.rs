@@ -41,7 +41,10 @@
 
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec};
 
-use crate::types::{DisputeVote, EscrowEntry, FeeConfig, Role, StealthEscrowEntry};
+use crate::types::{
+    DisputeExpiry, DisputeExpiryAction, DisputeVote, EscrowEntry, FeeConfig, Role,
+    StealthEscrowEntry,
+};
 
 /// Record type for TTL policy selection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -50,6 +53,7 @@ pub enum RecordType {
     FeeConfig,
     StealthEscrow,
     EscrowIdMap,
+    DisputeExpiry,
 }
 
 /// TTL policy configuration.
@@ -80,6 +84,10 @@ fn get_ttl_policy(record_type: RecordType) -> TtlPolicy {
             threshold: LEDGER_THRESHOLD,
             ttl: SIX_MONTHS_IN_LEDGERS,
         },
+        RecordType::DisputeExpiry => TtlPolicy {
+            threshold: LEDGER_THRESHOLD,
+            ttl: SIX_MONTHS_IN_LEDGERS,
+        },
     }
 }
 
@@ -97,6 +105,11 @@ pub const CURRENT_CONTRACT_VERSION: u32 = 1;
 
 pub const LEDGER_THRESHOLD: u32 = 17280; // ~1 day
 pub const SIX_MONTHS_IN_LEDGERS: u32 = 3110400; // ~185 days
+
+/// Default dispute resolution timeout: 7 days in seconds.
+///
+/// Used when no explicit timeout has been configured by the admin/operator.
+pub const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 7 * 24 * 60 * 60; // 604800
 
 /// Bitmask flags for granular operation pausing.
 #[contracttype]
@@ -187,6 +200,12 @@ pub enum DataKey {
     FeeCollector(u32),
     /// Tracks arbiter votes for disputed escrows. Keyed by (commitment, arbiter).
     DisputeVote(Bytes, Address),
+    /// Dispute timeout metadata for a specific escrow. Keyed by commitment.
+    DisputeExpiry(Bytes),
+    /// Global dispute resolution timeout in seconds (singleton).
+    DisputeTimeout,
+    /// Global default action when a dispute expires (singleton).
+    DisputeExpiryAction,
 }
 
 // -----------------------------------------------------------------------------
@@ -791,4 +810,83 @@ pub fn count_dispute_votes(env: &Env, commitment: &Bytes, arbiters: &Vec<Address
         }
     }
     count
+}
+
+// -----------------------------------------------------------------------------
+// Dispute timeout configuration (Issue #49)
+// -----------------------------------------------------------------------------
+
+/// Get the configured dispute resolution timeout in seconds.
+///
+/// Returns [`DEFAULT_DISPUTE_TIMEOUT_SECS`] if no explicit value has been set.
+pub fn get_dispute_timeout(env: &Env) -> u64 {
+    let key = DataKey::DisputeTimeout;
+    env.storage().persistent().get(&key).unwrap_or(DEFAULT_DISPUTE_TIMEOUT_SECS)
+}
+
+/// Set the global dispute resolution timeout in seconds.
+pub fn set_dispute_timeout(env: &Env, timeout_secs: u64) {
+    let key = DataKey::DisputeTimeout;
+    env.storage().persistent().set(&key, &timeout_secs);
+}
+
+/// Get the configured default action for expired disputes.
+///
+/// Returns [`DisputeExpiryAction::RefundOwner`] if no explicit value has been set.
+pub fn get_dispute_expiry_action(env: &Env) -> DisputeExpiryAction {
+    let key = DataKey::DisputeExpiryAction;
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(DisputeExpiryAction::RefundOwner)
+}
+
+/// Set the global default action for expired disputes.
+pub fn set_dispute_expiry_action(env: &Env, action: DisputeExpiryAction) {
+    let key = DataKey::DisputeExpiryAction;
+    env.storage().persistent().set(&key, &action);
+}
+
+// -----------------------------------------------------------------------------
+// Per-escrow dispute expiry metadata (Issue #49)
+// -----------------------------------------------------------------------------
+
+/// Store dispute expiry metadata for an escrow.
+pub fn put_dispute_expiry(env: &Env, commitment: &Bytes, expiry: &DisputeExpiry) {
+    let key = DataKey::DisputeExpiry(commitment.clone());
+    env.storage().persistent().set(&key, expiry);
+    set_or_extend_ttl(env, &key, RecordType::DisputeExpiry);
+}
+
+/// Get dispute expiry metadata for an escrow.
+pub fn get_dispute_expiry(env: &Env, commitment: &Bytes) -> Option<DisputeExpiry> {
+    let key = DataKey::DisputeExpiry(commitment.clone());
+    let result = env.storage().persistent().get(&key);
+    if result.is_some() {
+        set_or_extend_ttl(env, &key, RecordType::DisputeExpiry);
+    }
+    result
+}
+
+/// Remove dispute expiry metadata for an escrow.
+pub fn remove_dispute_expiry(env: &Env, commitment: &Bytes) {
+    let key = DataKey::DisputeExpiry(commitment.clone());
+    env.storage().persistent().remove(&key);
+}
+
+/// Remove all arbiter votes recorded for a commitment.
+pub fn clear_dispute_votes(env: &Env, commitment: &Bytes, arbiters: &Vec<Address>) {
+    for arbiter in arbiters.iter() {
+        let key = DataKey::DisputeVote(commitment.clone(), arbiter.clone());
+        env.storage().persistent().remove(&key);
+    }
+}
+
+/// Remove all dispute-related auxiliary storage for a commitment.
+///
+/// This clears both the expiry metadata and any recorded votes. It is safe to
+/// call after a dispute has been resolved or auto-resolved.
+pub fn clear_dispute_state(env: &Env, commitment: &Bytes, arbiters: &Vec<Address>) {
+    remove_dispute_expiry(env, commitment);
+    clear_dispute_votes(env, commitment, arbiters);
 }

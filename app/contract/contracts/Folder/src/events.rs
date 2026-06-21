@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, Address, BytesN, Env};
+use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
 
 /// Canonical event schema version.
 ///
@@ -116,6 +116,49 @@ pub const EVENT_SCHEMAS: &[EventSchema] = &[
             "timestamp",
             "total_votes",
         ],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "DisputeTimeoutSet",
+        topics: &[
+            EVENT_TOPIC_DISPUTE,
+            "DisputeTimeoutSet",
+            "escrow_id",
+        ],
+        payload_keys: &[
+            "action",
+            "expires_at",
+            "schema_version",
+            "timestamp",
+        ],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "DisputeAutoResolved",
+        topics: &[
+            EVENT_TOPIC_DISPUTE,
+            "DisputeAutoResolved",
+            "escrow_id",
+            "action",
+        ],
+        payload_keys: &[
+            "amount",
+            "recipient",
+            "schema_version",
+            "timestamp",
+        ],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "DisputeExpiryActionSet",
+        topics: &[EVENT_TOPIC_ADMIN, "DisputeExpiryActionSet"],
+        payload_keys: &["action", "schema_version", "timestamp"],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "DisputeTimeoutConfigSet",
+        topics: &[EVENT_TOPIC_ADMIN, "DisputeTimeoutConfigSet"],
+        payload_keys: &["schema_version", "timeout_secs", "timestamp"],
         schema_version: EVENT_SCHEMA_VERSION,
     },
     EventSchema {
@@ -261,6 +304,26 @@ pub const EVENT_COMPATIBILITY: &[EventCompatibility] = &[
         name: "PrivacyToggled",
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[1, EVENT_SCHEMA_VERSION],
+    },
+    EventCompatibility {
+        name: "DisputeTimeoutSet",
+        current_version: EVENT_SCHEMA_VERSION,
+        compatible_versions: &[EVENT_SCHEMA_VERSION],
+    },
+    EventCompatibility {
+        name: "DisputeAutoResolved",
+        current_version: EVENT_SCHEMA_VERSION,
+        compatible_versions: &[EVENT_SCHEMA_VERSION],
+    },
+    EventCompatibility {
+        name: "DisputeExpiryActionSet",
+        current_version: EVENT_SCHEMA_VERSION,
+        compatible_versions: &[EVENT_SCHEMA_VERSION],
+    },
+    EventCompatibility {
+        name: "DisputeTimeoutConfigSet",
+        current_version: EVENT_SCHEMA_VERSION,
+        compatible_versions: &[EVENT_SCHEMA_VERSION],
     },
 ];
 
@@ -901,6 +964,115 @@ pub(crate) fn publish_dispute_resolved(
         total_votes,
         threshold,
         amount,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+// ---------------------------------------------------------------------------
+// Dispute timeout / auto-resolution events (Issue #49)
+// ---------------------------------------------------------------------------
+
+pub(crate) fn dispute_action_symbol(env: &Env, action: crate::types::DisputeExpiryAction) -> Symbol {
+    match action {
+        crate::types::DisputeExpiryAction::RefundOwner => Symbol::new(env, "refund_owner"),
+        crate::types::DisputeExpiryAction::PayArbiter => Symbol::new(env, "pay_arbiter"),
+    }
+}
+
+#[contractevent(topics = ["TOPIC_DISPUTE", "DisputeTimeoutSet"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeTimeoutSetEvent {
+    #[topic]
+    pub escrow_id: BytesN<32>,
+
+    pub action: Symbol,
+    pub expires_at: u64,
+    pub schema_version: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_dispute_timeout_set(
+    env: &Env,
+    commitment: BytesN<32>,
+    action: crate::types::DisputeExpiryAction,
+    expires_at: u64,
+) {
+    DisputeTimeoutSetEvent {
+        escrow_id: commitment,
+        action: dispute_action_symbol(env, action),
+        expires_at,
+        schema_version: EVENT_SCHEMA_VERSION,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_DISPUTE", "DisputeAutoResolved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeAutoResolvedEvent {
+    #[topic]
+    pub escrow_id: BytesN<32>,
+
+    #[topic]
+    pub action: Symbol,
+
+    pub recipient: Address,
+    pub amount: i128,
+    pub schema_version: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_dispute_auto_resolved(
+    env: &Env,
+    commitment: BytesN<32>,
+    action: crate::types::DisputeExpiryAction,
+    recipient: Address,
+    amount: i128,
+) {
+    DisputeAutoResolvedEvent {
+        escrow_id: commitment,
+        action: dispute_action_symbol(env, action),
+        recipient,
+        amount,
+        schema_version: EVENT_SCHEMA_VERSION,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_ADMIN", "DisputeExpiryActionSet"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeExpiryActionSetEvent {
+    pub action: Symbol,
+    pub schema_version: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_dispute_expiry_action_set(
+    env: &Env,
+    action: crate::types::DisputeExpiryAction,
+) {
+    DisputeExpiryActionSetEvent {
+        action: dispute_action_symbol(env, action),
+        schema_version: EVENT_SCHEMA_VERSION,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_ADMIN", "DisputeTimeoutConfigSet"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeTimeoutConfigSetEvent {
+    pub timeout_secs: u64,
+    pub schema_version: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_dispute_timeout_config_set(env: &Env, timeout_secs: u64) {
+    DisputeTimeoutConfigSetEvent {
+        timeout_secs,
+        schema_version: EVENT_SCHEMA_VERSION,
         timestamp: env.ledger().timestamp(),
     }
     .publish(env);

@@ -3,7 +3,7 @@
 //! See [`crate::storage`] for the storage schema and key layout.
 
 use crate::errors::RustAcademyError;
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Vec};
 
 /// Explicit fee ratio used to prescale a payout share.
 ///
@@ -140,6 +140,37 @@ pub struct DisputeVote {
     pub resolve_for_owner: bool,
     /// Ledger timestamp when the vote was cast.
     pub voted_at: u64,
+}
+
+/// Deterministic outcome for a dispute that has passed its resolution timeout.
+///
+/// Used by the auto-resolution path to transition stale disputes into a terminal
+/// state without requiring an arbiter vote.
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DisputeExpiryAction {
+    /// Refund the escrowed funds back to the original owner.
+    RefundOwner,
+    /// Pay the escrowed funds to the assigned arbiter.
+    PayArbiter,
+}
+
+impl Default for DisputeExpiryAction {
+    fn default() -> Self {
+        DisputeExpiryAction::RefundOwner
+    }
+}
+
+/// Dispute timeout metadata stored per escrow.
+///
+/// Recorded when a dispute is opened and consulted during auto-resolution.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeExpiry {
+    /// Ledger timestamp after which the dispute may be auto-resolved.
+    pub expires_at: u64,
+    /// Deterministic action to take once the timeout is reached.
+    pub action: DisputeExpiryAction,
 }
 
 /// Parameters for registering an ephemeral key (stealth deposit).
@@ -293,6 +324,95 @@ pub struct DeploymentMetadata {
     /// On-chain address of this contract instance.
     /// Binds the metadata to a specific deployment and network.
     pub contract_id: Address,
+}
+
+/// Contract health summary returned by read-only metadata probes.
+///
+/// This struct is intentionally non-mutating: all values are derived from
+/// existing contract state and can be called by anyone.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractHealth {
+    /// Human-readable status symbol, e.g. `Symbol::new(env, "healthy")`.
+    pub status: Symbol,
+    /// True when the legacy global pause flag is set.
+    pub paused: bool,
+    /// True when the contract is in emergency mode.
+    pub emergency_mode: bool,
+    /// True when an upgrade is currently in progress.
+    pub upgrade_in_progress: bool,
+}
+
+/// Feature flags describing the capabilities supported by this contract build.
+///
+/// Consumers can use these flags to detect whether optional flows (e.g. dispute
+/// timeout, upgrade gating, stealth escrows) are available before sending
+/// writes.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FeatureFlags {
+    pub dispute_timeout: bool,
+    pub upgrade_gating: bool,
+    pub privacy: bool,
+    pub partial_payment: bool,
+    pub stealth: bool,
+    pub fee_router: bool,
+    pub oracle_fees: bool,
+    pub hooks: bool,
+}
+
+/// State of the upgrade gating mechanism.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradeState {
+    /// Whether an upgrade is in progress (between start_upgrade and complete_upgrade).
+    pub in_progress: bool,
+    /// Version recorded during start_upgrade, if any.
+    pub pending_version: Option<u32>,
+    /// WASM hash recorded during start_upgrade, if any.
+    pub pending_wasm_hash: Option<BytesN<32>>,
+    /// Whether the current ledger timestamp is within the active upgrade window.
+    pub window_active: bool,
+    /// Start of the upgrade window (epoch seconds). 0 means no window set.
+    pub window_start: u64,
+    /// End of the upgrade window (epoch seconds). 0 means no upper bound.
+    pub window_end: u64,
+}
+
+/// Versions supported by the current deployment.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SupportedVersions {
+    /// Current stored contract version.
+    pub contract_version: u32,
+    /// Current event schema version.
+    pub event_schema_version: u32,
+    /// Minimum contract version this build can migrate from.
+    pub min_contract_version: u32,
+    /// Minimum event schema version this build can emit.
+    pub min_event_schema_version: u32,
+    /// All event schema versions supported by this build (sorted ascending).
+    pub supported_event_versions: Vec<u32>,
+}
+
+/// Result of a schema-compatibility probe against a caller-supplied version pair.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SchemaCompatibility {
+    /// Whether the requested contract version is supported by this deployment.
+    pub contract_compatible: bool,
+    /// Whether the requested event schema version is supported by this deployment.
+    pub event_compatible: bool,
+    /// True only when both requested versions are compatible.
+    pub overall_compatible: bool,
+    /// Current stored contract version.
+    pub current_contract: u32,
+    /// Current event schema version.
+    pub current_event: u32,
+    /// Requested contract version from the caller.
+    pub requested_contract: u32,
+    /// Requested event schema version from the caller.
+    pub requested_event: u32,
 }
 
 /// Hook event kinds used for external callbacks.

@@ -65,6 +65,10 @@ pub enum RustAcademyError {
     InvalidFeeConfiguration = 322,
     /// The configured fee split exceeds the available fee budget.
     FeeSplitExceedsTotal = 323,
+    /// Dispute resolution timeout has not yet elapsed.
+    DisputeNotExpired = 324,
+    /// No dispute expiry metadata exists for this escrow.
+    NoDisputeExpiry = 325,
     // Stealth address errors (400-499)
     /// Derived stealth address does not match the provided one.
     StealthAddressMismatch = 400,
