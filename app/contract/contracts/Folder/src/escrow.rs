@@ -63,12 +63,12 @@
 use soroban_sdk::{token, Address, Bytes, BytesN, Env, Vec};
 
 use crate::{
-    admin, commitment,
+    admin, commitment, dispute,
     errors:: RustAcademyError,
     escrow_id, events, fee_router, hook,
     storage::{
-        count_dispute_votes, get_commitment_escrow_id, get_dispute_vote, get_escrow,
-        get_escrow_id_mapping, has_dispute_vote, has_escrow, put_commitment_escrow_id,
+        clear_dispute_state, count_dispute_votes, get_commitment_escrow_id, get_dispute_vote,
+        get_escrow, get_escrow_id_mapping, has_dispute_vote, has_escrow, put_commitment_escrow_id,
         put_dispute_vote, put_escrow, put_escrow_id_mapping, remove_commitment_escrow_id,
         remove_dispute_vote, remove_escrow, remove_escrow_id_mapping, LEDGER_THRESHOLD,
         SIX_MONTHS_IN_LEDGERS,
@@ -719,6 +719,9 @@ pub fn cleanup_escrow(env: &Env, commitment: BytesN<32>) -> Result<(),  RustAcad
                 }
             }
 
+            // Issue #49: reclaim dispute expiry metadata storage rent.
+            clear_dispute_state(env, &commitment_bytes, &entry.arbiters);
+
             events::publish_aux_indices_cleaned(env, commitment, indices_removed);
             Ok(())
         }
@@ -758,7 +761,10 @@ pub fn dispute(env: &Env, commitment: BytesN<32>) -> Result<(),  RustAcademyErro
     updated.status = EscrowStatus::Disputed;
     put_escrow(env, &commitment_bytes, &updated);
 
-    events::publish_escrow_disputed(env, commitment, arbiter.clone());
+    // Issue #49: snapshot timeout and default expiry action at dispute creation.
+    dispute::record_dispute_expiry(env, commitment.clone());
+
+    events::publish_escrow_disputed(env, commitment.clone(), arbiter.clone());
 
     Ok(())
 }
@@ -889,6 +895,9 @@ pub fn resolve_dispute(
             fee_breakdown.total_fee,
         );
     }
+
+    // Issue #49: remove stale dispute votes and expiry metadata after resolution.
+    clear_dispute_state(env, &commitment_bytes, &entry.arbiters);
 
     Ok(())
 }
@@ -1132,6 +1141,9 @@ pub fn resolve_dispute_multi_sig(
             fee_breakdown.total_fee,
         );
     }
+
+    // Issue #49: remove stale dispute votes and expiry metadata after resolution.
+    clear_dispute_state(env, &commitment_bytes, &entry.arbiters);
 
     Ok(())
 }
