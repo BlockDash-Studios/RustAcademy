@@ -39,7 +39,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "i128": "697600810"
+                  "i128": "41348126"
                 }
               ]
             }
@@ -61,16 +61,16 @@
                   "address": "CD3FXVGYSLQFFTW3UH6WFF2OKZH7VERGZJZAMJHTGHBWO4F6URWEJL23"
                 },
                 {
-                  "i128": "697600810"
+                  "i128": "41348126"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "bytes": "724c58d11b676d54a528f8cf20a4d871bcafc666831c97789a9e270f97c0be34"
+                  "bytes": "c1d9934d8b3d2bca72537c40545c93e07baef4de41491202c097325e0178e3b5"
                 },
                 {
-                  "u64": "1201"
+                  "u64": "1291"
                 },
                 "void"
               ]
@@ -90,7 +90,7 @@
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                     },
                     {
-                      "i128": "697600810"
+                      "i128": "41348126"
                     }
                   ]
                 }
@@ -106,7 +106,7 @@
   "ledger": {
     "protocol_version": 23,
     "sequence_number": 0,
-    "timestamp": 1201,
+    "timestamp": 1291,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -220,6 +220,51 @@
             "key": {
               "vec": [
                 {
+                  "symbol": "CommitmentEscrowId"
+                },
+                {
+                  "bytes": "66c62e84a511b9038b8d8f21507c796a8db6862951a5a7d079eb755bb440f4e7"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "CommitmentEscrowId"
+                    },
+                    {
+                      "bytes": "66c62e84a511b9038b8d8f21507c796a8db6862951a5a7d079eb755bb440f4e7"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "bytes": "f10572aa721dca93a698929bd7afea13f8a388ec8029c55584ab7111a48d52ea"
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          3110400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
                   "symbol": "ContractVersion"
                 }
               ]
@@ -262,7 +307,7 @@
                   "symbol": "Escrow"
                 },
                 {
-                  "bytes": "ba0aa13251fdd26c52dbfa83cf627a4bcdde51e5188a271acb3bf10ab4223950"
+                  "bytes": "66c62e84a511b9038b8d8f21507c796a8db6862951a5a7d079eb755bb440f4e7"
                 }
               ]
             },
@@ -282,7 +327,7 @@
                       "symbol": "Escrow"
                     },
                     {
-                      "bytes": "ba0aa13251fdd26c52dbfa83cf627a4bcdde51e5188a271acb3bf10ab4223950"
+                      "bytes": "66c62e84a511b9038b8d8f21507c796a8db6862951a5a7d079eb755bb440f4e7"
                     }
                   ]
                 },
@@ -294,7 +339,7 @@
                         "symbol": "amount_due"
                       },
                       "val": {
-                        "i128": "697600810"
+                        "i128": "41348126"
                       }
                     },
                     {
@@ -302,7 +347,7 @@
                         "symbol": "amount_paid"
                       },
                       "val": {
-                        "i128": "697600810"
+                        "i128": "41348126"
                       }
                     },
                     {
@@ -340,7 +385,7 @@
                         "symbol": "expires_at"
                       },
                       "val": {
-                        "u64": "1201"
+                        "u64": "1291"
                       }
                     },
                     {
@@ -390,7 +435,7 @@
                   "symbol": "EscrowIdMap"
                 },
                 {
-                  "bytes": "37ecd73e30f669abf3c957c7ac8c16e5ebc77d4d08ab73961a3b2f9fd52ecf7a"
+                  "bytes": "f10572aa721dca93a698929bd7afea13f8a388ec8029c55584ab7111a48d52ea"
                 }
               ]
             },
@@ -410,13 +455,13 @@
                       "symbol": "EscrowIdMap"
                     },
                     {
-                      "bytes": "37ecd73e30f669abf3c957c7ac8c16e5ebc77d4d08ab73961a3b2f9fd52ecf7a"
+                      "bytes": "f10572aa721dca93a698929bd7afea13f8a388ec8029c55584ab7111a48d52ea"
                     }
                   ]
                 },
                 "durability": "persistent",
                 "val": {
-                  "bytes": "ba0aa13251fdd26c52dbfa83cf627a4bcdde51e5188a271acb3bf10ab4223950"
+                  "bytes": "66c62e84a511b9038b8d8f21507c796a8db6862951a5a7d079eb755bb440f4e7"
                 }
               }
             },
@@ -731,7 +776,7 @@
                         "symbol": "amount"
                       },
                       "val": {
-                        "i128": "697600810"
+                        "i128": "41348126"
                       }
                     },
                     {

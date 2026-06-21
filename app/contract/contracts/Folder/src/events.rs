@@ -675,6 +675,37 @@ pub(crate) fn publish_escrow_refunded(
     .publish(env);
 }
 
+/// Emitted when terminal-escrow cleanup removes auxiliary index entries
+/// (dedup mapping, reverse index, dispute votes) for a commitment.
+///
+/// Indexers should treat the referenced `escrow_id` (commitment) and its
+/// derived `escrow_id` dedup key as fully removed; `indices_removed` is the
+/// count of auxiliary entries reclaimed in this call.
+#[contractevent(topics = ["TOPIC_ESCROW", "AuxIndicesCleaned"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuxIndicesCleanedEvent {
+    #[topic]
+    pub escrow_id: BytesN<32>,
+    pub schema_version: u32,
+    /// Number of auxiliary index entries removed during cleanup.
+    pub indices_removed: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_aux_indices_cleaned(
+    env: &Env,
+    commitment: BytesN<32>,
+    indices_removed: u32,
+) {
+    AuxIndicesCleanedEvent {
+        escrow_id: commitment,
+        schema_version: EVENT_SCHEMA_VERSION,
+        indices_removed,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
 pub(crate) fn publish_partial_payment(
     env: &Env,
     commitment: BytesN<32>,
@@ -790,6 +821,27 @@ pub(crate) fn publish_stealth_withdrawn(
         schema_version: EVENT_SCHEMA_VERSION,
         token,
         amount,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+/// Emitted when a terminal (withdrawn/refunded) stealth escrow entry is
+/// removed from storage to reclaim its deposit (Issue #51). Indexers should
+/// treat the stealth address as fully cleaned up afterwards.
+#[contractevent(topics = ["TOPIC_STEALTH", "StealthEscrowCleaned"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StealthEscrowCleanedEvent {
+    #[topic]
+    pub stealth_address: BytesN<32>,
+    pub schema_version: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_stealth_escrow_cleaned(env: &Env, stealth_address: BytesN<32>) {
+    StealthEscrowCleanedEvent {
+        stealth_address,
+        schema_version: EVENT_SCHEMA_VERSION,
         timestamp: env.ledger().timestamp(),
     }
     .publish(env);

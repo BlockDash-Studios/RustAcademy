@@ -44,7 +44,7 @@ use soroban_sdk::{token, Address, Bytes, BytesN, Env};
 use crate::{
     errors:: RustAcademyError,
     events,
-    storage::{get_stealth_escrow, put_stealth_escrow},
+    storage::{get_stealth_escrow, put_stealth_escrow, remove_stealth_escrow},
     types::{EscrowStatus, StealthDepositParams, StealthEscrowEntry},
 };
 
@@ -253,4 +253,37 @@ pub fn stealth_withdraw(
 /// Returns `None` if no escrow exists for the given stealth address.
 pub fn get_stealth_status(env: &Env, stealth_address: &BytesN<32>) -> Option<EscrowStatus> {
     get_stealth_escrow(env, stealth_address).map(|e| e.status)
+}
+
+// ---------------------------------------------------------------------------
+// cleanup_stealth_escrow
+// ---------------------------------------------------------------------------
+
+/// Remove a terminal (withdrawn/refunded) stealth escrow entry to reclaim its
+/// storage deposit (Issue #51).
+///
+/// Only entries in `Spent` or `Refunded` status may be removed; an attempt to
+/// clean a still-`Pending` entry returns [`AlreadySpent`](RustAcademyError::AlreadySpent)
+/// and leaves storage untouched. After removal, [`get_stealth_status`] and
+/// [`get_stealth_escrow`](crate::storage::get_stealth_escrow) return `None`, so
+/// no stale lookup can resolve to the cleaned address. O(1) — no state scan.
+///
+/// # Errors
+/// - [`StealthEscrowNotFound`](RustAcademyError::StealthEscrowNotFound) – no entry for the address.
+/// - [`AlreadySpent`](RustAcademyError::AlreadySpent) – entry is not in a terminal state.
+pub fn cleanup_stealth_escrow(
+    env: &Env,
+    stealth_address: BytesN<32>,
+) -> Result<(),  RustAcademyError> {
+    let entry = get_stealth_escrow(env, &stealth_address)
+        .ok_or( RustAcademyError::StealthEscrowNotFound)?;
+
+    match entry.status {
+        EscrowStatus::Spent | EscrowStatus::Refunded => {
+            remove_stealth_escrow(env, &stealth_address);
+            events::publish_stealth_escrow_cleaned(env, stealth_address);
+            Ok(())
+        }
+        _ => Err( RustAcademyError::AlreadySpent),
+    }
 }
