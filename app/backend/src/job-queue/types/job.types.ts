@@ -14,6 +14,7 @@ export enum JobType {
   EXPORT_GENERATION = 'export_generation',
   RECONCILIATION = 'reconciliation',
   STELLAR_RECONNECT = 'stellar_reconnect',
+  REFUND = 'refund',
 }
 
 /**

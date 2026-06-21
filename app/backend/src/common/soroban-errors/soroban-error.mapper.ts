@@ -97,6 +97,18 @@ const ERROR_MAPPINGS: Array<{
     message: 'The escrow has expired and can no longer be withdrawn.',
   },
 
+  // ── Refund specific ───────────────────────────────────────────────────────
+  {
+    pattern: /refund.*failed|refund.*error/i,
+    code: SorobanErrorCode.REFUND_FAILED,
+    message: 'The refund operation failed. Please check the refund eligibility and try again.',
+  },
+  {
+    pattern: /refund.*duplicate|already.*refunded|refund.*exists/i,
+    code: SorobanErrorCode.REFUND_DUPLICATE,
+    message: 'This refund has already been processed on-chain.',
+  },
+
   // ── Storage ───────────────────────────────────────────────────────────────
   {
     pattern: /restore.*required|entry.*expired.*restore/i,
