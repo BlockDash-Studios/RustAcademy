@@ -67,9 +67,11 @@ use crate::{
     errors:: RustAcademyError,
     escrow_id, events, fee_router, hook,
     storage::{
-        count_dispute_votes, get_dispute_vote, get_escrow, get_escrow_id_mapping, has_dispute_vote,
-        has_escrow, put_dispute_vote, put_escrow, put_escrow_id_mapping, remove_escrow,
-        LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS,
+        count_dispute_votes, get_commitment_escrow_id, get_dispute_vote, get_escrow,
+        get_escrow_id_mapping, has_dispute_vote, has_escrow, put_commitment_escrow_id,
+        put_dispute_vote, put_escrow, put_escrow_id_mapping, remove_commitment_escrow_id,
+        remove_dispute_vote, remove_escrow, remove_escrow_id_mapping, LEDGER_THRESHOLD,
+        SIX_MONTHS_IN_LEDGERS,
     },
     types::{DisputeVote, EscrowEntry, EscrowStatus, HookEventKind, Role},
 };
@@ -201,6 +203,8 @@ pub fn deposit(
 
     put_escrow(env, &commitment_bytes, &entry);
     put_escrow_id_mapping(env, &escrow_id, &commitment);
+    // Reverse index so terminal cleanup can drop the dedup mapping (Issue #51).
+    put_commitment_escrow_id(env, &commitment_bytes, &escrow_id);
     token_client.transfer(&owner, env.current_contract_address(), &amount);
 
     let token_address = token_client.address.clone();
@@ -679,15 +683,43 @@ pub fn extend_escrow_ttl(env: &Env, commitment: BytesN<32>) -> Result<(),  RustA
 
 /// Cleanup terminal escrow entries to reclaim storage deposits.
 ///
-/// Only escrows in `Spent` or `Refunded` status can be removed.
+/// Only escrows in `Spent` or `Refunded` status can be removed. In addition to
+/// the primary record, this removes every auxiliary index that referenced the
+/// escrow so no stale lookup can resolve to a removed entry (Issue #51):
+///
+/// - the `escrow_id → commitment` dedup mapping and its reverse index, and
+/// - any per-arbiter dispute votes recorded for the commitment.
+///
+/// All cleanup is bounded: index removals are O(1) and dispute-vote removal is
+/// O(number of arbiters on the escrow). No path iterates global contract state.
 pub fn cleanup_escrow(env: &Env, commitment: BytesN<32>) -> Result<(),  RustAcademyError> {
-    let commitment_bytes: Bytes = commitment.into();
+    let commitment_bytes: Bytes = commitment.clone().into();
     let entry: EscrowEntry =
         get_escrow(env, &commitment_bytes).ok_or( RustAcademyError::CommitmentNotFound)?;
 
     match entry.status {
         EscrowStatus::Spent | EscrowStatus::Refunded => {
+            // Primary record first.
             remove_escrow(env, &commitment_bytes);
+
+            let mut indices_removed: u32 = 0;
+
+            // Dedup mapping (escrow_id → commitment) plus its reverse index.
+            if let Some(escrow_id) = get_commitment_escrow_id(env, &commitment_bytes) {
+                remove_escrow_id_mapping(env, &escrow_id);
+                remove_commitment_escrow_id(env, &commitment_bytes);
+                indices_removed += 2;
+            }
+
+            // Per-arbiter dispute votes (bounded by the escrow's arbiter set).
+            for arbiter in entry.arbiters.iter() {
+                if has_dispute_vote(env, &commitment_bytes, &arbiter) {
+                    remove_dispute_vote(env, &commitment_bytes, &arbiter);
+                    indices_removed += 1;
+                }
+            }
+
+            events::publish_aux_indices_cleaned(env, commitment, indices_removed);
             Ok(())
         }
         _ => Err( RustAcademyError::AlreadySpent), // Reuse error or add a more specific one if needed

@@ -509,6 +509,17 @@ impl RustAcademyContract {
         escrow::cleanup_escrow(&env, commitment)
     }
 
+    /// Cleanup a terminal stealth escrow entry to reclaim storage.
+    ///
+    /// Only stealth escrows in `Spent` or `Refunded` status can be removed.
+    pub fn cleanup_stealth_escrow(
+        env: Env,
+        stealth_address: BytesN<32>,
+    ) -> Result<(), RustAcademyError> {
+        admin::require_initialized(&env)?;
+        stealth::cleanup_stealth_escrow(&env, stealth_address)
+    }
+
     /// Extend the storage TTL of an escrow record.
     ///
     /// Any user can call this to keep an escrow from being archived.

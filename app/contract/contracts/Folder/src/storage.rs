@@ -98,6 +98,13 @@ pub const CURRENT_CONTRACT_VERSION: u32 = 1;
 pub const LEDGER_THRESHOLD: u32 = 17280; // ~1 day
 pub const SIX_MONTHS_IN_LEDGERS: u32 = 3110400; // ~185 days
 
+/// Maximum number of privacy-level changes retained per account.
+///
+/// `add_privacy_history` evicts the oldest entries beyond this cap so the
+/// per-account history index cannot grow without bound and bloat storage
+/// (Issue #51). Eviction is O(1) amortised and never scans global state.
+pub const MAX_PRIVACY_HISTORY: u32 = 50;
+
 /// Bitmask flags for granular operation pausing.
 #[contracttype]
 #[repr(u64)]
@@ -187,6 +194,11 @@ pub enum DataKey {
     FeeCollector(u32),
     /// Tracks arbiter votes for disputed escrows. Keyed by (commitment, arbiter).
     DisputeVote(Bytes, Address),
+    /// Reverse index: commitment (`Bytes`) → deterministic `escrow_id`
+    /// (`BytesN<32>`). Recorded alongside [`EscrowIdMap`](DataKey::EscrowIdMap)
+    /// at creation so terminal-escrow cleanup can remove the dedup mapping
+    /// without the original creation salt (Issue #51).
+    CommitmentEscrowId(Bytes),
 }
 
 // -----------------------------------------------------------------------------
@@ -568,6 +580,11 @@ pub fn add_privacy_history(env: &Env, account: &Address, level: u32) {
         .get(&key)
         .unwrap_or(Vec::new(env));
     history.push_front(level);
+    // Bounded retention: evict the oldest entries beyond the cap so this
+    // per-account index cannot accumulate unbounded storage (Issue #51).
+    while history.len() > MAX_PRIVACY_HISTORY {
+        history.pop_back();
+    }
     env.storage().persistent().set(&key, &history);
 }
 
@@ -666,6 +683,13 @@ pub fn put_stealth_escrow(env: &Env, stealth_address: &BytesN<32>, entry: &Steal
     set_or_extend_ttl(env, &key, RecordType::StealthEscrow);
 }
 
+/// Remove a stealth escrow entry to reclaim its storage deposit (Issue #51).
+pub fn remove_stealth_escrow(env: &Env, stealth_address: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::StealthEscrow(stealth_address.clone()));
+}
+
 // -----------------------------------------------------------------------------
 // Role helpers
 // -----------------------------------------------------------------------------
@@ -757,6 +781,35 @@ pub fn put_escrow_id_mapping(env: &Env, escrow_id: &BytesN<32>, commitment: &Byt
     set_or_extend_ttl(env, &key, RecordType::EscrowIdMap);
 }
 
+/// Remove the `escrow_id → commitment` dedup mapping (Issue #51 cleanup).
+pub fn remove_escrow_id_mapping(env: &Env, escrow_id: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::EscrowIdMap(escrow_id.clone()));
+}
+
+/// Record the reverse index `commitment → escrow_id`, enabling terminal-escrow
+/// cleanup to locate and remove the dedup mapping without the creation salt.
+pub fn put_commitment_escrow_id(env: &Env, commitment: &Bytes, escrow_id: &BytesN<32>) {
+    let key = DataKey::CommitmentEscrowId(commitment.clone());
+    env.storage().persistent().set(&key, escrow_id);
+    set_or_extend_ttl(env, &key, RecordType::EscrowIdMap);
+}
+
+/// Look up the `escrow_id` recorded for a commitment, if any.
+pub fn get_commitment_escrow_id(env: &Env, commitment: &Bytes) -> Option<BytesN<32>> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CommitmentEscrowId(commitment.clone()))
+}
+
+/// Remove the reverse `commitment → escrow_id` index (Issue #51 cleanup).
+pub fn remove_commitment_escrow_id(env: &Env, commitment: &Bytes) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::CommitmentEscrowId(commitment.clone()));
+}
+
 // -----------------------------------------------------------------------------
 // Dispute vote helpers
 // -----------------------------------------------------------------------------
@@ -780,6 +833,12 @@ pub fn get_dispute_vote(env: &Env, commitment: &Bytes, arbiter: &Address) -> Opt
 pub fn has_dispute_vote(env: &Env, commitment: &Bytes, arbiter: &Address) -> bool {
     let key = DataKey::DisputeVote(commitment.clone(), arbiter.clone());
     env.storage().persistent().has(&key)
+}
+
+/// Remove a single arbiter's stored dispute vote (Issue #51 cleanup).
+pub fn remove_dispute_vote(env: &Env, commitment: &Bytes, arbiter: &Address) {
+    let key = DataKey::DisputeVote(commitment.clone(), arbiter.clone());
+    env.storage().persistent().remove(&key);
 }
 
 /// Count the number of votes for a disputed escrow.
