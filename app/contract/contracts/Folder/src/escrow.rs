@@ -68,8 +68,8 @@ use crate::{
     escrow_id, events, fee_router, hook,
     storage::{
         count_dispute_votes, get_dispute_vote, get_escrow, get_escrow_id_mapping, has_dispute_vote,
-        has_escrow, put_dispute_vote, put_escrow, put_escrow_id_mapping, remove_escrow,
-        LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS,
+        has_escrow, put_dispute_vote, put_escrow, put_escrow_id_mapping, remove_dispute_votes_for_escrow,
+        remove_escrow, DataKey, LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS,
     },
     types::{DisputeVote, EscrowEntry, EscrowStatus, HookEventKind, Role},
 };
@@ -197,6 +197,7 @@ pub fn deposit(
         arbiter,
         arbiters: Vec::new(env),
         arbiter_threshold: 0,
+        schema_version: crate::types::ESCROW_SCHEMA_VERSION,
     };
 
     put_escrow(env, &commitment_bytes, &entry);
@@ -282,6 +283,7 @@ pub fn deposit_with_commitment(
         arbiter,
         arbiters: Vec::new(env),
         arbiter_threshold: 0,
+        schema_version: crate::types::ESCROW_SCHEMA_VERSION,
     };
 
     put_escrow(env, &commitment_bytes, &entry);
@@ -364,6 +366,7 @@ pub fn deposit_partial(
         arbiter,
         arbiters: Vec::new(env),
         arbiter_threshold: 0,
+        schema_version: crate::types::ESCROW_SCHEMA_VERSION,
     };
 
     put_escrow(env, &commitment_bytes, &entry);
@@ -677,14 +680,33 @@ pub fn extend_escrow_ttl(env: &Env, commitment: BytesN<32>) -> Result<(),  RustA
 /// Cleanup terminal escrow entries to reclaim storage deposits.
 ///
 /// Only escrows in `Spent` or `Refunded` status can be removed.
+/// Also removes the associated EscrowIdMap and any dispute votes
+/// for Disputed escrows that were resolved before cleanup.
+///
+/// Issue #19: Bounded cleanup ensures no orphaned mappings remain.
 pub fn cleanup_escrow(env: &Env, commitment: BytesN<32>) -> Result<(),  RustAcademyError> {
-    let commitment_bytes: Bytes = commitment.into();
+    let commitment_bytes: Bytes = commitment.clone().into();
     let entry: EscrowEntry =
         get_escrow(env, &commitment_bytes).ok_or( RustAcademyError::CommitmentNotFound)?;
 
     match entry.status {
         EscrowStatus::Spent | EscrowStatus::Refunded => {
+            // Remove dispute votes if this was a disputed escrow that was resolved.
+            if matches!(entry.status, EscrowStatus::Refunded) && entry.arbiter.is_some() {
+                // Single arbiter mode - remove the vote if it exists
+                let arbiter = entry.arbiter.unwrap();
+                let key = DataKey::DisputeVote(commitment_bytes.clone(), arbiter);
+                env.storage().persistent().remove(&key);
+            } else if entry.arbiter_threshold > 0 {
+                // Multi-sig mode - remove all votes for this escrow
+                remove_dispute_votes_for_escrow(env, &commitment_bytes, &entry.arbiters);
+            }
+
             remove_escrow(env, &commitment_bytes);
+
+            // Publish cleanup event for indexers
+            events::publish_escrow_cleanup(env, commitment);
+
             Ok(())
         }
         _ => Err( RustAcademyError::AlreadySpent), // Reuse error or add a more specific one if needed
