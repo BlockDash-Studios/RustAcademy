@@ -352,11 +352,40 @@ pub fn deposit_partial(
     // INV-3: validated, overflow-safe expiry computation
     let expires_at = compute_expires_at(env, timeout_secs)?;
 
-    let commitment = commitment::create_amount_commitment(env, owner.clone(), amount_due, salt)?;
-    let now = env.ledger().timestamp();
+    // Derive a deterministic escrow_id that includes initial_payment so
+    // identical retries are detected and idempotently return the existing
+    // commitment without creating a duplicate entry.
+    let escrow_id = escrow_id::derive_partial_escrow_id(
+        env,
+        &token,
+        amount_due,
+        initial_payment,
+        &owner,
+        &salt,
+        timeout_secs,
+        &arbiter,
+    )?;
+    if let Some(existing) = get_escrow_id_mapping(env, &escrow_id) {
+        return Ok(existing);
+    }
 
-    let token_client = token::Client::new(env, &token);
+    let (commitment, legacy_commitment) =
+        commitment::amount_commitment_hashes(env, &owner, amount_due, &salt)?;
     let commitment_bytes: Bytes = commitment.clone().into();
+
+    // Reject duplicate commitment to prevent overwriting an existing escrow.
+    if has_escrow(env, &commitment_bytes) {
+        return Err( RustAcademyError::CommitmentAlreadyExists);
+    }
+    if legacy_commitment != commitment {
+        let legacy_bytes: Bytes = legacy_commitment.into();
+        if has_escrow(env, &legacy_bytes) {
+            return Err( RustAcademyError::CommitmentAlreadyExists);
+        }
+    }
+
+    let now = env.ledger().timestamp();
+    let token_client = token::Client::new(env, &token);
     let entry = EscrowEntry {
         token, // moved
         amount_due,
@@ -371,6 +400,12 @@ pub fn deposit_partial(
     };
 
     put_escrow(env, &commitment_bytes, &entry);
+    // Store forward (escrow_id → commitment) and reverse (commitment → escrow_id)
+    // mappings so the backend indexer can correlate partial escrow events with
+    // their stable IDs, and terminal cleanup can drop the dedup mapping.
+    put_escrow_id_mapping(env, &escrow_id, &commitment);
+    put_commitment_escrow_id(env, &commitment_bytes, &escrow_id);
+
     token_client.transfer(&owner, env.current_contract_address(), &initial_payment);
 
     let token_addr = token_client.address.clone();

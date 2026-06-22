@@ -3784,3 +3784,78 @@ fn test_single_arbiter_still_works() {
     );
     assert_eq!(token_client.balance(&recipient), amount);
 }
+
+// ============================================================================
+// deposit_partial duplicate detection and escrow ID mapping (Issue #13)
+// ============================================================================
+
+#[test]
+fn test_deposit_partial_identical_retry_returns_existing_commitment() {
+    let (env, client) = setup();
+    let token = create_test_token(&env);
+    let owner = Address::generate(&env);
+    let amount_due: i128 = 1000;
+    let initial: i128 = 300;
+    let salt = Bytes::from_slice(&env, b"idempotent_salt_partial");
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&owner, &(initial * 2));
+
+    let c1 = client.deposit_partial(&token, &amount_due, &initial, &owner, &salt, &0, &None);
+    // Identical retry must return the same commitment, not create a duplicate.
+    let c2 = client.deposit_partial(&token, &amount_due, &initial, &owner, &salt, &0, &None);
+    assert_eq!(c1, c2);
+}
+
+#[test]
+fn test_deposit_partial_duplicate_commitment_rejected() {
+    // Two partial deposits with the same (amount_due, salt) must not overwrite each other.
+    let (env, client) = setup();
+    let token = create_test_token(&env);
+    let owner = Address::generate(&env);
+    let amount_due: i128 = 1000;
+    let salt = Bytes::from_slice(&env, b"dup_check_salt");
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&owner, &2000);
+
+    client.deposit_partial(&token, &amount_due, &200, &owner, &salt, &0, &None);
+    // Changing initial_payment but same (amount_due, salt) key → CommitmentAlreadyExists.
+    let result = client.try_deposit_partial(&token, &amount_due, &300, &owner, &salt, &0, &None);
+    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        crate::errors:: RustAcademyError::CommitmentAlreadyExists
+    );
+}
+
+#[test]
+fn test_deposit_partial_has_escrow_id_mapping() {
+    let (env, client) = setup();
+    let token = create_test_token(&env);
+    let owner = Address::generate(&env);
+    let amount_due: i128 = 2000;
+    let initial: i128 = 500;
+    let salt = Bytes::from_slice(&env, b"id_map_salt");
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&owner, &initial);
+
+    let commitment = client.deposit_partial(&token, &amount_due, &initial, &owner, &salt, &0, &None);
+
+    // Backend / indexer can correlate the commitment to a stable escrow ID.
+    let escrow_id = crate::escrow_id::derive_partial_escrow_id(
+        &env,
+        &token,
+        amount_due,
+        initial,
+        &owner,
+        &Bytes::from_slice(&env, b"id_map_salt"),
+        0,
+        &None,
+    )
+    .unwrap();
+
+    let mapped = client.get_escrow_id_commitment(&escrow_id);
+    assert_eq!(mapped, Some(commitment));
+}

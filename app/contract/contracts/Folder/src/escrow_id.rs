@@ -135,3 +135,67 @@ pub fn derive_escrow_id(
 
     Ok(env.crypto().sha256(&payload).into())
 }
+
+/// Domain separation tag for partial-escrow-id derivation.
+///
+/// Distinct from [`ESCROW_ID_DOMAIN_TAG`] to prevent cross-protocol collisions
+/// between full-payment and partial-payment escrow IDs.
+pub const PARTIAL_ESCROW_ID_DOMAIN_TAG: &[u8] = b" RustAcademy::PARTIAL_ESCROW_ID::v1";
+
+/// Derive a deterministic 32-byte escrow id for a partial-payment deposit.
+///
+/// Extends the full-payment derivation by committing to both `amount_due` and
+/// `initial_payment`, so two partial escrows with the same `amount_due` but
+/// different initial payments are treated as distinct and never alias each other.
+///
+/// # Errors
+///
+/// - [` RustAcademyError::InvalidAmount`] if `amount_due < 0` or `initial_payment < 0`.
+/// - [` RustAcademyError::InvalidSalt`] if `salt.len() > 1024`.
+pub fn derive_partial_escrow_id(
+    env: &Env,
+    token: &Address,
+    amount_due: i128,
+    initial_payment: i128,
+    owner: &Address,
+    salt: &Bytes,
+    timeout_secs: u64,
+    arbiter: &Option<Address>,
+) -> Result<BytesN<32>,  RustAcademyError> {
+    if amount_due < 0 || initial_payment < 0 {
+        return Err( RustAcademyError::InvalidAmount);
+    }
+    if salt.len() > MAX_SALT_LEN {
+        return Err( RustAcademyError::InvalidSalt);
+    }
+
+    let mut payload = Bytes::new(env);
+
+    payload.append(&Bytes::from_slice(env, PARTIAL_ESCROW_ID_DOMAIN_TAG));
+
+    let token_xdr = token.to_xdr(env);
+    append_len_prefixed(env, &mut payload, &token_xdr);
+
+    payload.append(&Bytes::from_array(env, &amount_due.to_be_bytes()));
+    payload.append(&Bytes::from_array(env, &initial_payment.to_be_bytes()));
+
+    let owner_xdr = owner.to_xdr(env);
+    append_len_prefixed(env, &mut payload, &owner_xdr);
+
+    payload.append(&Bytes::from_array(env, &timeout_secs.to_be_bytes()));
+
+    match arbiter {
+        None => {
+            payload.append(&Bytes::from_array(env, &[ARBITER_TAG_NONE]));
+        }
+        Some(arb) => {
+            payload.append(&Bytes::from_array(env, &[ARBITER_TAG_SOME]));
+            let arb_xdr = arb.to_xdr(env);
+            append_len_prefixed(env, &mut payload, &arb_xdr);
+        }
+    }
+
+    append_len_prefixed(env, &mut payload, salt);
+
+    Ok(env.crypto().sha256(&payload).into())
+}
