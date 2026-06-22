@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   ConflictException,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
@@ -10,6 +11,8 @@ import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Min } from "class-validator";
 
 import { SorobanEventIndexerService, LedgerRangeResult } from "./soroban-event-indexer.service";
+import { ContractEventDriftService } from "./contract-event-drift.service";
+import { ParserHealthResponseDto } from "./parser-health.dto";
 
 class ReindexDto {
   @IsString()
@@ -34,7 +37,7 @@ class ReindexDto {
 }
 
 /**
- * Admin endpoint for triggering Soroban event reindexing over a ledger range.
+ * Developer-facing endpoints for Soroban indexer administration and parser health.
  * Should be protected by an API-key guard in production.
  */
 @ApiTags("indexer")
@@ -42,7 +45,10 @@ class ReindexDto {
 export class SorobanIndexerController {
   private running = false;
 
-  constructor(private readonly indexer: SorobanEventIndexerService) {}
+  constructor(
+    private readonly indexer: SorobanEventIndexerService,
+    private readonly driftService: ContractEventDriftService,
+  ) {}
 
   @Post("reindex")
   @HttpCode(HttpStatus.OK)
@@ -72,5 +78,35 @@ export class SorobanIndexerController {
     } finally {
       this.running = false;
     }
+  }
+
+  /**
+   * Developer-facing endpoint that exposes the parser health snapshot.
+   *
+   * Includes:
+   * - Rolling 5-minute window rejection rate and breakdown by reason
+   * - Cumulative totals since service start
+   * - Known event names from the schema registry
+   * - Max / current schema versions
+   * - Recent drift events (field names only — no raw payload values)
+   *
+   * This endpoint is intentionally unauthenticated for observability dashboards.
+   * It contains no sensitive data — only schema metadata and aggregate counters.
+   */
+  @Get("parser-health")
+  @ApiOperation({
+    summary: "Parser health and schema drift status",
+    description:
+      "Returns aggregate parser counters, rolling rejection rate, schema version info, " +
+      "and recent drift events (field names only, no raw payload values). " +
+      "Use this endpoint to surface schema mismatches in monitoring dashboards.",
+  })
+  @ApiResponse({
+    status: 200,
+    type: ParserHealthResponseDto,
+    description: "Parser health snapshot retrieved successfully",
+  })
+  getParserHealth(): ParserHealthResponseDto {
+    return this.driftService.getHealthSnapshot();
   }
 }

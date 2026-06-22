@@ -14,6 +14,8 @@ import { StellarIngestionService } from "./stellar-ingestion.service";
 import { SorobanEventIndexerService } from "./soroban-event-indexer.service";
 import { SorobanIndexerController } from "./soroban-indexer.controller";
 import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
+import { ContractEventDriftService } from "./contract-event-drift.service";
+import { MetricsService } from "../metrics/metrics.service";
 
 @Module({
   imports: [
@@ -29,7 +31,26 @@ import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
     AdminEventRepository,
     StealthEventRepository,
     IndexerCheckpointRepository,
-    SorobanEventParser,
+    ContractEventDriftService,
+    /**
+     * Custom factory provider for SorobanEventParser so we can wire
+     * the onUnknownSchemaVersion callback (which needs MetricsService)
+     * alongside the ContractEventDriftService at module bootstrap time.
+     */
+    {
+      provide: SorobanEventParser,
+      useFactory: (
+        metrics: MetricsService,
+        driftService: ContractEventDriftService,
+      ) =>
+        new SorobanEventParser(
+          (eventName, version) => {
+            metrics.recordUnknownSchemaVersion(eventName, version);
+          },
+          driftService,
+        ),
+      inject: [MetricsService, ContractEventDriftService],
+    },
     StellarIngestionService,
     SorobanEventIndexerService,
     IngestionBootstrapService,
@@ -40,6 +61,7 @@ import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
     SorobanEventParser,
     CursorRepository,
     EscrowEventRepository,
+    ContractEventDriftService,
   ],
 })
 export class IngestionModule {}

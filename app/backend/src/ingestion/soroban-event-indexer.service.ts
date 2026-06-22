@@ -13,6 +13,7 @@ import { EscrowEventRepository } from "./escrow-event.repository";
 import { PrivacyEventRepository } from "./privacy-event.repository";
 import { AdminEventRepository } from "./admin-event.repository";
 import { StealthEventRepository } from "./stealth-event.repository";
+import { ContractEventDriftService } from "./contract-event-drift.service";
 import type { RustAcademyContractEvent } from "./types/contract-event.types";
 
 const PAGE_LIMIT = 200;
@@ -37,7 +38,6 @@ export interface DualReadConfig {
 export class SorobanEventIndexerService {
   private readonly logger = new Logger(SorobanEventIndexerService.name);
   private readonly horizonUrl: string;
-  private readonly parser: SorobanEventParser;
 
   constructor(
     private readonly config: AppConfigService,
@@ -48,15 +48,10 @@ export class SorobanEventIndexerService {
     private readonly stealthRepo: StealthEventRepository,
     private readonly metrics: MetricsService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly driftService: ContractEventDriftService,
+    private readonly parser: SorobanEventParser,
   ) {
     this.horizonUrl = HORIZON_BASE_URLS[this.config.network];
-
-    this.parser = new SorobanEventParser((eventName, version, pagingToken) => {
-      this.logger.warn(
-        `Unknown schema_version=${version} for event ${eventName} paging_token=${pagingToken}`,
-      );
-      this.metrics.recordUnknownSchemaVersion(eventName, version);
-    });
   }
 
   async indexLedgerRange(
@@ -166,6 +161,25 @@ export class SorobanEventIndexerService {
 
         if (!event) {
           skippedUnknownSchema++;
+
+          // Push individual rejection metrics from the drift service snapshot
+          // so Prometheus counters stay in sync with the in-process drift state.
+          const snapshot = this.driftService.getHealthSnapshot();
+          this.metrics.recordParserRejection(
+            "any",           // aggregated label for total rejections
+            contractId,
+            "unknown",
+            0,
+          );
+          // Update the rolling rejection rate gauge for this contract
+          const window = snapshot.window;
+          if (window.processed + window.rejected > 0) {
+            this.metrics.setContractEventRejectionRate(
+              contractId,
+              window.rejected / (window.processed + window.rejected),
+            );
+          }
+
           continue;
         }
 

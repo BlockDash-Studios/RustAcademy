@@ -16,6 +16,13 @@ export class MetricsService implements OnModuleInit {
   private sorobanRpcFailoverTotal: client.Counter<string>;
   private sorobanRpcActiveEndpoint: client.Gauge<string>;
   private sorobanIndexerUnknownSchemaVersion: client.Counter<string>;
+  // ── Contract event drift / parser observability ──────────────────────────
+  private contractEventParserRejections: client.Counter<string>;
+  private contractEventUnknownNames: client.Counter<string>;
+  private contractEventFieldMismatches: client.Counter<string>;
+  private contractEventParseErrors: client.Counter<string>;
+  private contractEventRejectionRate: client.Gauge<string>;
+  // ─────────────────────────────────────────────────────────────────────────
   private parityCheckResults: client.Gauge<string>;
   private shadowTrafficRequests: client.Counter<string>;
   private indexerLagLedgers: client.Gauge<string>;
@@ -131,6 +138,38 @@ export class MetricsService implements OnModuleInit {
         help: "Indexer lag guard status (0=disabled, 1=enabled, 2=overridden, 3=lagging)",
       });
 
+      // ── Contract event drift / parser observability ──────────────────────
+      this.contractEventParserRejections = new client.Counter({
+        name: "contract_event_parser_rejections_total",
+        help: "Total contract events rejected by the parser, labelled by reason, contract ID, event name, and schema version",
+        labelNames: ["reason", "contract_id", "event_name", "schema_version"],
+      });
+
+      this.contractEventUnknownNames = new client.Counter({
+        name: "contract_event_unknown_names_total",
+        help: "Contract events with an event name not present in the schema registry",
+        labelNames: ["contract_id"],
+      });
+
+      this.contractEventFieldMismatches = new client.Counter({
+        name: "contract_event_field_mismatches_total",
+        help: "Contract events whose payload is missing one or more expected fields",
+        labelNames: ["contract_id", "event_name", "schema_version"],
+      });
+
+      this.contractEventParseErrors = new client.Counter({
+        name: "contract_event_parse_errors_total",
+        help: "Contract events that caused an XDR decode or structural parse error",
+        labelNames: ["contract_id"],
+      });
+
+      this.contractEventRejectionRate = new client.Gauge({
+        name: "contract_event_rejection_rate",
+        help: "Rolling 5-minute rejection rate (0.0–1.0) for the contract event parser",
+        labelNames: ["contract_id"],
+      });
+      // ────────────────────────────────────────────────────────────────────
+
       this.register.registerMetric(this.httpRequestDuration);
       this.register.registerMetric(this.httpRequestTotal);
       this.register.registerMetric(this.rateLimitedRequestsTotal);
@@ -148,6 +187,11 @@ export class MetricsService implements OnModuleInit {
       this.register.registerMetric(this.indexerLagLedgers);
       this.register.registerMetric(this.indexerLagGuardBlockedRequests);
       this.register.registerMetric(this.indexerLagGuardStatus);
+      this.register.registerMetric(this.contractEventParserRejections);
+      this.register.registerMetric(this.contractEventUnknownNames);
+      this.register.registerMetric(this.contractEventFieldMismatches);
+      this.register.registerMetric(this.contractEventParseErrors);
+      this.register.registerMetric(this.contractEventRejectionRate);
 
       this.initialized = true;
     } catch (error) {
@@ -352,6 +396,71 @@ export class MetricsService implements OnModuleInit {
     if (!this.initialized || !this.indexerLagGuardStatus) return;
     try {
       this.indexerLagGuardStatus.set(status);
+    } catch (error) {}
+  }
+
+  // ── Contract event drift / parser observability ─────────────────────────
+
+  /**
+   * Increment the parser rejections counter.
+   * @param reason    Why the event was rejected (drift reason)
+   * @param contractId  Soroban contract ID
+   * @param eventName   Event name (may be "unknown" if the name itself is unrecognised)
+   * @param schemaVersion Schema version read from the event (or 0 if unavailable)
+   */
+  recordParserRejection(
+    reason: string,
+    contractId: string,
+    eventName: string,
+    schemaVersion: number,
+  ) {
+    if (!this.initialized || !this.contractEventParserRejections) return;
+    try {
+      this.contractEventParserRejections
+        .labels(reason, contractId, eventName, String(schemaVersion))
+        .inc();
+    } catch (error) {}
+  }
+
+  /** Increment the unknown event name counter. */
+  recordUnknownEventName(contractId: string) {
+    if (!this.initialized || !this.contractEventUnknownNames) return;
+    try {
+      this.contractEventUnknownNames.labels(contractId).inc();
+    } catch (error) {}
+  }
+
+  /** Increment the field mismatch counter. */
+  recordFieldMismatch(
+    contractId: string,
+    eventName: string,
+    schemaVersion: number,
+  ) {
+    if (!this.initialized || !this.contractEventFieldMismatches) return;
+    try {
+      this.contractEventFieldMismatches
+        .labels(contractId, eventName, String(schemaVersion))
+        .inc();
+    } catch (error) {}
+  }
+
+  /** Increment the parse error counter. */
+  recordParseError(contractId: string) {
+    if (!this.initialized || !this.contractEventParseErrors) return;
+    try {
+      this.contractEventParseErrors.labels(contractId).inc();
+    } catch (error) {}
+  }
+
+  /**
+   * Update the rolling rejection rate gauge for a contract.
+   * @param contractId  Soroban contract ID
+   * @param rate        Value between 0 and 1 (0 = no rejections)
+   */
+  setContractEventRejectionRate(contractId: string, rate: number) {
+    if (!this.initialized || !this.contractEventRejectionRate) return;
+    try {
+      this.contractEventRejectionRate.labels(contractId).set(rate);
     } catch (error) {}
   }
 }
