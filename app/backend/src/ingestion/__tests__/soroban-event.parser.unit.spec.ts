@@ -231,6 +231,7 @@ describe("SorobanEventParser", () => {
           "amount_due",
           "amount_paid",
           "expires_at",
+          "ledger_sequence",
           "schema_version",
           "timestamp",
           "token",
@@ -244,7 +245,91 @@ describe("SorobanEventParser", () => {
       )) {
         expect(contract.payloadKeys).toEqual([...contract.payloadKeys].sort());
         expect(contract.compatibleVersions).toContain(contract.schemaVersion);
+        // All v2+ schemas carry the replay metadata field
+        expect(contract.payloadKeys).toContain("ledger_sequence");
       }
+    });
+  });
+
+  describe("replay metadata extraction", () => {
+    it("extracts contractLedgerSequence when ledger_sequence is in payload", () => {
+      const topics = [
+        symVal(RustAcademy_EVENT_TOPICS.escrow),
+        symVal("EscrowDeposited"),
+        bytesVal(COMMITMENT_HEX),
+        addressVal(OWNER),
+      ];
+      const data = mapVal({
+        amount_due: nativeToScVal(5_000_000n, { type: "i128" }),
+        amount_paid: nativeToScVal(5_000_000n, { type: "i128" }),
+        expires_at: nativeToScVal(1800000000n, { type: "u64" }),
+        ledger_sequence: nativeToScVal(42, { type: "u32" }),
+        schema_version: nativeToScVal(RustAcademy_EVENT_SCHEMA_VERSION, { type: "u32" }),
+        timestamp: nativeToScVal(1700000000n, { type: "u64" }),
+        token: addressVal(TOKEN),
+      });
+
+      const result = parser.parse(makeRaw(topics, data, { ledger: 42 }));
+      expect(result).not.toBeNull();
+      expect(result!.contractLedgerSequence).toBe(42);
+    });
+
+    it("sets contractLedgerSequence to undefined for legacy events without the field", () => {
+      const topics = [
+        symVal("EscrowDeposited"),
+        bytesVal(COMMITMENT_HEX),
+        addressVal(OWNER),
+      ];
+      const data = mapVal({
+        token: addressVal(TOKEN),
+        amount: nativeToScVal(5_000_000n, { type: "i128" }),
+        expires_at: nativeToScVal(1800000000n, { type: "u64" }),
+        timestamp: nativeToScVal(1700000000n, { type: "u64" }),
+        // no ledger_sequence field (legacy v1 event)
+      });
+
+      const result = parser.parse(makeRaw(topics, data));
+      expect(result).not.toBeNull();
+      expect(result!.contractLedgerSequence).toBeUndefined();
+    });
+
+    it("still parses the event but warns when contract ledger_sequence mismatches Horizon ledger", () => {
+      const warnSpy = jest.spyOn(
+        (parser as unknown as { logger: { warn: jest.Mock } }).logger,
+        "warn",
+      );
+
+      const topics = [
+        symVal(RustAcademy_EVENT_TOPICS.escrow),
+        symVal("EscrowDeposited"),
+        bytesVal(COMMITMENT_HEX),
+        addressVal(OWNER),
+      ];
+      const data = mapVal({
+        amount_due: nativeToScVal(1_000n, { type: "i128" }),
+        amount_paid: nativeToScVal(1_000n, { type: "i128" }),
+        expires_at: nativeToScVal(9999999n, { type: "u64" }),
+        // contract says ledger 99 but Horizon reports ledger 100 (mismatch)
+        ledger_sequence: nativeToScVal(99, { type: "u32" }),
+        schema_version: nativeToScVal(RustAcademy_EVENT_SCHEMA_VERSION, { type: "u32" }),
+        timestamp: nativeToScVal(1700000000n, { type: "u64" }),
+        token: addressVal(TOKEN),
+      });
+
+      // Horizon ledger = 100, contract says 99
+      const result = parser.parse(makeRaw(topics, data, { ledger: 100 }));
+
+      // Event must still be returned (mismatch is advisory, not fatal)
+      expect(result).not.toBeNull();
+      expect(result!.contractLedgerSequence).toBe(99);
+      expect(result!.ledgerSequence).toBe(100);
+
+      // Mismatch must be logged for downstream monitoring
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Replay metadata mismatch"),
+      );
+
+      warnSpy.mockRestore();
     });
   });
 });

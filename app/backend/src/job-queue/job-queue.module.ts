@@ -22,12 +22,16 @@ import { IngestionModule } from "../ingestion/ingestion.module";
 import { AuthModule } from "../auth/auth.module";
 import { MetricsModule } from "../metrics/metrics.module";
 import { ApiKeysModule } from "../api-keys/api-keys.module";
+import { ContractsModule } from "../contracts/contracts.module";
+import { TransactionsModule } from "../transactions/transactions.module";
+import { StellarModule } from "../stellar/stellar.module";
 import {
   WebhookDeliveryHandler,
   RecurringPaymentHandler,
   ExportGenerationHandler,
   ReconciliationHandler,
   StellarReconnectHandler,
+  RefundJobHandler,
 } from "./handlers";
 
 /**
@@ -47,6 +51,7 @@ import {
  * - ExportGenerationHandler: Handler for export generation jobs
  * - ReconciliationHandler: Handler for reconciliation jobs
  * - StellarReconnectHandler: Handler for Stellar SSE reconnection jobs
+ * - RefundJobHandler: Handler for on-chain refund operations
  */
 @Module({
   imports: [
@@ -54,6 +59,9 @@ import {
     AuthModule,
     MetricsModule,
     ApiKeysModule,
+    ContractsModule,
+    TransactionsModule,
+    StellarModule,
     forwardRef(() => NotificationsModule),
     forwardRef(() => LinksModule),
     forwardRef(() => ReconciliationModule),
@@ -73,6 +81,7 @@ import {
     ExportGenerationHandler,
     ReconciliationHandler,
     StellarReconnectHandler,
+    RefundJobHandler,
   ],
   exports: [
     JobQueueService,
@@ -84,6 +93,7 @@ import {
     ExportGenerationHandler,
     ReconciliationHandler,
     StellarReconnectHandler,
+    RefundJobHandler,
   ],
 })
 export class JobQueueModule {}

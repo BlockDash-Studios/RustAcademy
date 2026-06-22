@@ -132,155 +132,102 @@ var SorobanEventIndexerService = function () {
          *                        full range (reconciliation mode). Idempotency prevents
          *                        duplicate records.
          */
-        SorobanEventIndexerService_1.prototype.indexLedgerRange = function (contractId_1, fromLedger_1, toLedger_1, dualReadConfig_1) {
-            return __awaiter(this, arguments, void 0, function (contractId, fromLedger, toLedger, dualReadConfig, force) {
-                var effectiveFrom, _a, inDualReadWindow, logSuffix, processed, persisted, skippedUnknownSchema, previousResult, currentResult;
-                var _b;
-                if (force === void 0) { force = false; }
-                return __generator(this, function (_c) {
-                    switch (_c.label) {
-                        case 0:
-                            if (!force) return [3 /*break*/, 1];
-                            _a = fromLedger;
-                            return [3 /*break*/, 3];
-                        case 1: return [4 /*yield*/, this.resolveStartLedger(contractId, fromLedger)];
-                        case 2:
-                            _a = _c.sent();
-                            _c.label = 3;
-                        case 3:
-                            effectiveFrom = _a;
-                            if (effectiveFrom > toLedger) {
-                                this.logger.log("Contract ".concat(contractId, ": ledger range [").concat(effectiveFrom, ", ").concat(toLedger, "] already indexed; skipping."));
-                                return [2 /*return*/, {
-                                        fromLedger: fromLedger,
-                                        toLedger: toLedger,
-                                        processed: 0,
-                                        persisted: 0,
-                                        skippedUnknownSchema: 0,
-                                    }];
-                            }
-                            inDualReadWindow = this.isInDualReadWindow(effectiveFrom, dualReadConfig);
-                            logSuffix = inDualReadWindow ? " (dual-read mode)" : "";
-                            this.logger.log("Indexing contract ".concat(contractId, " ledgers [").concat(effectiveFrom, ", ").concat(toLedger, "]").concat(force ? " (force reindex)" : "").concat(logSuffix));
-                            processed = 0;
-                            persisted = 0;
-                            skippedUnknownSchema = 0;
-                            if (!(inDualReadWindow && (dualReadConfig === null || dualReadConfig === void 0 ? void 0 : dualReadConfig.previousContractId))) return [3 /*break*/, 5];
-                            return [4 /*yield*/, this.indexContractWithCursor(dualReadConfig.previousContractId, effectiveFrom, (_b = dualReadConfig.effectiveLedger) !== null && _b !== void 0 ? _b : toLedger, undefined)];
-                        case 4:
-                            previousResult = _c.sent();
-                            processed += previousResult.processed;
-                            persisted += previousResult.persisted;
-                            skippedUnknownSchema += previousResult.skippedUnknownSchema;
-                            _c.label = 5;
-                        case 5: return [4 /*yield*/, this.indexContractWithCursor(contractId, effectiveFrom, toLedger, undefined)];
-                        case 6:
-                            currentResult = _c.sent();
-                            processed += currentResult.processed;
-                            persisted += currentResult.persisted;
-                            skippedUnknownSchema += currentResult.skippedUnknownSchema;
-                            this.logger.log("Indexed contract ".concat(contractId, " [").concat(effectiveFrom, ", ").concat(toLedger, "]: ") +
-                                "processed=".concat(processed, " persisted=").concat(persisted, " skippedUnknownSchema=").concat(skippedUnknownSchema));
-                            return [2 /*return*/, {
-                                    fromLedger: effectiveFrom,
-                                    toLedger: toLedger,
-                                    processed: processed,
-                                    persisted: persisted,
-                                    skippedUnknownSchema: skippedUnknownSchema,
-                                }];
-                    }
-                });
-            });
+        SorobanEventIndexerService_1.prototype.indexLedgerRange = async function (contractId, fromLedger, toLedger, dualReadConfig, force) {
+            if (force === void 0) { force = false; }
+            var network = this.config.network;
+            var processed = 0;
+            var persisted = 0;
+            var skippedUnknownSchema = 0;
+            var inDualReadWindow = this.isInDualReadWindow(fromLedger, dualReadConfig);
+            if (inDualReadWindow && (dualReadConfig === null || dualReadConfig === void 0 ? void 0 : dualReadConfig.previousContractId)) {
+                var _a;
+                var prevResult = await this.runIndexingEngine(
+                    dualReadConfig.previousContractId,
+                    fromLedger,
+                    (_a = dualReadConfig.effectiveLedger) !== null && _a !== void 0 ? _a : toLedger,
+                    network,
+                    "dual-read-previous",
+                    force
+                );
+                processed += prevResult.processed;
+                persisted += prevResult.persisted;
+                skippedUnknownSchema += prevResult.skippedUnknownSchema;
+            }
+            var currentMode = inDualReadWindow ? "dual-read-current" : "normal";
+            var currentResult = await this.runIndexingEngine(contractId, fromLedger, toLedger, network, currentMode, force);
+            processed += currentResult.processed;
+            persisted += currentResult.persisted;
+            skippedUnknownSchema += currentResult.skippedUnknownSchema;
+            return { fromLedger: fromLedger, toLedger: toLedger, processed: processed, persisted: persisted, skippedUnknownSchema: skippedUnknownSchema };
         };
-        SorobanEventIndexerService_1.prototype.indexContractWithCursor = function (contractId, fromLedger, toLedger, cursor) {
-            return __awaiter(this, void 0, void 0, function () {
-                var processed, persisted, skippedUnknownSchema, nextCursor, _a, records, returnedCursor, _i, records_1, raw, event_1, lastRecord;
-                return __generator(this, function (_b) {
-                    switch (_b.label) {
-                        case 0:
-                            processed = 0;
-                            persisted = 0;
-                            skippedUnknownSchema = 0;
-                            nextCursor = cursor;
-                            _b.label = 1;
-                        case 1:
-                            if (!true) return [3 /*break*/, 9];
-                            return [4 /*yield*/, this.fetchPage(contractId, fromLedger, toLedger, nextCursor)];
-                        case 2:
-                            _a = _b.sent(), records = _a.records, returnedCursor = _a.nextCursor;
-                            if (records.length === 0)
-                                return [3 /*break*/, 9];
-                            _i = 0, records_1 = records;
-                            _b.label = 3;
-                        case 3:
-                            if (!(_i < records_1.length)) return [3 /*break*/, 6];
-                            raw = records_1[_i];
-                            processed++;
-                            event_1 = this.parser.parse(raw);
-                            if (!event_1) {
-                                skippedUnknownSchema++;
-                                return [3 /*break*/, 5];
-                            }
-                            return [4 /*yield*/, this.persistEvent(event_1)];
-                        case 4:
-                            _b.sent();
-                            persisted++;
-                            this.eventEmitter.emit("stellar.".concat(event_1.eventType), event_1);
-                            _b.label = 5;
-                        case 5:
-                            _i++;
-                            return [3 /*break*/, 3];
-                        case 6:
-                            lastRecord = records[records.length - 1];
-                            if (!lastRecord) return [3 /*break*/, 8];
-                            return [4 /*yield*/, this.checkpointRepo.saveLastLedger(contractId, lastRecord.ledger)];
-                        case 7:
-                            _b.sent();
-                            _b.label = 8;
-                        case 8:
-                            if (!returnedCursor || records.length < PAGE_LIMIT)
-                                return [3 /*break*/, 9];
-                            nextCursor = returnedCursor;
-                            return [3 /*break*/, 1];
-                        case 9: 
-                        // Final checkpoint
-                        return [4 /*yield*/, this.checkpointRepo.saveLastLedger(contractId, toLedger)];
-                        case 10:
-                            // Final checkpoint
-                            _b.sent();
-                            return [2 /*return*/, { processed: processed, persisted: persisted, skippedUnknownSchema: skippedUnknownSchema }];
+        SorobanEventIndexerService_1.prototype.runIndexingEngine = async function (contractId, fromLedger, toLedger, network, mode, force) {
+            var currentCursor = null;
+            var startLedgerValue = fromLedger;
+            if (!force) {
+                var checkpoint = await this.checkpointRepo.getCheckpoint(contractId, network, mode);
+                if (checkpoint) {
+                    if (checkpoint.lastLedger >= toLedger && !checkpoint.pagingToken) {
+                        this.logger.log("Range [".concat(fromLedger, ", ").concat(toLedger, "] already fully indexed for stream ").concat(mode, "."));
+                        return { processed: 0, persisted: 0, skippedUnknownSchema: 0 };
                     }
-                });
-            });
+                    startLedgerValue = checkpoint.lastLedger;
+                    currentCursor = checkpoint.pagingToken;
+                }
+            }
+            return this.indexContractWithCursor(contractId, startLedgerValue, toLedger, network, mode, currentCursor);
+        };
+        SorobanEventIndexerService_1.prototype.indexContractWithCursor = async function (contractId, fromLedger, toLedger, network, mode, cursor) {
+            var processed = 0;
+            var persisted = 0;
+            var skippedUnknownSchema = 0;
+            var nextCursor = cursor || undefined;
+            while (true) {
+                var _a = await this.fetchPage(contractId, fromLedger, toLedger, nextCursor);
+                var records = _a.records;
+                var returnedCursor = _a.nextCursor;
+                if (records.length === 0) {
+                    await this.checkpointRepo.saveCheckpoint({
+                        contractId: contractId,
+                        network: network,
+                        mode: mode,
+                        lastLedger: toLedger,
+                        pagingToken: null,
+                    });
+                    break;
+                }
+                for (var _i = 0; _i < records.length; _i++) {
+                    var raw = records[_i];
+                    processed++;
+                    var event_1 = this.parser.parse(raw);
+                    if (!event_1) {
+                        skippedUnknownSchema++;
+                        continue;
+                    }
+                    await this.persistEvent(event_1);
+                    persisted++;
+                    this.eventEmitter.emit("stellar.".concat(event_1.eventType), event_1);
+                }
+                var lastRecord = records[records.length - 1];
+                if (lastRecord) {
+                    nextCursor = returnedCursor;
+                    await this.checkpointRepo.saveCheckpoint({
+                        contractId: contractId,
+                        network: network,
+                        mode: mode,
+                        lastLedger: lastRecord.ledger,
+                        pagingToken: nextCursor || null,
+                    });
+                }
+                if (!returnedCursor || records.length < PAGE_LIMIT) break;
+                nextCursor = returnedCursor;
+            }
+            return { processed: processed, persisted: persisted, skippedUnknownSchema: skippedUnknownSchema };
         };
         SorobanEventIndexerService_1.prototype.isInDualReadWindow = function (currentLedger, config) {
             if (!(config === null || config === void 0 ? void 0 : config.previousContractId) || !(config === null || config === void 0 ? void 0 : config.effectiveLedger)) {
                 return false;
             }
             return currentLedger < config.effectiveLedger;
-        };
-        // ---------------------------------------------------------------------------
-        // Private helpers
-        // ---------------------------------------------------------------------------
-        /**
-         * Returns the ledger to start from, taking the stored checkpoint into account.
-         * If a checkpoint exists and is ahead of `fromLedger`, we resume from checkpoint+1.
-         */
-        SorobanEventIndexerService_1.prototype.resolveStartLedger = function (contractId, fromLedger) {
-            return __awaiter(this, void 0, void 0, function () {
-                var last;
-                return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.checkpointRepo.getLastLedger(contractId)];
-                        case 1:
-                            last = _a.sent();
-                            if (last !== null && last >= fromLedger) {
-                                return [2 /*return*/, last + 1];
-                            }
-                            return [2 /*return*/, fromLedger];
-                    }
-                });
-            });
         };
         /**
          * Fetches one page of contract events from Horizon for the given ledger range.

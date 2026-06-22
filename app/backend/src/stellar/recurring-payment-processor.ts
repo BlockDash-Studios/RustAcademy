@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { ConfigService } from '@nestjs/config';
 
+import { StellarSigningService } from '../common/stellar-signing.service';
+
 export interface RecurringPaymentParams {
   recipientAddress: string;
   amount: number;
@@ -13,7 +15,8 @@ export interface RecurringPaymentParams {
 }
 
 /**
- * Handles Stellar transaction processing for recurring payments
+ * Handles Stellar transaction processing for recurring payments.
+ * All signing is delegated to StellarSigningService — no secret keys here.
  */
 @Injectable()
 export class RecurringPaymentProcessor {
@@ -22,9 +25,12 @@ export class RecurringPaymentProcessor {
   private readonly networkPassphrase: string;
   private readonly server: StellarSdk.Horizon.Server;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly signingService: StellarSigningService,
+  ) {
     const network = this.config.get<string>('stellar.network') || 'testnet';
-    
+
     if (network === 'mainnet') {
       this.horizonUrl = 'https://horizon.stellar.org';
       this.networkPassphrase = StellarSdk.Networks.PUBLIC;
@@ -34,7 +40,7 @@ export class RecurringPaymentProcessor {
     }
 
     this.server = new StellarSdk.Horizon.Server(this.horizonUrl);
-    
+
     this.logger.log(`Recurring payment processor initialized (${network} → ${this.horizonUrl})`);
   }
 
@@ -55,8 +61,7 @@ export class RecurringPaymentProcessor {
       this.logger.log(`Submitting recurring payment: ${amount} ${assetCode} to ${recipientAddress}`);
 
       // Get source account (platform account that will fund the payments)
-      const sourceKeypair = this.getSourceKeypair();
-      const sourceAccount = await this.server.loadAccount(sourceKeypair.publicKey());
+      const sourceAccount = await this.server.loadAccount(this.signingService.publicKey);
 
       // Build transaction
       const transaction = await this.buildPaymentTransaction({
@@ -69,9 +74,9 @@ export class RecurringPaymentProcessor {
         memoType,
       });
 
-      // Sign transaction
+      // Sign via central signing service — validates network passphrase before signing
       const builtTransaction = transaction.build();
-      builtTransaction.sign(sourceKeypair);
+      this.signingService.signTransaction(builtTransaction, this.networkPassphrase);
 
       // Submit to Stellar
       const response = await this.server.submitTransaction(builtTransaction);
@@ -109,16 +114,6 @@ export class RecurringPaymentProcessor {
   // ---------------------------------------------------------------------------
   // Private Helper Methods
   // ---------------------------------------------------------------------------
-
-  private getSourceKeypair(): StellarSdk.Keypair {
-    const secretKey = this.config.get<string>('STELLAR_SECRET_KEY');
-    
-    if (!secretKey) {
-      throw new Error('STELLAR_SECRET_KEY environment variable is not set');
-    }
-
-    return StellarSdk.Keypair.fromSecret(secretKey);
-  }
 
   private async buildPaymentTransaction(params: {
     sourceAccount: StellarSdk.Horizon.AccountResponse;

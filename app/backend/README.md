@@ -59,12 +59,12 @@ The API manages:
 
 ## Tech Stack
 
-* Fastify
+* NestJS
 * TypeScript
 * PostgreSQL
-* Prisma
+* Supabase client (@supabase/supabase-js)
 * Redis
-* BullMQ
+* Custom Job Queue (JobRepository, JobRegistry, etc.)
 * Stellar SDK
 * Anthropic Claude API
 
@@ -75,13 +75,13 @@ The API manages:
 ```text
 Frontend
    ↓
-Fastify API
+NestJS API
    ↓
 Services Layer
    ↓
-PostgreSQL
+PostgreSQL / Supabase
 Redis
-BullMQ
+Custom Job Queue
 Stellar
 Claude
 ```
@@ -113,8 +113,6 @@ REWARD_POOL_SECRET_KEY=
 
 ```bash
 pnpm install
-
-pnpm prisma migrate dev
 
 pnpm dev
 ```
@@ -163,7 +161,7 @@ http://localhost:4000
 
 ## Queue Workers
 
-BullMQ Workers:
+Custom Job Queue Workers:
 
 ```text
 submission-grading
@@ -180,7 +178,8 @@ notification-delivery
 ```bash
 pnpm test
 
-pnpm test:coverage
+pnpm test:unit
+pnpm test:e2e
 ```
 
 ---

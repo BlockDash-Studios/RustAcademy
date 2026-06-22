@@ -910,6 +910,40 @@ fn upgrade_safety_gate_cancel_flow() {
 }
 
 #[test]
+fn upgrade_safety_gate_cancel_restores_previous_wasm_hash_after_failed_completion() {
+    let (env, gs) = build_golden_state();
+    let client = seed_admin_role(&env, &gs.contract_id, &gs.admin);
+    let old_hash = BytesN::from_array(&env, &[7; 32]);
+    let new_hash = BytesN::from_array(&env, &[8; 32]);
+
+    env.as_contract(&gs.contract_id, || {
+        crate::storage::set_wasm_hash(&env, &old_hash);
+    });
+
+    client.set_upgrade_window(&gs.admin, &1u64, &0u64);
+    client.start_upgrade(&gs.admin, &CURRENT_CONTRACT_VERSION, &new_hash);
+    client.upgrade(&gs.admin, &new_hash);
+
+    let start_meta = client.get_deployment_metadata();
+    assert_eq!(start_meta.wasm_hash, Some(new_hash.clone()));
+
+    let failed = client.try_complete_upgrade(&gs.admin, &(CURRENT_CONTRACT_VERSION + 1));
+    assert!(
+        failed.is_err(),
+        "complete_upgrade with wrong version must fail and leave recovery needed"
+    );
+
+    client.cancel_upgrade(&gs.admin);
+
+    let recovered_meta = client.get_deployment_metadata();
+    assert_eq!(recovered_meta.wasm_hash, Some(old_hash.clone()));
+
+    client.start_upgrade(&gs.admin, &CURRENT_CONTRACT_VERSION, &new_hash);
+    client.upgrade(&gs.admin, &new_hash);
+    client.complete_upgrade(&gs.admin, &CURRENT_CONTRACT_VERSION);
+}
+
+#[test]
 fn upgrade_safety_gate_complete_upgrade_verifies_version() {
     let (env, gs) = build_golden_state();
     let client = seed_admin_role(&env, &gs.contract_id, &gs.admin);

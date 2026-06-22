@@ -20,6 +20,8 @@ export interface EventSchemaContract {
   compatibleVersions: readonly number[];
 }
 
+// payloadKeys are sorted alphabetically.
+// "ledger_sequence" ('l') sorts after 'f*' / 'e*' keys and before 'p*' / 'r*' / 's*' keys.
 export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
   EscrowDeposited: {
     topic: RustAcademy_EVENT_TOPICS.escrow,
@@ -29,6 +31,7 @@ export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
       "amount_due",
       "amount_paid",
       "expires_at",
+      "ledger_sequence",
       "schema_version",
       "timestamp",
       "token",
@@ -40,7 +43,7 @@ export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
     topic: RustAcademy_EVENT_TOPICS.escrow,
     eventName: "EscrowWithdrawn",
     indexedFields: ["escrow_id", "owner"],
-    payloadKeys: ["amount", "fee", "schema_version", "timestamp", "token"],
+    payloadKeys: ["amount", "fee", "ledger_sequence", "schema_version", "timestamp", "token"],
     schemaVersion: RustAcademy_EVENT_SCHEMA_VERSION,
     compatibleVersions: [1, RustAcademy_EVENT_SCHEMA_VERSION],
   },
@@ -48,7 +51,7 @@ export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
     topic: RustAcademy_EVENT_TOPICS.escrow,
     eventName: "EscrowRefunded",
     indexedFields: ["escrow_id", "owner"],
-    payloadKeys: ["amount", "schema_version", "timestamp", "token"],
+    payloadKeys: ["amount", "ledger_sequence", "schema_version", "timestamp", "token"],
     schemaVersion: RustAcademy_EVENT_SCHEMA_VERSION,
     compatibleVersions: [1, RustAcademy_EVENT_SCHEMA_VERSION],
   },
@@ -56,7 +59,7 @@ export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
     topic: RustAcademy_EVENT_TOPICS.privacy,
     eventName: "PrivacyToggled",
     indexedFields: ["owner"],
-    payloadKeys: ["enabled", "schema_version", "timestamp"],
+    payloadKeys: ["enabled", "ledger_sequence", "schema_version", "timestamp"],
     schemaVersion: RustAcademy_EVENT_SCHEMA_VERSION,
     compatibleVersions: [1, RustAcademy_EVENT_SCHEMA_VERSION],
   },
@@ -64,7 +67,7 @@ export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
     topic: RustAcademy_EVENT_TOPICS.admin,
     eventName: "ContractPaused",
     indexedFields: ["admin"],
-    payloadKeys: ["paused", "schema_version", "timestamp"],
+    payloadKeys: ["ledger_sequence", "paused", "schema_version", "timestamp"],
     schemaVersion: RustAcademy_EVENT_SCHEMA_VERSION,
     compatibleVersions: [RustAcademy_EVENT_SCHEMA_VERSION],
   },
@@ -72,7 +75,7 @@ export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
     topic: RustAcademy_EVENT_TOPICS.admin,
     eventName: "AdminChanged",
     indexedFields: ["old_admin", "new_admin"],
-    payloadKeys: ["schema_version", "timestamp"],
+    payloadKeys: ["ledger_sequence", "schema_version", "timestamp"],
     schemaVersion: RustAcademy_EVENT_SCHEMA_VERSION,
     compatibleVersions: [1, RustAcademy_EVENT_SCHEMA_VERSION],
   },
@@ -80,7 +83,7 @@ export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
     topic: RustAcademy_EVENT_TOPICS.admin,
     eventName: "ContractUpgraded",
     indexedFields: ["new_wasm_hash", "admin"],
-    payloadKeys: ["schema_version", "timestamp"],
+    payloadKeys: ["ledger_sequence", "schema_version", "timestamp"],
     schemaVersion: RustAcademy_EVENT_SCHEMA_VERSION,
     compatibleVersions: [RustAcademy_EVENT_SCHEMA_VERSION],
   },
@@ -92,6 +95,7 @@ export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
       "amount_due",
       "amount_paid",
       "expires_at",
+      "ledger_sequence",
       "schema_version",
       "timestamp",
       "token",
@@ -103,7 +107,7 @@ export const RustAcademy_EVENT_SCHEMA_CONTRACTS = {
     topic: RustAcademy_EVENT_TOPICS.stealth,
     eventName: "StealthWithdrawn",
     indexedFields: ["stealth_address", "recipient"],
-    payloadKeys: ["amount", "schema_version", "timestamp", "token"],
+    payloadKeys: ["amount", "ledger_sequence", "schema_version", "timestamp", "token"],
     schemaVersion: RustAcademy_EVENT_SCHEMA_VERSION,
     compatibleVersions: [RustAcademy_EVENT_SCHEMA_VERSION],
   },

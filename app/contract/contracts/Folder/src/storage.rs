@@ -39,11 +39,12 @@
 //! - **Value layout**: Changing `EscrowEntry` fields may require migration logic; adding optional
 //!   fields can be done carefully with defaults.
 
-
-
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec};
 
-use crate::types::{DisputeVote, EscrowEntry, FeeConfig, Role, StealthEscrowEntry};
+use crate::types::{
+    DisputeExpiry, DisputeExpiryAction, DisputeVote, EscrowEntry, FeeConfig, Role,
+    StealthEscrowEntry,
+};
 
 /// Record type for TTL policy selection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -52,6 +53,7 @@ pub enum RecordType {
     FeeConfig,
     StealthEscrow,
     EscrowIdMap,
+    DisputeExpiry,
 }
 
 /// TTL policy configuration.
@@ -82,6 +84,10 @@ fn get_ttl_policy(record_type: RecordType) -> TtlPolicy {
             threshold: LEDGER_THRESHOLD,
             ttl: SIX_MONTHS_IN_LEDGERS,
         },
+        RecordType::DisputeExpiry => TtlPolicy {
+            threshold: LEDGER_THRESHOLD,
+            ttl: SIX_MONTHS_IN_LEDGERS,
+        },
     }
 }
 
@@ -99,6 +105,18 @@ pub const CURRENT_CONTRACT_VERSION: u32 = 1;
 
 pub const LEDGER_THRESHOLD: u32 = 17280; // ~1 day
 pub const SIX_MONTHS_IN_LEDGERS: u32 = 3110400; // ~185 days
+
+/// Maximum number of privacy-level changes retained per account.
+///
+/// `add_privacy_history` evicts the oldest entries beyond this cap so the
+/// per-account history index cannot grow without bound and bloat storage
+/// (Issue #51). Eviction is O(1) amortised and never scans global state.
+pub const MAX_PRIVACY_HISTORY: u32 = 50;
+
+/// Default dispute resolution timeout: 7 days in seconds.
+///
+/// Used when no explicit timeout has been configured by the admin/operator.
+pub const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 7 * 24 * 60 * 60; // 604800
 
 /// Bitmask flags for granular operation pausing.
 #[contracttype]
@@ -133,6 +151,8 @@ pub enum DataKey {
     ContractVersion,
     /// Admin address (singleton).
     Admin,
+    /// Pending admin transfer target (singleton).
+    PendingAdminTransfer,
     /// Explicit one-time initialization flag (singleton).
     Initialized,
     /// Paused state (singleton).
@@ -145,6 +165,8 @@ pub enum DataKey {
     UpgradeWindowEnd,
     /// Flag indicating an upgrade is in progress (between start_upgrade and complete_upgrade).
     UpgradeInProgress,
+    /// Snapshot of the pre-upgrade WASM hash used for recovery/cancel flows.
+    PendingUpgradeRollbackWasmHash,
     /// Pending WASM hash stored during start_upgrade.
     PendingUpgradeWasmHash,
     /// Pending contract version stored during start_upgrade.
@@ -185,6 +207,17 @@ pub enum DataKey {
     FeeCollector(u32),
     /// Tracks arbiter votes for disputed escrows. Keyed by (commitment, arbiter).
     DisputeVote(Bytes, Address),
+    /// Reverse index: commitment (`Bytes`) → deterministic `escrow_id`
+    /// (`BytesN<32>`). Recorded alongside [`EscrowIdMap`](DataKey::EscrowIdMap)
+    /// at creation so terminal-escrow cleanup can remove the dedup mapping
+    /// without the original creation salt (Issue #51).
+    CommitmentEscrowId(Bytes),
+    /// Dispute timeout metadata for a specific escrow. Keyed by commitment.
+    DisputeExpiry(Bytes),
+    /// Global dispute resolution timeout in seconds (singleton).
+    DisputeTimeout,
+    /// Global default action when a dispute expires (singleton).
+    DisputeExpiryAction,
 }
 
 // -----------------------------------------------------------------------------
@@ -273,11 +306,32 @@ pub fn set_pending_upgrade_wasm_hash(env: &Env, hash: &BytesN<32>) {
         .set(&DataKey::PendingUpgradeWasmHash, hash);
 }
 
+/// Set the pre-upgrade WASM hash used for rollback/recovery.
+pub fn set_pending_upgrade_rollback_wasm_hash(env: &Env, hash: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::PendingUpgradeRollbackWasmHash, hash);
+}
+
 /// Get pending upgrade WASM hash.
 pub fn get_pending_upgrade_wasm_hash(env: &Env) -> Option<BytesN<32>> {
     env.storage()
         .persistent()
         .get(&DataKey::PendingUpgradeWasmHash)
+}
+
+/// Get the pre-upgrade WASM hash used for rollback/recovery.
+pub fn get_pending_upgrade_rollback_wasm_hash(env: &Env) -> Option<BytesN<32>> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PendingUpgradeRollbackWasmHash)
+}
+
+/// Clear the pre-upgrade WASM hash used for rollback/recovery.
+pub fn clear_pending_upgrade_rollback_wasm_hash(env: &Env) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::PendingUpgradeRollbackWasmHash);
 }
 
 /// Set pending upgrade version.
@@ -299,6 +353,9 @@ pub fn clear_pending_upgrade(env: &Env) {
     env.storage()
         .persistent()
         .remove(&DataKey::UpgradeInProgress);
+    env.storage()
+        .persistent()
+        .remove(&DataKey::PendingUpgradeRollbackWasmHash);
     env.storage()
         .persistent()
         .remove(&DataKey::PendingUpgradeWasmHash);
@@ -454,6 +511,25 @@ pub fn get_admin(env: &Env) -> Option<Address> {
     env.storage().persistent().get(&key)
 }
 
+/// Set the pending admin transfer target.
+pub fn set_pending_admin_transfer(env: &Env, pending_admin: &Address) {
+    let key = DataKey::PendingAdminTransfer;
+    env.storage().persistent().set(&key, pending_admin);
+}
+
+/// Get the pending admin transfer target.
+pub fn get_pending_admin_transfer(env: &Env) -> Option<Address> {
+    let key = DataKey::PendingAdminTransfer;
+    env.storage().persistent().get(&key)
+}
+
+/// Clear any pending admin transfer target.
+pub fn clear_pending_admin_transfer(env: &Env) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::PendingAdminTransfer);
+}
+
 // -----------------------------------------------------------------------------
 // TTL Helper
 // -----------------------------------------------------------------------------
@@ -523,6 +599,11 @@ pub fn add_privacy_history(env: &Env, account: &Address, level: u32) {
         .get(&key)
         .unwrap_or(Vec::new(env));
     history.push_front(level);
+    // Bounded retention: evict the oldest entries beyond the cap so this
+    // per-account index cannot accumulate unbounded storage (Issue #51).
+    while history.len() > MAX_PRIVACY_HISTORY {
+        history.pop_back();
+    }
     env.storage().persistent().set(&key, &history);
 }
 
@@ -621,6 +702,13 @@ pub fn put_stealth_escrow(env: &Env, stealth_address: &BytesN<32>, entry: &Steal
     set_or_extend_ttl(env, &key, RecordType::StealthEscrow);
 }
 
+/// Remove a stealth escrow entry to reclaim its storage deposit (Issue #51).
+pub fn remove_stealth_escrow(env: &Env, stealth_address: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::StealthEscrow(stealth_address.clone()));
+}
+
 // -----------------------------------------------------------------------------
 // Role helpers
 // -----------------------------------------------------------------------------
@@ -712,6 +800,35 @@ pub fn put_escrow_id_mapping(env: &Env, escrow_id: &BytesN<32>, commitment: &Byt
     set_or_extend_ttl(env, &key, RecordType::EscrowIdMap);
 }
 
+/// Remove the `escrow_id → commitment` dedup mapping (Issue #51 cleanup).
+pub fn remove_escrow_id_mapping(env: &Env, escrow_id: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::EscrowIdMap(escrow_id.clone()));
+}
+
+/// Record the reverse index `commitment → escrow_id`, enabling terminal-escrow
+/// cleanup to locate and remove the dedup mapping without the creation salt.
+pub fn put_commitment_escrow_id(env: &Env, commitment: &Bytes, escrow_id: &BytesN<32>) {
+    let key = DataKey::CommitmentEscrowId(commitment.clone());
+    env.storage().persistent().set(&key, escrow_id);
+    set_or_extend_ttl(env, &key, RecordType::EscrowIdMap);
+}
+
+/// Look up the `escrow_id` recorded for a commitment, if any.
+pub fn get_commitment_escrow_id(env: &Env, commitment: &Bytes) -> Option<BytesN<32>> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CommitmentEscrowId(commitment.clone()))
+}
+
+/// Remove the reverse `commitment → escrow_id` index (Issue #51 cleanup).
+pub fn remove_commitment_escrow_id(env: &Env, commitment: &Bytes) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::CommitmentEscrowId(commitment.clone()));
+}
+
 // -----------------------------------------------------------------------------
 // Dispute vote helpers
 // -----------------------------------------------------------------------------
@@ -737,6 +854,12 @@ pub fn has_dispute_vote(env: &Env, commitment: &Bytes, arbiter: &Address) -> boo
     env.storage().persistent().has(&key)
 }
 
+/// Remove a single arbiter's stored dispute vote (Issue #51 cleanup).
+pub fn remove_dispute_vote(env: &Env, commitment: &Bytes, arbiter: &Address) {
+    let key = DataKey::DisputeVote(commitment.clone(), arbiter.clone());
+    env.storage().persistent().remove(&key);
+}
+
 /// Count the number of votes for a disputed escrow.
 pub fn count_dispute_votes(env: &Env, commitment: &Bytes, arbiters: &Vec<Address>) -> u32 {
     let mut count = 0;
@@ -746,4 +869,83 @@ pub fn count_dispute_votes(env: &Env, commitment: &Bytes, arbiters: &Vec<Address
         }
     }
     count
+}
+
+// -----------------------------------------------------------------------------
+// Dispute timeout configuration (Issue #49)
+// -----------------------------------------------------------------------------
+
+/// Get the configured dispute resolution timeout in seconds.
+///
+/// Returns [`DEFAULT_DISPUTE_TIMEOUT_SECS`] if no explicit value has been set.
+pub fn get_dispute_timeout(env: &Env) -> u64 {
+    let key = DataKey::DisputeTimeout;
+    env.storage().persistent().get(&key).unwrap_or(DEFAULT_DISPUTE_TIMEOUT_SECS)
+}
+
+/// Set the global dispute resolution timeout in seconds.
+pub fn set_dispute_timeout(env: &Env, timeout_secs: u64) {
+    let key = DataKey::DisputeTimeout;
+    env.storage().persistent().set(&key, &timeout_secs);
+}
+
+/// Get the configured default action for expired disputes.
+///
+/// Returns [`DisputeExpiryAction::RefundOwner`] if no explicit value has been set.
+pub fn get_dispute_expiry_action(env: &Env) -> DisputeExpiryAction {
+    let key = DataKey::DisputeExpiryAction;
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(DisputeExpiryAction::RefundOwner)
+}
+
+/// Set the global default action for expired disputes.
+pub fn set_dispute_expiry_action(env: &Env, action: DisputeExpiryAction) {
+    let key = DataKey::DisputeExpiryAction;
+    env.storage().persistent().set(&key, &action);
+}
+
+// -----------------------------------------------------------------------------
+// Per-escrow dispute expiry metadata (Issue #49)
+// -----------------------------------------------------------------------------
+
+/// Store dispute expiry metadata for an escrow.
+pub fn put_dispute_expiry(env: &Env, commitment: &Bytes, expiry: &DisputeExpiry) {
+    let key = DataKey::DisputeExpiry(commitment.clone());
+    env.storage().persistent().set(&key, expiry);
+    set_or_extend_ttl(env, &key, RecordType::DisputeExpiry);
+}
+
+/// Get dispute expiry metadata for an escrow.
+pub fn get_dispute_expiry(env: &Env, commitment: &Bytes) -> Option<DisputeExpiry> {
+    let key = DataKey::DisputeExpiry(commitment.clone());
+    let result = env.storage().persistent().get(&key);
+    if result.is_some() {
+        set_or_extend_ttl(env, &key, RecordType::DisputeExpiry);
+    }
+    result
+}
+
+/// Remove dispute expiry metadata for an escrow.
+pub fn remove_dispute_expiry(env: &Env, commitment: &Bytes) {
+    let key = DataKey::DisputeExpiry(commitment.clone());
+    env.storage().persistent().remove(&key);
+}
+
+/// Remove all arbiter votes recorded for a commitment.
+pub fn clear_dispute_votes(env: &Env, commitment: &Bytes, arbiters: &Vec<Address>) {
+    for arbiter in arbiters.iter() {
+        let key = DataKey::DisputeVote(commitment.clone(), arbiter.clone());
+        env.storage().persistent().remove(&key);
+    }
+}
+
+/// Remove all dispute-related auxiliary storage for a commitment.
+///
+/// This clears both the expiry metadata and any recorded votes. It is safe to
+/// call after a dispute has been resolved or auto-resolved.
+pub fn clear_dispute_state(env: &Env, commitment: &Bytes, arbiters: &Vec<Address>) {
+    remove_dispute_expiry(env, commitment);
+    clear_dispute_votes(env, commitment, arbiters);
 }

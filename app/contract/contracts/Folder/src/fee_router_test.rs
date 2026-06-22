@@ -1,4 +1,7 @@
-use crate::{types::PerAssetFeeConfig, EscrowStatus,  RustAcademyContract,  RustAcademyContractClient};
+use crate::{
+    types::{FeeRatio, PerAssetFeeConfig},
+    EscrowStatus,  RustAcademyContract,  RustAcademyContractClient,
+};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token, Address, Bytes, Env,
@@ -53,6 +56,7 @@ fn test_fee_router_per_asset_overrides_global_across_assets() {
         &PerAssetFeeConfig {
             fee_bps: 1_000,
             arbiter_bps: 0,
+            ..Default::default()
         },
     );
 
@@ -95,6 +99,7 @@ fn test_fee_router_dispute_with_optional_arbiter_split() {
     let owner = Address::generate(&env);
     let recipient = Address::generate(&env);
     let arbiter = Address::generate(&env);
+    let platform_wallet = Address::generate(&env);
     let collector = Address::generate(&env);
 
     let token_admin = token::StellarAssetClient::new(&env, &token_id);
@@ -102,13 +107,27 @@ fn test_fee_router_dispute_with_optional_arbiter_split() {
 
     token_admin.mint(&owner, &10_000);
 
-    client.set_platform_wallet(&admin, &collector);
+    client.set_platform_wallet(&admin, &platform_wallet);
+    client.rotate_fee_collector(&admin, &collector);
     client.set_per_asset_fee(
         &admin,
         &token_id,
         &PerAssetFeeConfig {
             fee_bps: 1_000,     // 10% total fee
             arbiter_bps: 2_000, // 20% of fee to arbiter
+            arbiter_fee: FeeRatio {
+                numerator: 1,
+                denominator: 5,
+            },
+            platform_fee: FeeRatio {
+                numerator: 3,
+                denominator: 10,
+            },
+            collector_fee: FeeRatio {
+                numerator: 1,
+                denominator: 2,
+            },
+            ..Default::default()
         },
     );
 
@@ -129,16 +148,19 @@ fn test_fee_router_dispute_with_optional_arbiter_split() {
     // Fee math:
     // total_fee = 100
     // arbiter_fee = 20
-    // collector_fee = 80
+    // platform_fee = 30
+    // collector_fee = 50
     // recipient_net = 900
     assert_eq!(token_client.balance(&recipient), 900);
     assert_eq!(token_client.balance(&arbiter), 20);
-    assert_eq!(token_client.balance(&collector), 80);
+    assert_eq!(token_client.balance(&platform_wallet), 30);
+    assert_eq!(token_client.balance(&collector), 50);
 
-    // Bound safety: payout + arbiter + collector equals gross amount.
+    // Bound safety: payout + all fee recipients equals gross amount.
     assert_eq!(
         token_client.balance(&recipient)
             + token_client.balance(&arbiter)
+            + token_client.balance(&platform_wallet)
             + token_client.balance(&collector),
         amount
     );
@@ -199,5 +221,52 @@ fn test_fee_router_collector_rotation_applies_to_new_payouts_and_old_escrows() {
     assert_eq!(
         client.get_commitment_state(&new_commitment),
         Some(EscrowStatus::Spent)
+    );
+}
+
+#[test]
+fn test_fee_router_rejects_overallocated_explicit_split() {
+    let (env, client, admin) = setup();
+
+    let token_id = create_token(&env);
+    let owner = Address::generate(&env);
+    let platform_wallet = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let token_admin = token::StellarAssetClient::new(&env, &token_id);
+    token_admin.mint(&owner, &10_000);
+
+    client.set_platform_wallet(&admin, &platform_wallet);
+    client.rotate_fee_collector(&admin, &collector);
+    client.set_per_asset_fee(
+        &admin,
+        &token_id,
+        &PerAssetFeeConfig {
+            fee_bps: 1_000,
+            arbiter_bps: 0,
+            arbiter_fee: FeeRatio {
+                numerator: 0,
+                denominator: 1,
+            },
+            platform_fee: FeeRatio {
+                numerator: 2,
+                denominator: 3,
+            },
+            collector_fee: FeeRatio {
+                numerator: 2,
+                denominator: 3,
+            },
+        },
+    );
+
+    let amount: i128 = 1_000;
+    let salt = Bytes::from_slice(&env, b"fee_router_overallocated_split");
+    let commitment = client.deposit(&token_id, &amount, &owner, &salt, &0, &None);
+
+    let result = client.try_withdraw(&token_id, &amount, &commitment, &owner, &salt);
+    assert!(matches!(result, Ok(Err(_)) | Err(_)));
+    assert_eq!(
+        client.get_commitment_state(&commitment),
+        Some(EscrowStatus::Pending)
     );
 }

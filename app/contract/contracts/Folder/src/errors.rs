@@ -10,7 +10,7 @@ use soroban_sdk::contracterror;
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum  RustAcademyError {
+pub enum RustAcademyError {
     // Validation failures (100-199)
     InvalidAmount = 100,
     InvalidSalt = 101,
@@ -19,6 +19,10 @@ pub enum  RustAcademyError {
     Unauthorized = 200,
     AlreadyInitialized = 201,
     InsufficientRole = 202,
+    /// The stored admin/role snapshot is internally inconsistent.
+    InvalidRoleState = 203,
+    /// No pending admin transfer is available to accept or cancel.
+    NoPendingAdminTransfer = 204,
     // State, escrow, and commitment violations (300-399)
     ContractPaused = 300,
     PrivacyAlreadySet = 301,
@@ -57,6 +61,14 @@ pub enum  RustAcademyError {
     ArbiterAlreadyVoted = 320,
     /// Insufficient arbiter votes to reach the threshold for resolution.
     InsufficientVotes = 321,
+    /// Fee ratios or denominators are invalid for the configured payout split.
+    InvalidFeeConfiguration = 322,
+    /// The configured fee split exceeds the available fee budget.
+    FeeSplitExceedsTotal = 323,
+    /// Dispute resolution timeout has not yet elapsed.
+    DisputeNotExpired = 324,
+    /// No dispute expiry metadata exists for this escrow.
+    NoDisputeExpiry = 325,
     // Stealth address errors (400-499)
     /// Derived stealth address does not match the provided one.
     StealthAddressMismatch = 400,

@@ -61,6 +61,12 @@ var SorobanEventParser = /** @class */ (function () {
                 this.logger.warn("Unsupported ".concat(layout.eventName, " schema version ").concat(schemaVersion));
                 return null;
             }
+            var contractLedgerSequence = this.extractLedgerSequenceFromData(dataVal);
+            if (contractLedgerSequence !== undefined && contractLedgerSequence !== raw.ledger) {
+                this.logger.warn("Replay metadata mismatch for ".concat(layout.eventName, " paging_token=").concat(raw.paging_token, ": ") +
+                    "contract_ledger_sequence=".concat(contractLedgerSequence, " but Horizon ledger=").concat(raw.ledger, ". ") +
+                    "Event will still be parsed; investigate potential replay tampering.");
+            }
             var base = {
                 schemaVersion: schemaVersion,
                 topicNamespace: layout.topicNamespace,
@@ -68,6 +74,7 @@ var SorobanEventParser = /** @class */ (function () {
                 ledgerSequence: raw.ledger,
                 pagingToken: raw.paging_token,
                 contractTimestamp: this.extractTimestampFromData(dataVal),
+                contractLedgerSequence: contractLedgerSequence,
             };
             switch (layout.eventName) {
                 case "EscrowDeposited":
@@ -248,6 +255,18 @@ var SorobanEventParser = /** @class */ (function () {
             // ignore
         }
         return 0n;
+    };
+    SorobanEventParser.prototype.extractLedgerSequenceFromData = function (data) {
+        try {
+            var map = this.dataToMap(data);
+            if (map["ledger_sequence"]) {
+                return Number((0, stellar_sdk_1.scValToNative)(map["ledger_sequence"]));
+            }
+        }
+        catch (_a) {
+            // Optional field — absent in legacy v1 events
+        }
+        return undefined;
     };
     return SorobanEventParser;
 }());

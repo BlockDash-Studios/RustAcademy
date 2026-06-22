@@ -23,6 +23,7 @@ import {
 } from "../events/contract-registry.events";
 import { ContractChangeWebhookService } from "./contract-change-webhook.service";
 import { ContractChangeWebhookDispatcher } from "./contract-change-webhook.dispatcher";
+import { ContractWritePolicyService } from "../feature-flags/contract-write-policy.service";
 
 interface RegistryRecord {
   name: string;
@@ -72,6 +73,7 @@ export class ContractRegistryService {
     private readonly eventEmitter: EventEmitter2,
     private readonly contractChangeWebhookService: ContractChangeWebhookService,
     private readonly webhookDispatcher: ContractChangeWebhookDispatcher,
+    private readonly contractWritePolicyService: ContractWritePolicyService,
   ) {
     this.expectedContracts = (
       process.env.CONTRACT_REGISTRY_EXPECTED_SET ?? " RustAcademy"
@@ -117,6 +119,18 @@ export class ContractRegistryService {
     actor = "deployment_automation",
   ) {
     const startTime = Date.now();
+    
+    // Service-level policy check for defense in depth
+    await this.contractWritePolicyService.assertWritePermission({
+      userId: actor,
+      operation: 'contract_registry.publish',
+      additionalContext: {
+        deploymentId: dto.deploymentId,
+        contractCount: dto.contracts.length,
+        contractNames: dto.contracts.map(c => c.name),
+      },
+    });
+    
     this.validatePassphrase(dto.networkPassphrase);
     this.validateContractSet(dto.contracts);
 
@@ -344,6 +358,16 @@ async finalizeDualRead(
 ) {
   const startTime = Date.now();
   const targetName = dto.name.toLowerCase();
+  
+  // Service-level policy check for defense in depth
+  await this.contractWritePolicyService.assertWritePermission({
+    userId: actor,
+    operation: 'contract_registry.rollback',
+    contractName: targetName,
+    additionalContext: {
+      targetVersion: dto.version,
+    },
+  });
 
   try {
     const result = await this.retryOperation(

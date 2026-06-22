@@ -221,6 +221,22 @@ stellar contract deploy \
 
 ---
 
+## Metadata API
+
+The `Folder` contract exposes a stable, read-only metadata surface for tooling, backends, and indexers (Issue #50). All calls are non-mutating and require no authorization.
+
+| Method | Purpose |
+|--------|---------|
+| `get_deployment_metadata()` | Contract version, event schema version, recorded WASM hash, and contract ID. |
+| `get_contract_health()` | Health status (`healthy`, `paused`, `upgrading`, `emergency`). |
+| `get_feature_flags()` | Feature flags supported by this build (e.g. dispute timeout, upgrade gating, stealth). |
+| `get_upgrade_state()` | Upgrade window and in-progress state. |
+| `get_supported_versions()` | Supported contract and event schema version ranges. |
+| `check_schema_compatibility(contract_version, event_schema_version)` | Whether a caller-supplied version pair is compatible. |
+| `get_pause_flags()` | Granular pause bitmask. |
+
+Tooling should call `check_schema_compatibility` before sending writes to avoid version mismatches.
+
 ## Testing Requirements
 
 All contracts must maintain:

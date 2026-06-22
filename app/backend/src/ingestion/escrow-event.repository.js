@@ -112,6 +112,7 @@ var EscrowEventRepository = function () {
                                 tx_hash: event.txHash,
                                 ledger_sequence: event.ledgerSequence,
                                 paging_token: event.pagingToken,
+                                contract_ledger_sequence: event.contractLedgerSequence !== undefined ? event.contractLedgerSequence : null,
                                 expires_at: event.eventType === "EscrowDeposited"
                                     ? new Date(Number(event.expiresAt) * 1000).toISOString()
                                     : null,

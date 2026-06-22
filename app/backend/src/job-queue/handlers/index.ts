@@ -9,3 +9,4 @@ export { RecurringPaymentHandler } from './recurring-payment.handler';
 export { ExportGenerationHandler } from './export-generation.handler';
 export { ReconciliationHandler } from './reconciliation.handler';
 export { StellarReconnectHandler } from './stellar-reconnect.handler';
+export { RefundJobHandler, PermanentRefundError } from './refund-job.handler';

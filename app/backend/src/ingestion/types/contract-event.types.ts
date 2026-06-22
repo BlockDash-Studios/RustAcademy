@@ -23,6 +23,14 @@ export interface BaseContractEvent {
   ledgerSequence: number;
   pagingToken: string;
   contractTimestamp: bigint;
+  /**
+   * Ledger sequence reported by the contract itself (from `env.ledger().sequence()`).
+   * Present in v2+ events that include the `ledger_sequence` payload field.
+   * Backends SHOULD validate this matches the Horizon-reported `ledgerSequence` to
+   * detect tampered or mis-routed event payloads. Use together with `txHash` and
+   * `pagingToken` as a complete, stable deduplication key for replay safety.
+   */
+  contractLedgerSequence?: number;
 }
 
 export interface EscrowDepositedEvent extends BaseContractEvent {

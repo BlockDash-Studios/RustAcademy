@@ -17,12 +17,19 @@ import {
   isLinkRefundable,
 } from './refunds.eligibility';
 import { applyCursorFilter, paginateResult, CursorPayload } from '../common/pagination/cursor.util';
+import { JobQueueService } from '../job-queue/job-queue.service';
+import { JobType } from '../job-queue/types';
+import { AppConfigService } from '../config';
 
 @Injectable()
 export class RefundsService {
   private readonly logger = new Logger(RefundsService.name);
 
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly jobQueue: JobQueueService,
+    private readonly config: AppConfigService,
+  ) {}
 
   async initiateRefund(
     dto: InitiateRefundDto,
@@ -88,16 +95,34 @@ export class RefundsService {
     const client = this.supabaseService.getClient();
     const { data, error } = await client
       .from('refund_attempts')
-      .update({ status: 'approved', updated_at: new Date().toISOString() })
+      .update({ status: 'submitted', updated_at: new Date().toISOString(), last_attempted_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single();
 
     if (error) throw error;
 
+    const updatedRecord = data as RefundAttemptRecord;
+
     await this.appendAudit(id, actorId, 'approved', null, null);
-    this.logger.log(`Refund approved id=${id}`);
-    return data as RefundAttemptRecord;
+    this.logger.log(`Refund approved and submitted id=${id}`);
+
+    const payload = {
+      refundId: id,
+      idempotencyKey: record.idempotency_key,
+      entityType: record.entity_type,
+      entityId: record.entity_id,
+    };
+
+    try {
+      await this.jobQueue.enqueue(JobType.REFUND, payload);
+      this.logger.log(`Refund job enqueued for id=${id}`);
+    } catch (enqueueError) {
+      this.logger.error(`Failed to enqueue refund job: ${enqueueError.message}`);
+      throw enqueueError;
+    }
+
+    return updatedRecord;
   }
 
   async rejectRefund(
@@ -147,6 +172,10 @@ export class RefundsService {
     return paginateResult((data ?? []) as RefundAttemptRecord[], limit, 'created_at');
   }
 
+  async getRefundByIdentity(id: string): Promise<RefundAttemptRecord> {
+    return this.fetchRefundById(id);
+  }
+
   async getRefundByIdempotencyKey(
     key: string,
   ): Promise<RefundAttemptRecord | null> {
@@ -165,7 +194,7 @@ export class RefundsService {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  private async getRefundById(id: string): Promise<RefundAttemptRecord> {
+  private async fetchRefundById(id: string): Promise<RefundAttemptRecord> {
     const client = this.supabaseService.getClient();
     const { data, error } = await client
       .from('refund_attempts')
@@ -178,6 +207,10 @@ export class RefundsService {
       throw new NotFoundException({ error: 'REFUND_NOT_FOUND', message: `Refund ${id} not found` });
     }
     return data as RefundAttemptRecord;
+  }
+
+  private async getRefundById(id: string): Promise<RefundAttemptRecord> {
+    return this.fetchRefundById(id);
   }
 
   private async assertEligible(

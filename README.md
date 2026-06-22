@@ -135,12 +135,12 @@ RustAcademy is unique in the Stellar ecosystem — no similar project combines R
 ### Backend
 | Tech | Purpose |
 |------|---------|
-| Node.js + Fastify | REST API and WebSocket server |
+| NestJS | REST API and WebSocket server |
 | PostgreSQL (Supabase) | User data, courses, submissions |
 | Redis | Real-time pub/sub, sessions, rate limiting |
 | Rust (WASM) | Server-side code execution sandbox |
-| BullMQ | Background jobs (grading queue, payouts) |
-| Prisma ORM | Type-safe database access |
+| Custom Job Queue | Background jobs (JobRepository, JobRegistry, etc.) |
+| Supabase client (@supabase/supabase-js) | Database access |
 
 ### AI & Voice
 | Tech | Purpose |
@@ -194,24 +194,15 @@ rust-academy/
 │   │   ├── package.json
 │   │   └── next.config.ts
 │   │
-│   └── api/                          # Fastify backend API
+│   └── backend/                      # NestJS backend API
 │       ├── src/
-│       │   ├── routes/               # API route handlers
-│       │   │   ├── auth/             # Authentication routes
-│       │   │   ├── courses/          # Course CRUD
-│       │   │   ├── tasks/            # Task submission & grading
-│       │   │   ├── social/           # Feed, posts, comments
-│       │   │   ├── chat/             # WebSocket chat
-│       │   │   ├── wallet/           # Reward triggers
-│       │   │   └── ai/               # AI proxy routes
-│       │   ├── services/             # Business logic
-│       │   │   ├── grading/          # AI + manual grading engine
-│       │   │   ├── rewards/          # XLM reward distribution
-│       │   │   ├── stellar/          # Stellar SDK integration
-│       │   │   └── ai/               # Claude API integration
-│       │   ├── jobs/                 # BullMQ background workers
-│       │   ├── db/                   # Prisma schema & migrations
-│       │   └── lib/                  # Shared utilities
+│       │   ├── contracts/            # Smart contracts integration
+│       │   ├── ingestion/            # Data ingestion processing
+│       │   ├── stellar/              # Stellar SDK integration
+│       │   ├── soroban-tooling/      # Soroban utilities
+│       │   ├── job-queue/            # Custom job queue system
+│       │   ├── supabase/             # Supabase client integration
+│       │   └── common/               # Shared utilities
 │       └── package.json
 │
 ├── packages/
@@ -299,10 +290,10 @@ cp apps/api/.env.example apps/api/.env
 docker-compose up -d
 
 # Run database migrations
-pnpm --filter api db:migrate
+pnpm --filter backend db:migrate
 
 # Seed the database with sample courses
-pnpm --filter api db:seed
+pnpm --filter backend db:seed
 
 # Build shared packages
 pnpm build --filter ./packages/*
@@ -338,7 +329,7 @@ pnpm dev
 
 # Or run individually:
 pnpm --filter web dev       # Frontend → http://localhost:3000
-pnpm --filter api dev       # Backend  → http://localhost:4000
+pnpm --filter backend dev   # Backend  → http://localhost:4000
 ```
 
 ### Building Soroban Smart Contracts
@@ -369,7 +360,7 @@ pnpm test
 pnpm --filter web test
 
 # Backend tests (Vitest)
-pnpm --filter api test
+pnpm --filter backend test
 
 # Smart contract tests (Rust)
 cd packages/contracts && cargo test
@@ -390,7 +381,7 @@ pnpm build
 pnpm --filter web build
 
 # Backend only
-pnpm --filter api build
+pnpm --filter backend build
 
 # Start production servers
 pnpm start

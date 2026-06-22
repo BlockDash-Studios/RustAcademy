@@ -85,7 +85,7 @@ async function bootstrap() {
   // Validate critical configuration at startup
   validateCriticalConfig(configService, logger);
 
-  // Log configuration summary (safe, no secrets)
+  // Log configuration summary (safe, no secrets — raw key values excluded)
   const envSummary = createConfigSummary({
     SUPABASE_URL: configService.supabaseUrl,
     SUPABASE_ANON_KEY: configService.supabaseAnonKey,
@@ -93,7 +93,7 @@ async function bootstrap() {
     HORIZON_URL: configService.horizonUrl,
     SOROBAN_RPC_URL: configService.sorobanRpcUrl,
     STELLAR_EXPLORER_URL: configService.stellarExplorerUrl,
-    STELLAR_SECRET_KEY: configService.stellarSecretKey,
+    PAYMENT_SIGNING: configService.isPaymentSigningConfigured ? 'configured' : 'not-configured',
     STELLAR_PUBLIC_KEY: configService.stellarPublicKey,
   });
   logger.log(envSummary);

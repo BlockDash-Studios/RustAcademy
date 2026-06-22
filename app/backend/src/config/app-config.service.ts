@@ -236,24 +236,18 @@ export class AppConfigService {
   }
 
   /**
-   * Stellar secret key (optional). Required for signing transactions.
-   */
-  get stellarSecretKey(): string | undefined {
-    return this.configService.get("STELLAR_SECRET_KEY", { infer: true });
-  }
-
-  /**
-   * Stellar public key (optional). The public key corresponding to the secret key.
+   * Stellar public key (optional). The public key corresponding to the signing key.
    */
   get stellarPublicKey(): string | undefined {
     return this.configService.get("STELLAR_PUBLIC_KEY", { infer: true });
   }
 
   /**
-   * Check if payment signing is configured (has secret key)
+   * True when STELLAR_SECRET_KEY is set and payment signing is available.
+   * Use StellarSigningService (not this getter) to perform actual signing.
    */
   get isPaymentSigningConfigured(): boolean {
-    return !!this.stellarSecretKey;
+    return !!this.configService.get("STELLAR_SECRET_KEY", { infer: true });
   }
 
   /**

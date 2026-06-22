@@ -1,6 +1,6 @@
 //! 플랫폼 fee calculation logic.
 
-use crate::{oracle, storage};
+use crate::{errors::RustAcademyError, oracle, storage, types::FeeRatio};
 use soroban_sdk::{Address, Env};
 
 /// Calculate the platform fee for a given amount using the global config.
@@ -59,4 +59,18 @@ pub fn calculate_fee_for_token(env: &Env, token: &Address, amount: i128) -> i128
     }
     // Fall back to oracle + global bps path.
     calculate_fee(env, amount)
+}
+
+/// Apply a prescaled ratio to an amount.
+pub fn apply_fee_ratio(amount: i128, ratio: &FeeRatio) -> Result<i128, RustAcademyError> {
+    if amount <= 0 || ratio.numerator == 0 {
+        return Ok(0);
+    }
+
+    ratio.validate()?;
+
+    let scaled = amount
+        .checked_mul(ratio.numerator as i128)
+        .ok_or(RustAcademyError::InvalidFeeConfiguration)?;
+    Ok(scaled / ratio.denominator as i128)
 }

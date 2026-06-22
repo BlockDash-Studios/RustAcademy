@@ -21,6 +21,7 @@ export class PrivacyEventRepository {
           tx_hash: event.txHash,
           ledger_sequence: event.ledgerSequence,
           paging_token: event.pagingToken,
+          contract_ledger_sequence: event.contractLedgerSequence ?? null,
         },
         { onConflict: "tx_hash,event_type,owner", ignoreDuplicates: true },
       );

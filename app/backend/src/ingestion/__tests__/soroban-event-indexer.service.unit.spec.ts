@@ -111,7 +111,7 @@ describe("SorobanEventIndexerService - Resiliency & Hardening", () => {
         _embedded: { records: recordsPage1 },
         _links: { next: { href: "https://horizon.stellar.org/contract_events?cursor=100-1" } },
       }),
-    } as Response);
+    } as unknown as Response);
 
     await service.indexLedgerRange(CONTRACT_ID, 100, 105, undefined, false);
 
@@ -143,7 +143,7 @@ describe("SorobanEventIndexerService - Resiliency & Hardening", () => {
         _embedded: { records: recordsPage2 },
         _links: {},
       }),
-    } as Response);
+    } as unknown as Response);
 
     const recoveryResult = await service.indexLedgerRange(CONTRACT_ID, 100, 105, undefined, false);
     expect(recoveryResult.processed).toBe(1);
@@ -170,7 +170,7 @@ describe("SorobanEventIndexerService - Resiliency & Hardening", () => {
       formData: jest.fn(),
       text: jest.fn(),
       json: async () => ({ _embedded: { records }, _links: {} }),
-    } as Response);
+    } as unknown as Response);
 
     await service.indexLedgerRange(CONTRACT_ID, 100, 105, {
       previousContractId: prevContract,

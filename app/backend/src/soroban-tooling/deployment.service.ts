@@ -7,6 +7,7 @@ import { AppConfigService } from '../config';
 import { ContractRegistryService } from '../contracts/contract-registry.service';
 import { DeploymentPlanDto } from './dto/testnet-tooling.dto';
 import { FundingHelperService } from './funding-helper.service';
+import { ContractWritePolicyService } from '../feature-flags/contract-write-policy.service';
 
 @Injectable()
 export class DeploymentService {
@@ -14,9 +15,21 @@ export class DeploymentService {
     private readonly configService: AppConfigService,
     private readonly fundingHelperService: FundingHelperService,
     private readonly contractRegistryService: ContractRegistryService,
+    private readonly contractWritePolicyService: ContractWritePolicyService,
   ) {}
 
   async planDeployment(dto: DeploymentPlanDto) {
+    // Service-level policy check for defense in depth
+    await this.contractWritePolicyService.assertWritePermission({
+      userId: 'deployment_service',
+      operation: 'soroban.deployment.plan',
+      network: dto.network,
+      additionalContext: {
+        dryRun: dto.dryRun ?? true,
+        contractCount: dto.contracts.length,
+        contractNames: dto.contracts.map(c => c.name),
+      },
+    });
     const dryRun = dto.dryRun ?? true;
     const publishRegistry = dto.publishRegistry ?? true;
     const funding = dto.adminPublicKey

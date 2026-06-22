@@ -179,7 +179,7 @@ export class EnvironmentParityService implements OnModuleInit {
       hasIssue = true;
     }
 
-    if (this.config.isProduction && !this.config.stellarSecretKey) {
+    if (this.config.isProduction && !this.config.isPaymentSigningConfigured) {
       checks.push("STELLAR_SECRET_KEY missing in production");
       hasIssue = true;
     }

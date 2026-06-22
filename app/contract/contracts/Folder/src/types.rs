@@ -2,7 +2,37 @@
 //!
 //! See [`crate::storage`] for the storage schema and key layout.
 
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use crate::errors::RustAcademyError;
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Vec};
+
+/// Explicit fee ratio used to prescale a payout share.
+///
+/// A ratio of `0 / 1` disables the share. When `numerator > 0`, `denominator`
+/// must also be non-zero and the ratio must not exceed `1.0`.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FeeRatio {
+    pub numerator: u32,
+    pub denominator: u32,
+}
+
+impl FeeRatio {
+    /// Returns `true` when the ratio is configured to pay out a non-zero share.
+    pub fn is_active(&self) -> bool {
+        self.numerator > 0
+    }
+
+    /// Validate that the ratio is usable for fee distribution.
+    pub fn validate(&self) -> Result<(), RustAcademyError> {
+        if self.numerator == 0 {
+            return Ok(());
+        }
+        if self.denominator == 0 || self.numerator > self.denominator {
+            return Err(RustAcademyError::InvalidFeeConfiguration);
+        }
+        Ok(())
+    }
+}
 
 /// Escrow entry status.
 ///
@@ -112,6 +142,37 @@ pub struct DisputeVote {
     pub voted_at: u64,
 }
 
+/// Deterministic outcome for a dispute that has passed its resolution timeout.
+///
+/// Used by the auto-resolution path to transition stale disputes into a terminal
+/// state without requiring an arbiter vote.
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DisputeExpiryAction {
+    /// Refund the escrowed funds back to the original owner.
+    RefundOwner,
+    /// Pay the escrowed funds to the assigned arbiter.
+    PayArbiter,
+}
+
+impl Default for DisputeExpiryAction {
+    fn default() -> Self {
+        DisputeExpiryAction::RefundOwner
+    }
+}
+
+/// Dispute timeout metadata stored per escrow.
+///
+/// Recorded when a dispute is opened and consulted during auto-resolution.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeExpiry {
+    /// Ledger timestamp after which the dispute may be auto-resolved.
+    pub expires_at: u64,
+    /// Deterministic action to take once the timeout is reached.
+    pub action: DisputeExpiryAction,
+}
+
 /// Parameters for registering an ephemeral key (stealth deposit).
 ///
 /// Bundles the 8 arguments of `register_ephemeral_key` into a single struct
@@ -183,8 +244,12 @@ pub struct FeeConfig {
 /// persistent storage. When present for a token, overrides the global [`FeeConfig`] for
 /// that token only. A value of `fee_bps = 0` explicitly disables fees for that token even
 /// if the global config is non-zero.
+///
+/// The explicit `*_fee` ratios are optional and default to zero. When any of
+/// them are set, the router uses the prescaled ratios instead of the legacy
+/// `arbiter_bps` split for that token.
 #[contracttype]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PerAssetFeeConfig {
     /// Fee in basis points for this specific token. Overrides the global `FeeConfig`.
     /// Range: 0 (no fee) to 10000 (100%).
@@ -193,6 +258,26 @@ pub struct PerAssetFeeConfig {
     /// 0 = no arbiter split — entire fee goes to the collector.
     /// Example: fee_bps=200 (2%), arbiter_bps=2000 (20%) → arbiter gets 0.4%, collector 1.6%.
     pub arbiter_bps: u32,
+    /// Explicit arbiter payout share, using a prescaled numerator / denominator pair.
+    pub arbiter_fee: FeeRatio,
+    /// Explicit platform payout share, using a prescaled numerator / denominator pair.
+    pub platform_fee: FeeRatio,
+    /// Explicit collector payout share, using a prescaled numerator / denominator pair.
+    pub collector_fee: FeeRatio,
+}
+
+impl PerAssetFeeConfig {
+    /// Validate the configuration before persisting it.
+    pub fn validate(&self) -> Result<(), RustAcademyError> {
+        if self.fee_bps > 10_000 || self.arbiter_bps > 10_000 {
+            return Err(RustAcademyError::InvalidFeeConfiguration);
+        }
+
+        self.arbiter_fee.validate()?;
+        self.platform_fee.validate()?;
+        self.collector_fee.validate()?;
+        Ok(())
+    }
 }
 
 /// Oracle fee configuration for dynamic USD-based fee collection.
@@ -239,6 +324,93 @@ pub struct DeploymentMetadata {
     /// On-chain address of this contract instance.
     /// Binds the metadata to a specific deployment and network.
     pub contract_id: Address,
+}
+
+/// Contract health summary returned by read-only metadata probes.
+///
+/// This struct is intentionally non-mutating: all values are derived from
+/// existing contract state and can be called by anyone.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractHealth {
+    /// Human-readable status symbol, e.g. `Symbol::new(env, "healthy")`.
+    pub status: Symbol,
+    /// True when the legacy global pause flag is set.
+    pub paused: bool,
+    /// True when the contract is in emergency mode.
+    pub emergency_mode: bool,
+    /// True when an upgrade is currently in progress.
+    pub upgrade_in_progress: bool,
+}
+
+/// Feature flags describing the capabilities supported by this contract build.
+///
+/// Consumers can use these flags to detect whether optional flows (e.g. upgrade
+/// gating, stealth escrows) are available before sending writes.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FeatureFlags {
+    pub upgrade_gating: bool,
+    pub privacy: bool,
+    pub partial_payment: bool,
+    pub stealth: bool,
+    pub fee_router: bool,
+    pub oracle_fees: bool,
+    pub hooks: bool,
+}
+
+/// State of the upgrade gating mechanism.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradeState {
+    /// Whether an upgrade is in progress (between start_upgrade and complete_upgrade).
+    pub in_progress: bool,
+    /// Version recorded during start_upgrade, if any.
+    pub pending_version: Option<u32>,
+    /// WASM hash recorded during start_upgrade, if any.
+    pub pending_wasm_hash: Option<BytesN<32>>,
+    /// Whether the current ledger timestamp is within the active upgrade window.
+    pub window_active: bool,
+    /// Start of the upgrade window (epoch seconds). 0 means no window set.
+    pub window_start: u64,
+    /// End of the upgrade window (epoch seconds). 0 means no upper bound.
+    pub window_end: u64,
+}
+
+/// Versions supported by the current deployment.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SupportedVersions {
+    /// Current stored contract version.
+    pub contract_version: u32,
+    /// Current event schema version.
+    pub event_schema_version: u32,
+    /// Minimum contract version this build can migrate from.
+    pub min_contract_version: u32,
+    /// Minimum event schema version this build can emit.
+    pub min_event_schema_version: u32,
+    /// All event schema versions supported by this build (sorted ascending).
+    pub supported_event_versions: Vec<u32>,
+}
+
+/// Result of a schema-compatibility probe against a caller-supplied version pair.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SchemaCompatibility {
+    /// Whether the requested contract version is supported by this deployment.
+    pub contract_compatible: bool,
+    /// Whether the requested event schema version is supported by this deployment.
+    pub event_compatible: bool,
+    /// True only when both requested versions are compatible.
+    pub overall_compatible: bool,
+    /// Current stored contract version.
+    pub current_contract: u32,
+    /// Current event schema version.
+    pub current_event: u32,
+    /// Requested contract version from the caller.
+    pub requested_contract: u32,
+    /// Requested event schema version from the caller.
+    pub requested_event: u32,
 }
 
 /// Hook event kinds used for external callbacks.

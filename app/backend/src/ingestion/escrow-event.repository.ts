@@ -33,6 +33,7 @@ export class EscrowEventRepository {
       tx_hash: event.txHash,
       ledger_sequence: event.ledgerSequence,
       paging_token: event.pagingToken,
+      contract_ledger_sequence: event.contractLedgerSequence ?? null,
       expires_at:
         event.eventType === "EscrowDeposited"
           ? new Date(

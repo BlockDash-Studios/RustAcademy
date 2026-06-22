@@ -99,7 +99,25 @@ export interface ReconciliationPayload {
 export interface StellarReconnectPayload {
   /** Contract ID to reconnect to */
   contractId: string;
-  
+
   /** Last cursor position before disconnection */
   lastCursor: string;
+}
+
+/**
+ * Refund job payload
+ * Used for executing on-chain refund operations via Soroban
+ */
+export interface RefundJobPayload {
+  /** Refund attempt ID */
+  refundId: string;
+
+  /** Idempotency key for preventing duplicate submissions */
+  idempotencyKey: string;
+
+  /** Entity type (payment, escrow, or link) */
+  entityType: string;
+
+  /** Entity ID to refund */
+  entityId: string;
 }

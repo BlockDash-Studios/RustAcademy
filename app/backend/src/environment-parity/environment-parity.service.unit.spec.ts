@@ -16,7 +16,7 @@ describe("EnvironmentParityService", () => {
       isProduction: false,
       isStaging: false,
       productionBaseUrl: undefined,
-      stellarSecretKey: undefined,
+      isPaymentSigningConfigured: false,
       supabaseUrl: "https://test.supabase.co",
       supabaseAnonKey: "test-key",
     };

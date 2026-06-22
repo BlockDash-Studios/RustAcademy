@@ -63,8 +63,8 @@ export class RefundsController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(NetworkSafetyGuard)
   @RequiresFlag('mainnet.refunds')
-  @ApiOperation({ summary: 'Approve a pending refund' })
-  @ApiResponse({ status: 200, description: 'Refund approved' })
+  @ApiOperation({ summary: 'Approve a pending refund and submit to on-chain' })
+  @ApiResponse({ status: 200, description: 'Refund submitted for processing' })
   @ApiResponse({ status: 409, description: 'Refund is not in pending state' })
   @ApiResponse({ status: 503, description: 'Blocked by mainnet safety gate' })
   async approve(
@@ -110,5 +110,13 @@ export class RefundsController {
     }
     const safeLimit = clampLimit(limit);
     return this.refundsService.listRefunds(parsedCursor, safeLimit);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get refund details by ID' })
+  @ApiResponse({ status: 200, description: 'Refund attempt details including transaction hash and retryability' })
+  @ApiResponse({ status: 404, description: 'Refund not found' })
+  async getById(@Param('id') id: string) {
+    return this.refundsService.getRefundByIdentity(id);
   }
 }

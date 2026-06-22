@@ -36,8 +36,18 @@
 //! All transfers use `soroban_sdk::token::Client` which works identically for
 //! native XLM and SAC tokens.
 
-use crate::{fee, storage};
+use crate::{errors::RustAcademyError, fee, storage};
 use soroban_sdk::{token, Address, Env};
+
+/// Fee breakdown returned by [`route_payout`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FeeBreakdown {
+    pub net_payout: i128,
+    pub total_fee: i128,
+    pub arbiter_fee: i128,
+    pub platform_fee: i128,
+    pub collector_fee: i128,
+}
 
 // ---------------------------------------------------------------------------
 // Resolution helpers
@@ -56,13 +66,21 @@ pub fn active_collector(env: &Env) -> Option<Address> {
     storage::get_platform_wallet(env)
 }
 
-/// Resolve arbiter split basis-points for `token`.
-///
-/// Returns `0` if no per-asset config is set or `arbiter_bps` is explicitly 0.
-pub fn resolve_arbiter_bps(env: &Env, token: &Address) -> u32 {
-    storage::get_per_asset_fee(env, token)
-        .map(|c| c.arbiter_bps)
-        .unwrap_or(0)
+fn uses_explicit_fee_distribution(config: &crate::types::PerAssetFeeConfig) -> bool {
+    config.arbiter_fee.is_active()
+        || config.platform_fee.is_active()
+        || config.collector_fee.is_active()
+}
+
+fn transfer_if_positive(
+    env: &Env,
+    token_client: &token::Client,
+    recipient: &Address,
+    amount: i128,
+) {
+    if amount > 0 {
+        token_client.transfer(&env.current_contract_address(), recipient, &amount);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -112,40 +130,88 @@ pub fn route_payout(
     recipient: &Address,
     amount: i128,
     arbiter: Option<&Address>,
-) -> (i128, i128) {
+) -> Result<FeeBreakdown, RustAcademyError> {
     if amount <= 0 {
-        return (amount, 0);
+        return Ok(FeeBreakdown {
+            net_payout: amount,
+            total_fee: 0,
+            arbiter_fee: 0,
+            platform_fee: 0,
+            collector_fee: 0,
+        });
     }
 
     // Resolve total fee using per-asset → oracle → global priority.
     let total_fee = fee::calculate_fee_for_token(env, token, amount);
     let net_payout = amount.saturating_sub(total_fee);
-
     let token_client = token::Client::new(env, token);
-    token_client.transfer(&env.current_contract_address(), recipient, &net_payout);
+    let per_asset = storage::get_per_asset_fee(env, token);
 
-    if total_fee > 0 {
-        let arbiter_bps = resolve_arbiter_bps(env, token);
-        let arbiter_fee = if arbiter_bps > 0 && arbiter.is_some() {
-            // Arbiter share is a proportion of the total fee.
-            (total_fee * arbiter_bps as i128) / 10000
-        } else {
-            0
-        };
-        let platform_fee = total_fee.saturating_sub(arbiter_fee);
+    let mut arbiter_fee = 0;
+    let mut platform_fee = 0;
+    let mut collector_fee = total_fee;
 
-        if arbiter_fee > 0 {
-            if let Some(arb) = arbiter {
-                token_client.transfer(&env.current_contract_address(), arb, &arbiter_fee);
+    if let Some(config) = per_asset {
+        if uses_explicit_fee_distribution(&config) {
+            let arbiter_share = fee::apply_fee_ratio(total_fee, &config.arbiter_fee)?;
+            arbiter_fee = if arbiter.is_some() { arbiter_share } else { 0 };
+            platform_fee = fee::apply_fee_ratio(total_fee, &config.platform_fee)?;
+            collector_fee = fee::apply_fee_ratio(total_fee, &config.collector_fee)?;
+
+            if arbiter.is_none() {
+                collector_fee = collector_fee.saturating_add(arbiter_share);
             }
-        }
 
-        if platform_fee > 0 {
-            if let Some(collector) = active_collector(env) {
-                token_client.transfer(&env.current_contract_address(), &collector, &platform_fee);
+            let distributed = arbiter_fee
+                .checked_add(platform_fee)
+                .and_then(|value| value.checked_add(collector_fee))
+                .ok_or(RustAcademyError::InvalidFeeConfiguration)?;
+
+            if distributed > total_fee {
+                return Err(RustAcademyError::FeeSplitExceedsTotal);
+            }
+
+            collector_fee = collector_fee.saturating_add(total_fee - distributed);
+        } else {
+            let arbiter_bps = config.arbiter_bps;
+            if arbiter_bps > 0 && arbiter.is_some() {
+                arbiter_fee = (total_fee * arbiter_bps as i128) / 10000;
+                collector_fee = total_fee.saturating_sub(arbiter_fee);
             }
         }
     }
 
-    (net_payout, total_fee)
+    let platform_recipient = storage::get_platform_wallet(env);
+    let active_collector = active_collector(env);
+
+    if let Some(arb) = arbiter {
+        transfer_if_positive(env, &token_client, arb, arbiter_fee);
+    } else if arbiter_fee > 0 {
+        collector_fee = collector_fee.saturating_add(arbiter_fee);
+        arbiter_fee = 0;
+    }
+
+    if let Some(platform) = platform_recipient {
+        transfer_if_positive(env, &token_client, &platform, platform_fee);
+    } else if platform_fee > 0 {
+        collector_fee = collector_fee.saturating_add(platform_fee);
+        platform_fee = 0;
+    }
+
+    if let Some(collector) = active_collector {
+        transfer_if_positive(env, &token_client, &collector, collector_fee);
+    } else if collector_fee > 0 {
+        // No collector is configured; keep the fees in the contract rather than failing
+        // the payout path. This preserves backward-compatible no-op behavior.
+    }
+
+    token_client.transfer(&env.current_contract_address(), recipient, &net_payout);
+
+    Ok(FeeBreakdown {
+        net_payout,
+        total_fee,
+        arbiter_fee,
+        platform_fee,
+        collector_fee,
+    })
 }

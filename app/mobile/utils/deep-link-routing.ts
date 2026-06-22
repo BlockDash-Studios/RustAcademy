@@ -1,7 +1,7 @@
 import { parsePaymentLink } from './parse-payment-link';
 
-const  RustAcademy_HOSTS = [' RustAcademy.to', 'www. RustAcademy.to'];
-const  RustAcademy_SCHEME = ' RustAcademy';
+const RustAcademy_HOSTS = [" RustAcademy.to", "www. RustAcademy.to"];
+const RustAcademy_SCHEME = " RustAcademy";
 
 export interface DeepLinkRoute {
   pathname: string;
@@ -19,7 +19,7 @@ export function parseTransactionDeepLink(
   try {
     const url = new URL(raw);
 
-    if (url.protocol === `${ RustAcademy_SCHEME}:`) {
+    if (url.protocol === `${RustAcademy_SCHEME}:`) {
       const segments = url.pathname
         .replace(/^\/+/, '')
         .split('/')
@@ -35,7 +35,7 @@ export function parseTransactionDeepLink(
 
     if (
       (url.protocol === 'https:' || url.protocol === 'http:') &&
-       RustAcademy_HOSTS.includes(url.hostname)
+      RustAcademy_HOSTS.includes(url.hostname)
     ) {
       const segments = url.pathname
         .replace(/^\/+/, '')
@@ -55,13 +55,13 @@ export function parseTransactionDeepLink(
   return null;
 }
 
-export function is RustAcademyLink(raw: string): boolean {
+export function isRustAcademyLink(raw: string): boolean {
   try {
     const url = new URL(raw);
     return (
-      url.protocol === `${ RustAcademy_SCHEME}:` ||
+      url.protocol === `${RustAcademy_SCHEME}:` ||
       ((url.protocol === 'https:' || url.protocol === 'http:') &&
-         RustAcademy_HOSTS.includes(url.hostname))
+        RustAcademy_HOSTS.includes(url.hostname))
     );
   } catch {
     return false;
@@ -72,12 +72,12 @@ function looksLikePaymentLink(raw: string): boolean {
   try {
     const url = new URL(raw);
 
-    if (url.protocol === `${ RustAcademy_SCHEME}:`) {
+    if (url.protocol === `${RustAcademy_SCHEME}:`) {
       const segments = url.pathname.replace(/^\/+/, '').split('/').filter(Boolean);
       return segments.length === 0 || segments[0] !== 'transaction';
     }
 
-    if ((url.protocol === 'https:' || url.protocol === 'http:') &&  RustAcademy_HOSTS.includes(url.hostname)) {
+    if ((url.protocol === 'https:' || url.protocol === 'http:') && RustAcademy_HOSTS.includes(url.hostname)) {
       const segments = url.pathname.replace(/^\/+/, '').split('/').filter(Boolean);
       return segments.length === 0 || segments[0] !== 'transaction';
     }
@@ -123,11 +123,11 @@ export function resolveDeepLink(raw: string): DeepLinkResolution {
     };
   }
 
-  if (is RustAcademyLink(trimmed)) {
+  if (isRustAcademyLink(trimmed)) {
     return {
       error: looksLikePaymentLink(trimmed)
-        ? paymentResult.error ?? 'Unsupported or expired  RustAcademy link.'
-        : 'Unsupported or expired  RustAcademy link.',
+        ? paymentResult.error ?? 'Unsupported or expired RustAcademy link.'
+        : 'Unsupported or expired RustAcademy link.',
     };
   }
 
