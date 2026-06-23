@@ -66,6 +66,24 @@ pub fn active_collector(env: &Env) -> Option<Address> {
     storage::get_platform_wallet(env)
 }
 
+/// Validate that a fee recipient exists when fees are non-zero.
+///
+/// Returns an error if `fee_amount > 0` but no platform wallet or active
+/// collector is configured. This prevents silent fee loss where fees remain
+/// in the contract without a designated recipient.
+pub fn validate_fee_recipient(env: &Env, fee_amount: i128) -> Result<(), RustAcademyError> {
+    if fee_amount > 0 {
+        let platform_wallet = storage::get_platform_wallet(env);
+        let idx = storage::get_fee_collector_index(env);
+        let rotated_collector = storage::get_fee_collector_at(env, idx);
+        
+        if platform_wallet.is_none() && rotated_collector.is_none() {
+            return Err(RustAcademyError::FeeRecipientRequired);
+        }
+    }
+    Ok(())
+}
+
 fn uses_explicit_fee_distribution(config: &crate::types::PerAssetFeeConfig) -> bool {
     config.arbiter_fee.is_active()
         || config.platform_fee.is_active()
@@ -143,6 +161,10 @@ pub fn route_payout(
 
     // Resolve total fee using per-asset → oracle → global priority.
     let total_fee = fee::calculate_fee_for_token(env, token, amount);
+    
+    // Validate that a fee recipient exists when fees are non-zero.
+    validate_fee_recipient(env, total_fee)?;
+    
     let net_payout = amount.saturating_sub(total_fee);
     let token_client = token::Client::new(env, token);
     let per_asset = storage::get_per_asset_fee(env, token);
