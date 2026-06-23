@@ -63,6 +63,10 @@ pub enum RustAcademyError {
     InsufficientVotes = 321,
     /// Fee ratios or denominators are invalid for the configured payout split.
     InvalidFeeConfiguration = 322,
+    /// Fee basis points exceed the maximum allowed value (10000 = 100%).
+    FeeExceedsMaximum = 329,
+    /// Fee is configured but no valid recipient (platform wallet or collector) is set.
+    FeeRecipientRequired = 330,
     /// Dispute resolution threshold is zero, exceeds arbiter count, or the
     /// arbiters list is empty.
     InvalidThreshold = 326,
