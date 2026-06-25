@@ -620,6 +620,10 @@ pub fn set_fee_config(
 ) -> Result<(), RustAcademyError> {
     require_any_role(env, caller, &[Role::Admin, Role::Operator])?;
 
+    if config.fee_bps > 10_000 {
+        return Err(RustAcademyError::FeeExceedsMaximum);
+    }
+
     storage::set_fee_config(env, &config);
     crate::events::publish_fee_config_changed(env, config.fee_bps);
     Ok(())
@@ -635,7 +639,7 @@ pub fn set_per_asset_fee(
     require_any_role(env, caller, &[Role::Admin, Role::Operator])?;
 
     if config.fee_bps > 10_000 || config.arbiter_bps > 10_000 {
-        return Err(RustAcademyError::InvalidAmount);
+        return Err(RustAcademyError::FeeExceedsMaximum);
     }
     config.validate()?;
 
