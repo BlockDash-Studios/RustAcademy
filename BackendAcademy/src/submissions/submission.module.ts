@@ -13,5 +13,12 @@ import { AuthModule } from '../auth/auth.module';
   controllers: [SubmissionController, TutorReviewController],
   providers: [SubmissionService, TutorReviewService],
   exports: [SubmissionService, TutorReviewService],
+import { GradingResultService } from './grading-result.service';
+import { GradingResultRepository } from './grading-result.repository';
+
+@Module({
+  controllers: [SubmissionController],
+  providers: [SubmissionService, GradingResultService, GradingResultRepository],
+  exports: [SubmissionService, GradingResultService],
 })
 export class SubmissionModule {}
