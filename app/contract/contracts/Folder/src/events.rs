@@ -477,46 +477,55 @@ pub const EVENT_SCHEMAS: &[EventSchema] = &[
 pub const EVENT_COMPATIBILITY: &[EventCompatibility] = &[
     EventCompatibility {
         name: "AdminChanged",
+        event_type_id: ETID_ADMIN_CHANGED,
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[1, EVENT_SCHEMA_VERSION],
     },
     EventCompatibility {
         name: "EscrowDeposited",
+        event_type_id: ETID_ESCROW_DEPOSITED,
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[1, EVENT_SCHEMA_VERSION],
     },
     EventCompatibility {
         name: "EscrowRefunded",
+        event_type_id: ETID_ESCROW_REFUNDED,
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[1, EVENT_SCHEMA_VERSION],
     },
     EventCompatibility {
         name: "EscrowWithdrawn",
+        event_type_id: ETID_ESCROW_WITHDRAWN,
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[1, EVENT_SCHEMA_VERSION],
     },
     EventCompatibility {
         name: "PrivacyToggled",
+        event_type_id: ETID_PRIVACY_TOGGLED,
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[1, EVENT_SCHEMA_VERSION],
     },
     EventCompatibility {
         name: "DisputeTimeoutSet",
+        event_type_id: ETID_DISPUTE_TIMEOUT_SET,
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[EVENT_SCHEMA_VERSION],
     },
     EventCompatibility {
         name: "DisputeAutoResolved",
+        event_type_id: ETID_DISPUTE_AUTO_RESOLVED,
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[EVENT_SCHEMA_VERSION],
     },
     EventCompatibility {
         name: "DisputeExpiryActionSet",
+        event_type_id: ETID_DISPUTE_EXPIRY_ACTION_SET,
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[EVENT_SCHEMA_VERSION],
     },
     EventCompatibility {
         name: "DisputeTimeoutConfigSet",
+        event_type_id: ETID_DISPUTE_TIMEOUT_CONFIG_SET,
         current_version: EVENT_SCHEMA_VERSION,
         compatible_versions: &[EVENT_SCHEMA_VERSION],
     },
@@ -1240,6 +1249,7 @@ pub struct ArbiterVoteCastEvent {
     #[topic]
     pub arbiter: Address,
 
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub resolve_for_owner: bool,

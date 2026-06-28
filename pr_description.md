@@ -10,7 +10,3 @@ This PR introduces a stable `event_type_id` to all contract events, addressing t
 ## Reasoning
 
 By providing a stable identifier for each event, we can ensure that off-chain services can reliably track and process events, even if the event names or payload structures change in the future. This is a crucial step towards improving the long-term maintainability and interoperability of the contract.
-
-## Note
-
-The build environment on the agent's machine is experiencing issues with paths containing spaces, so the changes have not been fully verified by the agent. Manual verification is recommended.
