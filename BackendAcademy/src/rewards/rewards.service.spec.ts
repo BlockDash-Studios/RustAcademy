@@ -517,8 +517,9 @@ describe('RewardsService', () => {
       expect(prog.xp).toBe(hugeXp + 2 * LEVEL_MILESTONE_XP);
     });
   });
+});
 
-  // ---- resetXp ----
+// ---- resetXp ----
 
   describe('resetXp(userId)', () => {
     const USER = 'reset-user';
@@ -535,4 +536,5 @@ describe('RewardsService', () => {
       expect(prog.streak.lastActivityDate).toBeNull();
     });
   });
+});
 });

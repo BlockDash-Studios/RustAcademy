@@ -46,6 +46,8 @@ interface PrizePoolData {
 }
 
 const prizePoolStore = new Map<string, PrizePoolData>();
+
+/**
  * In-memory streak store used until a persistence layer is wired in.
  *
  * Keyed by userId → streak information.
