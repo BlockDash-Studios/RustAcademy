@@ -51,6 +51,7 @@ import { EnvironmentParityModule } from "./environment-parity/environment-parity
 import { IndexerLagModule } from "./indexer-lag";
 import { SupportBundleModule } from "./support-bundle/support-bundle.module";
 import { ChatModule } from "./chat/chat.module";
+import { ReportsModule } from "./reports/reports.module";
 
 type AppImport =
   | Type<unknown>
@@ -77,6 +78,7 @@ type AppImport =
       UsernamesModule,
       MetricsModule,
       AnalyticsModule,
+      ReportsModule,
       LinksModule,
       ScamAlertsModule,
       TransactionsModule,
