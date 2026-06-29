@@ -1,16 +1,16 @@
+import { IsString, IsOptional, IsObject } from 'class-validator';
+
 export class CheckSubmissionDto {
-  /** ID of the learner who made the submission */
+  @IsString()
   learnerId: string;
 
-  /** ID of the task being evaluated */
+  @IsString()
   taskId: string;
 
-  /** The code or answer content submitted by the learner */
+  @IsString()
   content: string;
 
-  /**
-   * Optional metadata that can improve detection accuracy,
-   * e.g. time taken, keystroke cadence, mouse events.
-   */
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, unknown>;
 }

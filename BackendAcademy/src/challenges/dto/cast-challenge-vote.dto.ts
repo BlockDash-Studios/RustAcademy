@@ -1,6 +1,9 @@
-import { ChallengeVoteValue } from '../interfaces/challenge-vote.interface';
+import { IsString, IsIn } from 'class-validator';
 
 export class CastChallengeVoteDto {
+  @IsString()
   userId: string;
-  value: ChallengeVoteValue;
+
+  @IsIn(['up', 'down'])
+  value: 'up' | 'down';
 }
