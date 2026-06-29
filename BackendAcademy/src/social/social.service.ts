@@ -3,6 +3,7 @@ import { CreateSocialPostDto } from './dto/create-social-post.dto';
 import { GetSocialFeedDto } from './dto/get-social-feed.dto';
 import { UpdateModerationDto } from './dto/update-moderation.dto';
 import {
+  FollowResponse,
   ModerationStatus,
   SocialFeedResponse,
   SocialPost,
@@ -11,6 +12,8 @@ import {
 @Injectable()
 export class SocialService {
   private readonly posts = new Map<string, SocialPost>();
+  private readonly userFollowers = new Map<string, Set<string>>();
+  private readonly userFollowing = new Map<string, Set<string>>();
   private idCounter = 1;
 
   createPost(userId: string, dto: CreateSocialPostDto): SocialPost {
@@ -34,14 +37,33 @@ export class SocialService {
   }
 
   getFeed(dto: GetSocialFeedDto): SocialFeedResponse {
-    const { page = 1, limit = 10, status } = dto;
-    const normalizedStatus = status ? this.normalizeStatus(status) : undefined;
+    const { page = 1, limit = 10, status, search, userId, tag } = dto;
+    const normalizedStatus = status
+      ? this.normalizeStatus(status)
+      : 'approved';
 
-    let filteredPosts = Array.from(this.posts.values());
+    let filteredPosts = Array.from(this.posts.values()).filter(
+      (post) => post.moderationStatus === normalizedStatus,
+    );
 
-    if (normalizedStatus) {
+    if (userId) {
+      const normalizedUserId = this.normalizeUserId(userId);
       filteredPosts = filteredPosts.filter(
-        (post) => post.moderationStatus === normalizedStatus,
+        (post) => post.userId === normalizedUserId,
+      );
+    }
+
+    if (search) {
+      const normalizedSearch = this.normalizeSearch(search);
+      filteredPosts = filteredPosts.filter((post) =>
+        post.content.toLowerCase().includes(normalizedSearch),
+      );
+    }
+
+    if (tag) {
+      const normalizedTag = this.normalizeTag(tag);
+      filteredPosts = filteredPosts.filter((post) =>
+        post.content.toLowerCase().includes(`#${normalizedTag}`),
       );
     }
 
@@ -145,6 +167,63 @@ export class SocialService {
     return post;
   }
 
+  followUser(userId: string, targetUserId: string): FollowResponse {
+    const normalizedUserId = this.normalizeUserId(userId);
+    const normalizedTargetUserId = this.normalizeUserId(targetUserId);
+
+    if (normalizedUserId === normalizedTargetUserId) {
+      throw new BadRequestException({
+        error: 'INVALID_FOLLOW_TARGET',
+        message: 'Users cannot follow themselves',
+      });
+    }
+
+    const followers = this.getRelationshipSet(this.userFollowers, normalizedTargetUserId);
+    const following = this.getRelationshipSet(this.userFollowing, normalizedUserId);
+
+    followers.add(normalizedUserId);
+    following.add(normalizedTargetUserId);
+
+    return {
+      followerId: normalizedUserId,
+      targetUserId: normalizedTargetUserId,
+      followersCount: followers.size,
+      followingCount: following.size,
+    };
+  }
+
+  unfollowUser(userId: string, targetUserId: string): FollowResponse {
+    const normalizedUserId = this.normalizeUserId(userId);
+    const normalizedTargetUserId = this.normalizeUserId(targetUserId);
+
+    if (normalizedUserId === normalizedTargetUserId) {
+      throw new BadRequestException({
+        error: 'INVALID_FOLLOW_TARGET',
+        message: 'Users cannot unfollow themselves',
+      });
+    }
+
+    const followers = this.userFollowers.get(normalizedTargetUserId);
+    const following = this.userFollowing.get(normalizedUserId);
+
+    if (!followers?.has(normalizedUserId) || !following?.has(normalizedTargetUserId)) {
+      throw new BadRequestException({
+        error: 'NOT_FOLLOWING',
+        message: 'Cannot unfollow a user that is not currently followed',
+      });
+    }
+
+    followers.delete(normalizedUserId);
+    following.delete(normalizedTargetUserId);
+
+    return {
+      followerId: normalizedUserId,
+      targetUserId: normalizedTargetUserId,
+      followersCount: followers.size,
+      followingCount: following.size,
+    };
+  }
+
   getPendingPosts(): SocialPost[] {
     return Array.from(this.posts.values()).filter(
       (post) => post.moderationStatus === 'pending',
@@ -211,6 +290,13 @@ export class SocialService {
     return normalized;
   }
 
+  private getRelationshipSet(map: Map<string, Set<string>>, key: string): Set<string> {
+    if (!map.has(key)) {
+      map.set(key, new Set<string>());
+    }
+    return map.get(key)!;
+  }
+
   private normalizeStatus(status: string): ModerationStatus {
     const validStatuses: ModerationStatus[] = ['pending', 'approved', 'rejected', 'flagged'];
     if (!validStatuses.includes(status as ModerationStatus)) {
@@ -221,4 +307,14 @@ export class SocialService {
     }
     return status as ModerationStatus;
   }
+
+  private normalizeSearch(search: string): string {
+    return search.trim().toLowerCase();
+  }
+
+  private normalizeTag(tag: string): string {
+    const normalized = tag.trim().toLowerCase();
+    return normalized.startsWith('#') ? normalized.slice(1) : normalized;
+  }
+}
 }

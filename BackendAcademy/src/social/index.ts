@@ -5,6 +5,7 @@ export { CreateSocialPostDto } from './dto/create-social-post.dto';
 export { GetSocialFeedDto } from './dto/get-social-feed.dto';
 export { UpdateModerationDto } from './dto/update-moderation.dto';
 export type {
+  FollowResponse,
   ModerationStatus,
   SocialFeedResponse,
   SocialPost,
