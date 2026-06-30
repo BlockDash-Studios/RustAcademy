@@ -16,6 +16,11 @@ export class MetricsService implements OnModuleInit {
   private sorobanRpcFailoverTotal: client.Counter<string>;
   private sorobanRpcActiveEndpoint: client.Gauge<string>;
   private sorobanIndexerUnknownSchemaVersion: client.Counter<string>;
+  // Schema-drift observability (Issue: contract event schema drift)
+  private sorobanParserUnknownEventTotal: client.Counter<string>;
+  private sorobanParserFieldMismatchTotal: client.Counter<string>;
+  private sorobanParserRejectionTotal: client.Counter<string>;
+  private sorobanParserUnexpectedFieldsTotal: client.Counter<string>;
   private parityCheckResults: client.Gauge<string>;
   private shadowTrafficRequests: client.Counter<string>;
   private indexerLagLedgers: client.Gauge<string>;
@@ -102,6 +107,39 @@ export class MetricsService implements OnModuleInit {
         help: "Events skipped because their schema_version exceeds the indexer maximum",
         labelNames: ["event_name", "schema_version"],
       });
+
+      // ── Schema-drift counters ──────────────────────────────────────────────
+
+      this.sorobanParserUnknownEventTotal = new client.Counter({
+        name: "soroban_parser_unknown_event_total",
+        help: "Contract events rejected because the event name is not in the known schema registry",
+        labelNames: ["contract_id", "raw_event_name"],
+      });
+
+      this.sorobanParserFieldMismatchTotal = new client.Counter({
+        name: "soroban_parser_field_mismatch_total",
+        help: "Contract events where one or more required payload keys were absent",
+        labelNames: ["event_name", "schema_version", "missing_fields"],
+      });
+
+      this.sorobanParserRejectionTotal = new client.Counter({
+        name: "soroban_parser_rejection_total",
+        help: "Total contract event parse rejections classified by drift type",
+        labelNames: ["event_name", "drift_type"],
+      });
+
+      this.sorobanParserUnexpectedFieldsTotal = new client.Counter({
+        name: "soroban_parser_unexpected_fields_total",
+        help: "Events that carry payload keys not in the expected schema (forward-compat additions)",
+        labelNames: ["event_name", "schema_version"],
+      });
+
+      this.register.registerMetric(this.sorobanParserUnknownEventTotal);
+      this.register.registerMetric(this.sorobanParserFieldMismatchTotal);
+      this.register.registerMetric(this.sorobanParserRejectionTotal);
+      this.register.registerMetric(this.sorobanParserUnexpectedFieldsTotal);
+
+      // ── End schema-drift counters ─────────────────────────────────────────
 
       this.parityCheckResults = new client.Gauge({
         name: "environment_parity_check_results",
@@ -352,6 +390,62 @@ export class MetricsService implements OnModuleInit {
     if (!this.initialized || !this.indexerLagGuardStatus) return;
     try {
       this.indexerLagGuardStatus.set(status);
+    } catch (error) {}
+  }
+
+  // ── Schema-drift observability ────────────────────────────────────────────
+
+  /**
+   * Increment the counter for events rejected because their topic symbol is
+   * not in the schema registry.
+   */
+  recordUnknownEvent(contractId: string, rawEventName: string) {
+    if (!this.initialized || !this.sorobanParserUnknownEventTotal) return;
+    try {
+      this.sorobanParserUnknownEventTotal.labels(contractId, rawEventName).inc();
+    } catch (error) {}
+  }
+
+  /**
+   * Increment the counter when required payload keys are absent for a known
+   * event type. `missingFields` is a sorted comma-separated key list used as
+   * a label so the alert can surface exactly which fields drifted.
+   */
+  recordFieldMismatch(
+    eventName: string,
+    schemaVersion: number,
+    missingFields: string[],
+  ) {
+    if (!this.initialized || !this.sorobanParserFieldMismatchTotal) return;
+    try {
+      this.sorobanParserFieldMismatchTotal
+        .labels(eventName, String(schemaVersion), missingFields.join(","))
+        .inc();
+    } catch (error) {}
+  }
+
+  /**
+   * Increment the unified rejection counter tagged by drift type.
+   * This is the primary metric for alerting thresholds.
+   */
+  recordParserRejection(eventName: string, driftType: string) {
+    if (!this.initialized || !this.sorobanParserRejectionTotal) return;
+    try {
+      this.sorobanParserRejectionTotal.labels(eventName, driftType).inc();
+    } catch (error) {}
+  }
+
+  /**
+   * Increment the counter for events that carry unexpected extra keys.
+   * These events are still ingested; this is an informational forward-compat
+   * warning rather than a hard rejection.
+   */
+  recordUnexpectedFields(eventName: string, schemaVersion: number) {
+    if (!this.initialized || !this.sorobanParserUnexpectedFieldsTotal) return;
+    try {
+      this.sorobanParserUnexpectedFieldsTotal
+        .labels(eventName, String(schemaVersion))
+        .inc();
     } catch (error) {}
   }
 }

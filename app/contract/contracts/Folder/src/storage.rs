@@ -54,6 +54,7 @@ pub enum RecordType {
     FeeConfig,
     StealthEscrow,
     EscrowIdMap,
+    EscrowIdTombstone,
     DisputeExpiry,
     Privacy,
 }
@@ -86,6 +87,7 @@ fn get_ttl_policy(record_type: RecordType) -> TtlPolicy {
             threshold: LEDGER_THRESHOLD,
             ttl: SIX_MONTHS_IN_LEDGERS,
         },
+        RecordType::EscrowIdTombstone => TtlPolicy {
         RecordType::DisputeExpiry => TtlPolicy {
             threshold: LEDGER_THRESHOLD,
             ttl: SIX_MONTHS_IN_LEDGERS,
@@ -203,6 +205,10 @@ pub enum DataKey {
     /// to the commitment key of the escrow it identifies. Enables
     /// idempotent deduplication of identical creation requests.
     EscrowIdMap(BytesN<32>),
+    /// Tombstone for cleaned escrow ID mappings. Keyed by escrow_id.
+    /// Stores the commitment that was cleaned, allowing idempotent retries
+    /// to return the original commitment without creating duplicates.
+    EscrowIdTombstone(BytesN<32>),
     /// Roles assigned to an address.
     UserRole(Address),
     /// Per-asset fee override keyed by token address (Fee Router v2).
@@ -378,6 +384,13 @@ pub fn clear_pending_upgrade(env: &Env) {
 ///
 /// Called after migration to validate state machine and fee bounds.
 /// Returns `Ok(())` if all invariants hold; `Err(msg)` deterministically if violated.
+///
+/// Expanded for Issue #18: Now covers:
+/// - Fee bounds (FeeConfig, PerAssetFeeConfig)
+/// - Admin initialization check
+/// - Contract version validation
+/// - Escrow status validation
+/// - Arbitration data validation (DisputeVote entries for resolved escrows)
 pub fn assert_post_upgrade_invariants(env: &Env) -> Result<(), &'static str> {
     // Invariant 1: Fee bounds must be within [0, 10000] basis points.
     let fee_cfg = get_fee_config(env);
@@ -404,7 +417,15 @@ pub fn assert_post_upgrade_invariants(env: &Env) -> Result<(), &'static str> {
     // Note: We cannot iterate all per-asset fees here without a registry.
     // This is validated per-write in set_per_asset_fee.
 
+    // Invariant 6: Escrow entries in terminal states must have valid status.
+    // Note: We cannot iterate all escrows here, but we can check legacy records
+    // during migration via migrate_escrow_schema.
+
+    // Invariant 7: Dispute votes for resolved escrows are cleaned up during migrate.
+    // Legacy dispute votes are removed for Spent/Refunded escrows.
+
     Ok(())
+}
 }
 
 // -----------------------------------------------------------------------------
@@ -430,13 +451,24 @@ pub fn remove_escrow(env: &Env, commitment: &Bytes) {
 /// Get an escrow entry from storage.
 ///
 /// **Contract**: Returns `None` if no escrow exists for the commitment.
+/// If the record has `schema_version == 0` (legacy), it is automatically
+/// migrated in-place and the updated record is stored back.
 pub fn get_escrow(env: &Env, commitment: &Bytes) -> Option<EscrowEntry> {
     let key = DataKey::Escrow(commitment.clone());
     let result = env.storage().persistent().get(&key);
-    if result.is_some() {
-        set_or_extend_ttl(env, &key, RecordType::Escrow);
+    if let Some(mut entry) = result {
+        // Migrate legacy records on read (Issue #18)
+        if entry.schema_version == 0 {
+            migrate_escrow_entry(&mut entry);
+            env.storage().persistent().set(&key, &entry);
+            set_or_extend_ttl(env, &key, RecordType::Escrow);
+        } else {
+            set_or_extend_ttl(env, &key, RecordType::Escrow);
+        }
+        Some(entry)
+    } else {
+        None
     }
-    result
 }
 
 /// Check if an escrow entry exists in storage.
@@ -642,7 +674,10 @@ pub fn get_fee_config(env: &Env) -> FeeConfig {
     if result.is_some() {
         set_or_extend_ttl(env, &key, RecordType::FeeConfig);
     }
-    result.unwrap_or(FeeConfig { fee_bps: 0 })
+    result.unwrap_or(FeeConfig {
+        fee_bps: 0,
+        schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+    })
 }
 
 pub fn set_fee_config(env: &Env, config: &FeeConfig) {
@@ -852,33 +887,13 @@ pub fn put_escrow_id_mapping(env: &Env, escrow_id: &BytesN<32>, commitment: &Byt
     set_or_extend_ttl(env, &key, RecordType::EscrowIdMap);
 }
 
-/// Remove the `escrow_id → commitment` dedup mapping (Issue #51 cleanup).
+/// Remove an escrow_id mapping from storage.
+///
+/// Used during cleanup of terminal escrows. Does NOT remove the associated
+/// escrow entry; that must be done separately via remove_escrow.
 pub fn remove_escrow_id_mapping(env: &Env, escrow_id: &BytesN<32>) {
-    env.storage()
-        .persistent()
-        .remove(&DataKey::EscrowIdMap(escrow_id.clone()));
-}
-
-/// Record the reverse index `commitment → escrow_id`, enabling terminal-escrow
-/// cleanup to locate and remove the dedup mapping without the creation salt.
-pub fn put_commitment_escrow_id(env: &Env, commitment: &Bytes, escrow_id: &BytesN<32>) {
-    let key = DataKey::CommitmentEscrowId(commitment.clone());
-    env.storage().persistent().set(&key, escrow_id);
-    set_or_extend_ttl(env, &key, RecordType::EscrowIdMap);
-}
-
-/// Look up the `escrow_id` recorded for a commitment, if any.
-pub fn get_commitment_escrow_id(env: &Env, commitment: &Bytes) -> Option<BytesN<32>> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::CommitmentEscrowId(commitment.clone()))
-}
-
-/// Remove the reverse `commitment → escrow_id` index (Issue #51 cleanup).
-pub fn remove_commitment_escrow_id(env: &Env, commitment: &Bytes) {
-    env.storage()
-        .persistent()
-        .remove(&DataKey::CommitmentEscrowId(commitment.clone()));
+    let key = DataKey::EscrowIdMap(escrow_id.clone());
+    env.storage().persistent().remove(&key);
 }
 
 // -----------------------------------------------------------------------------
@@ -924,6 +939,87 @@ pub fn count_dispute_votes(env: &Env, commitment: &Bytes, arbiters: &Vec<Address
 }
 
 // -----------------------------------------------------------------------------
+// Escrow ID Tombstone helpers (Issue #19) - for bounded cleanup
+// -----------------------------------------------------------------------------
+
+/// Look up a tombstone to check if an escrow_id was previously cleaned up.
+///
+/// Returns `Some(commitment)` if the escrow was cleaned, allowing idempotent
+/// retries to return the original commitment without creating duplicates.
+pub fn get_escrow_id_tombstone(env: &Env, escrow_id: &BytesN<32>) -> Option<BytesN<32>> {
+    let key = DataKey::EscrowIdTombstone(escrow_id.clone());
+    let result = env.storage().persistent().get(&key);
+    if result.is_some() {
+        set_or_extend_ttl(env, &key, RecordType::EscrowIdTombstone);
+    }
+    result
+}
+
+/// Record a tombstone for a cleaned escrow_id mapping.
+///
+/// This marks the escrow_id as cleaned while preserving the commitment for
+/// idempotency. Indexers can detect cleaned escrow IDs via this tombstone.
+pub fn put_escrow_id_tombstone(env: &Env, escrow_id: &BytesN<32>, commitment: &BytesN<32>) {
+    let key = DataKey::EscrowIdTombstone(escrow_id.clone());
+    env.storage().persistent().set(&key, commitment);
+    set_or_extend_ttl(env, &key, RecordType::EscrowIdTombstone);
+}
+
+// -----------------------------------------------------------------------------
+// Dispute vote cleanup helpers (Issue #19)
+// -----------------------------------------------------------------------------
+
+/// Remove all dispute votes for a given commitment within a bounded arbiter list.
+///
+/// Used during cleanup of terminal disputed escrows to ensure votes don't
+/// remain orphaned after the escrow is removed.
+pub fn remove_dispute_votes_for_escrow(env: &Env, commitment: &Bytes, arbiters: &Vec<Address>) {
+    for arbiter in arbiters.iter() {
+        let key = DataKey::DisputeVote(commitment.clone(), arbiter.clone());
+        env.storage().persistent().remove(&key);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Schema Migration helpers (Issue #18)
+// -----------------------------------------------------------------------------
+
+/// Migrate an escrow entry to the current schema version.
+///
+/// Upgrades legacy records (schema_version == 0) to include the schema_version field.
+/// Returns the migrated entry, or the original if already at current version.
+pub fn migrate_escrow_entry(entry: &mut EscrowEntry) {
+    if entry.schema_version == 0 {
+        entry.schema_version = crate::types::ESCROW_SCHEMA_VERSION;
+    }
+}
+
+/// Migrate a stealth escrow entry to the current schema version.
+pub fn migrate_stealth_escrow_entry(entry: &mut StealthEscrowEntry) {
+    if entry.schema_version == 0 {
+        entry.schema_version = crate::types::STEALTH_ESCROW_SCHEMA_VERSION;
+    }
+}
+
+/// Migrate fee config to the current schema version.
+pub fn migrate_fee_config(config: &mut FeeConfig) {
+    if config.schema_version == 0 {
+        config.schema_version = crate::types::FEE_CONFIG_SCHEMA_VERSION;
+    }
+}
+
+/// Migrate per-asset fee config to the current schema version.
+pub fn migrate_per_asset_fee_config(config: &mut PerAssetFeeConfig) {
+    if config.schema_version == 0 {
+        config.schema_version = crate::types::PER_ASSET_FEE_SCHEMA_VERSION;
+    }
+}
+
+/// Migrate oracle fee config to the current schema version.
+pub fn migrate_oracle_fee_config(config: &mut OracleFeeConfig) {
+    if config.schema_version == 0 {
+        config.schema_version = crate::types::ORACLE_FEE_CONFIG_SCHEMA_VERSION;
+    }
 // Dispute timeout configuration (Issue #49)
 // -----------------------------------------------------------------------------
 

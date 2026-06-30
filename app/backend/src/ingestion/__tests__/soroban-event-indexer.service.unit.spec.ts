@@ -81,7 +81,16 @@ describe("SorobanEventIndexerService - Resiliency & Hardening", () => {
     service = new SorobanEventIndexerService(
       mocks.config, mocks.checkpointRepo, mocks.escrowRepo,
       mocks.privacyRepo, mocks.adminRepo, mocks.stealthRepo,
-      mocks.metrics, mocks.eventEmitter
+      mocks.metrics, mocks.eventEmitter,
+      {
+        recordUnknownEvent: jest.fn(),
+        recordFieldMismatch: jest.fn(),
+        recordUnexpectedFields: jest.fn(),
+        recordUnsupportedVersion: jest.fn(),
+        recordIncompatibleVersion: jest.fn(),
+        recordParseError: jest.fn(),
+        getHealthSummary: jest.fn(),
+      } as unknown as import("../schema-observability.service").SchemaObservabilityService
     );
   });
 

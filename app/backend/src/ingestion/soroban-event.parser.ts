@@ -41,6 +41,7 @@ import {
   RustAcademy_EVENT_TOPICS,
   type RustAcademyEventTopic,
 } from "./event-schema";
+import { SchemaDriftDetector } from "./schema-drift-detector";
 
 /** Maximum schema version this indexer understands. */
 export const MAX_SUPPORTED_SCHEMA_VERSION = 2;
@@ -50,6 +51,51 @@ export type UnknownSchemaVersionHandler = (
   schemaVersion: number,
   pagingToken: string,
 ) => void;
+
+/** Called when the event topic symbol is not in the known schema registry. */
+export type UnknownEventHandler = (
+  raw: RawHorizonContractEvent,
+  rawEventName: string,
+) => void;
+
+/** Called when required payload keys are absent from a known event type. */
+export type FieldMismatchHandler = (
+  eventName: SorobanEventType,
+  schemaVersion: number,
+  raw: RawHorizonContractEvent,
+  missingFields: string[],
+  unexpectedFields: string[],
+) => void;
+
+/** Called when extra, unexpected fields are present (forward-compat, non-fatal). */
+export type UnexpectedFieldsHandler = (
+  eventName: SorobanEventType,
+  schemaVersion: number,
+  raw: RawHorizonContractEvent,
+  unexpectedFields: string[],
+) => void;
+
+/** Called for schema_version not in compatibleVersions (in-range but unsupported). */
+export type IncompatibleVersionHandler = (
+  eventName: string,
+  schemaVersion: number,
+  raw: RawHorizonContractEvent,
+) => void;
+
+/** Called when XDR decode or structural parse error occurs. */
+export type ParseErrorHandler = (
+  raw: RawHorizonContractEvent,
+  errorMessage: string,
+) => void;
+
+export interface ParserObservabilityCallbacks {
+  onUnknownSchemaVersion?: UnknownSchemaVersionHandler;
+  onUnknownEvent?: UnknownEventHandler;
+  onFieldMismatch?: FieldMismatchHandler;
+  onUnexpectedFields?: UnexpectedFieldsHandler;
+  onIncompatibleVersion?: IncompatibleVersionHandler;
+  onParseError?: ParseErrorHandler;
+}
 
 /**
  * Raw Horizon contract event record shape (subset we need).
@@ -87,9 +133,11 @@ interface TopicLayout {
  */
 export class SorobanEventParser {
   private readonly logger = new Logger(SorobanEventParser.name);
+  private readonly driftDetector = new SchemaDriftDetector();
 
   constructor(
     private readonly onUnknownSchemaVersion?: UnknownSchemaVersionHandler,
+    private readonly callbacks?: ParserObservabilityCallbacks,
   ) {}
 
   /**
@@ -105,7 +153,14 @@ export class SorobanEventParser {
       if (topics.length === 0) return null;
 
       const layout = this.resolveTopicLayout(topics);
-      if (!layout) return null;
+      if (!layout) {
+        // Try to extract a raw event name for the unknown-event callback
+        const rawEventName = this.tryDecodeFirstSymbol(topics);
+        if (rawEventName) {
+          this.callbacks?.onUnknownEvent?.(raw, rawEventName);
+        }
+        return null;
+      }
 
       const schemaVersion = this.extractSchemaVersionFromData(dataVal);
       if (schemaVersion > MAX_SUPPORTED_SCHEMA_VERSION) {
@@ -118,6 +173,11 @@ export class SorobanEventParser {
           schemaVersion,
           raw.paging_token,
         );
+        this.callbacks?.onUnknownSchemaVersion?.(
+          layout.eventName,
+          schemaVersion,
+          raw.paging_token,
+        );
         return null;
       }
 
@@ -125,8 +185,45 @@ export class SorobanEventParser {
         this.logger.warn(
           `Unsupported ${layout.eventName} schema version ${schemaVersion}`,
         );
+        this.callbacks?.onIncompatibleVersion?.(
+          layout.eventName,
+          schemaVersion,
+          raw,
+        );
         return null;
       }
+
+      // ── Field-drift detection ─────────────────────────────────────────────
+      const dataMap = this.driftDetector.decodeToMap(dataVal);
+      const driftResult = this.driftDetector.detectFieldDrift(
+        layout.eventName,
+        dataMap,
+      );
+
+      if (driftResult.driftType === "FIELD_MISMATCH") {
+        this.logger.warn(
+          `Field mismatch for ${layout.eventName} paging_token=${raw.paging_token}: ` +
+            `missing=[${driftResult.missingFields.join(",")}]`,
+        );
+        this.callbacks?.onFieldMismatch?.(
+          layout.eventName,
+          schemaVersion,
+          raw,
+          driftResult.missingFields,
+          driftResult.unexpectedFields,
+        );
+        return null;
+      }
+
+      if (driftResult.unexpectedFields.length > 0) {
+        this.callbacks?.onUnexpectedFields?.(
+          layout.eventName,
+          schemaVersion,
+          raw,
+          driftResult.unexpectedFields,
+        );
+      }
+      // ─────────────────────────────────────────────────────────────────────
 
       const contractLedgerSequence = this.extractLedgerSequenceFromData(dataVal);
       if (
@@ -221,6 +318,7 @@ export class SorobanEventParser {
       this.logger.warn(
         `Failed to parse contract event ${raw.paging_token}: ${(err as Error).message}`,
       );
+      this.callbacks?.onParseError?.(raw, (err as Error).message);
       return null;
     }
   }
@@ -789,6 +887,15 @@ export class SorobanEventParser {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Attempt to decode the first topic as a symbol without throwing.
+   * Used for best-effort unknown-event diagnostics.
+   */
+  private tryDecodeFirstSymbol(topics: xdr.ScVal[]): string | null {
+    if (topics.length === 0) return null;
+    return this.decodeSymbol(topics[0]);
   }
 
   private resolveTopicLayout(topics: xdr.ScVal[]): TopicLayout | null {

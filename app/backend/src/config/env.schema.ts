@@ -362,6 +362,17 @@ export const envSchema = Joi.object({
     .description(
       "Admin override to disable lag guard temporarily (for emergencies)",
     ),
+
+  // ── Feature Flags ─────────────────────────────────────────────────────────
+  FEATURES_RECONCILIATION_ENABLED: Joi.boolean()
+    .default(true)
+    .description("Whether the reconciliation module is enabled"),
+  FEATURES_NOTIFICATIONS_ENABLED: Joi.boolean()
+    .default(true)
+    .description("Whether the notifications module is enabled"),
+  FEATURES_DEVELOPER_ROUTES_ENABLED: Joi.boolean()
+    .default(false)
+    .description("Whether the developer routes/module is enabled"),
 });
 
 /**
@@ -424,4 +435,7 @@ export interface EnvConfig {
   INDEXER_LAG_THRESHOLD_LEDGERS: number;
   INDEXER_LAG_GUARD_ENABLED: boolean;
   INDEXER_LAG_GUARD_OVERRIDE: boolean;
+  FEATURES_RECONCILIATION_ENABLED: boolean;
+  FEATURES_NOTIFICATIONS_ENABLED: boolean;
+  FEATURES_DEVELOPER_ROUTES_ENABLED: boolean;
 }

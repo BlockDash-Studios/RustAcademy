@@ -13,11 +13,16 @@ import {
 import { CreateSocialPostDto } from './dto/create-social-post.dto';
 import { GetSocialFeedDto } from './dto/get-social-feed.dto';
 import { UpdateModerationDto } from './dto/update-moderation.dto';
+import { HashtagSearchDto } from './dto/hashtag-search.dto';
 import {
   FollowResponse,
   SocialFeedResponse,
   SocialPost,
 } from './interfaces/social-post.interface';
+import {
+  Hashtag,
+  HashtagListResponse,
+} from './interfaces/hashtag.interface';
 import { SocialService } from './social.service';
 
 @Controller('social')
@@ -112,5 +117,64 @@ export class SocialController {
   @Get('moderation/pending')
   getPendingPosts(): SocialPost[] {
     return this.socialService.getPendingPosts();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hashtag discovery — Issue #173
+  // ---------------------------------------------------------------------------
+
+  /**
+   * GET /social/hashtags
+   *
+   * Discover all hashtags used on the platform with optional text search
+   * and pagination.  Results are ordered by postCount descending.
+   *
+   * Query params:
+   *   query  — partial tag text to filter by (without '#')
+   *   page   — 1-based page number (default 1)
+   *   limit  — results per page (default 20)
+   */
+  @Get('hashtags')
+  @HttpCode(HttpStatus.OK)
+  discoverHashtags(@Query() dto: HashtagSearchDto): HashtagListResponse {
+    return this.socialService.discoverHashtags(dto.query, dto.page, dto.limit);
+  }
+
+  /**
+   * GET /social/hashtags/trending
+   *
+   * Returns the top trending hashtags by usage count.
+   *
+   * Query params:
+   *   limit — number of hashtags to return (default 10)
+   */
+  @Get('hashtags/trending')
+  @HttpCode(HttpStatus.OK)
+  getTrendingHashtags(
+    @Query('limit') limit = 10,
+  ): Hashtag[] {
+    return this.socialService.getTrendingHashtags(Number(limit));
+  }
+
+  /**
+   * GET /social/hashtags/:tag/posts
+   *
+   * Returns approved posts containing the given hashtag, paginated.
+   *
+   * Route param:
+   *   tag   — hashtag name without '#'
+   *
+   * Query params:
+   *   page  — 1-based page number (default 1)
+   *   limit — results per page (default 10)
+   */
+  @Get('hashtags/:tag/posts')
+  @HttpCode(HttpStatus.OK)
+  getPostsByHashtag(
+    @Param('tag') tag: string,
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+  ): SocialFeedResponse {
+    return this.socialService.getPostsByHashtag(tag, Number(page), Number(limit));
   }
 }

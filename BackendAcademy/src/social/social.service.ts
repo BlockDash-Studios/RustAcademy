@@ -8,12 +8,15 @@ import {
   SocialFeedResponse,
   SocialPost,
 } from './interfaces/social-post.interface';
+import { Hashtag, HashtagListResponse } from './interfaces/hashtag.interface';
 
 @Injectable()
 export class SocialService {
   private readonly posts = new Map<string, SocialPost>();
   private readonly userFollowers = new Map<string, Set<string>>();
   private readonly userFollowing = new Map<string, Set<string>>();
+  /** Hashtag registry: normalised tag → Hashtag metadata */
+  private readonly hashtags = new Map<string, Hashtag>();
   private idCounter = 1;
 
   createPost(userId: string, dto: CreateSocialPostDto): SocialPost {
@@ -33,6 +36,7 @@ export class SocialService {
     };
 
     this.posts.set(post.id, post);
+    this.indexHashtags(normalizedContent);
     return post;
   }
 
@@ -254,6 +258,104 @@ export class SocialService {
     return post;
   }
 
+  // ---------------------------------------------------------------------------
+  // Hashtag discovery — Issue #173
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns all known hashtags, ordered by postCount descending,
+   * with optional text filtering and pagination.
+   */
+  discoverHashtags(
+    query?: string,
+    page = 1,
+    limit = 20,
+  ): HashtagListResponse {
+    const normalizedQuery = query?.trim().toLowerCase().replace(/^#/, '');
+
+    let tags = Array.from(this.hashtags.values());
+
+    if (normalizedQuery) {
+      tags = tags.filter((h) => h.tag.includes(normalizedQuery));
+    }
+
+    // Most-used first
+    tags.sort((a, b) => b.postCount - a.postCount);
+
+    const total = tags.length;
+    const startIndex = (page - 1) * limit;
+    const paginated = tags.slice(startIndex, startIndex + limit);
+
+    return { hashtags: paginated, total, page, limit };
+  }
+
+  /**
+   * Returns the top N trending hashtags (highest postCount).
+   */
+  getTrendingHashtags(limit = 10): Hashtag[] {
+    return Array.from(this.hashtags.values())
+      .sort((a, b) => b.postCount - a.postCount)
+      .slice(0, limit);
+  }
+
+  /**
+   * Returns posts that contain a specific hashtag, paginated.
+   */
+  getPostsByHashtag(
+    tag: string,
+    page = 1,
+    limit = 10,
+  ): SocialFeedResponse {
+    const normalizedTag = this.normalizeTag(tag);
+
+    const matchingPosts = Array.from(this.posts.values())
+      .filter(
+        (post) =>
+          post.moderationStatus === 'approved' &&
+          post.content.toLowerCase().includes(`#${normalizedTag}`),
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    const total = matchingPosts.length;
+    const startIndex = (page - 1) * limit;
+    const paginated = matchingPosts.slice(startIndex, startIndex + limit);
+
+    return { posts: paginated, total, page, limit };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Extracts all hashtags from a post's content and upserts them in the
+   * internal registry, incrementing their postCount.
+   */
+  private indexHashtags(content: string): void {
+    const hashtagRegex = /#([a-zA-Z0-9_]+)/g;
+    const now = new Date();
+    let match: RegExpExecArray | null;
+
+    // eslint-disable-next-line no-cond-assign
+    while ((match = hashtagRegex.exec(content)) !== null) {
+      const tag = match[1].toLowerCase();
+      const existing = this.hashtags.get(tag);
+
+      if (existing) {
+        existing.postCount++;
+        existing.lastUsedAt = now;
+        this.hashtags.set(tag, existing);
+      } else {
+        this.hashtags.set(tag, {
+          tag,
+          postCount: 1,
+          firstSeenAt: now,
+          lastUsedAt: now,
+        });
+      }
+    }
+  }
+
   private generateId(): string {
     return `post_${this.idCounter++}`;
   }
@@ -316,5 +418,4 @@ export class SocialService {
     const normalized = tag.trim().toLowerCase();
     return normalized.startsWith('#') ? normalized.slice(1) : normalized;
   }
-}
 }

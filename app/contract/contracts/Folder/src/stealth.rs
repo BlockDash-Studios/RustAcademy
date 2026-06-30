@@ -179,6 +179,7 @@ pub fn register_ephemeral_key(
         status: EscrowStatus::Pending,
         created_at: now,
         expires_at,
+        schema_version: crate::types::STEALTH_ESCROW_SCHEMA_VERSION,
     };
 
     put_stealth_escrow(env, &stealth_address, &entry);

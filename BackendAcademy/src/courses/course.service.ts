@@ -1,11 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { CourseEntity } from './course.entity';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import { RewardsService } from '../rewards/rewards.service';
 
 @Injectable()
 export class CourseService {
   private readonly courses: Map<string, CourseEntity> = new Map();
+
+  constructor(private readonly rewardsService: RewardsService) {}
 
   async create(dto: CreateCourseDto): Promise<CourseEntity> {
     const course = new CourseEntity({
@@ -39,5 +42,24 @@ export class CourseService {
 
   async remove(id: string): Promise<boolean> {
     return this.courses.delete(id);
+  }
+
+  async completeCourse(id: string, userId: string) {
+    const course = this.courses.get(id);
+    if (!course) {
+      throw new NotFoundException(`Course with ID ${id} not found.`);
+    }
+    
+    // Reward the user for completing the course
+    const xpReward = course.xpReward || 50; // Default to 50 XP if not specified
+    const result = this.rewardsService.recordActivity(userId, new Date(), xpReward);
+    
+    return {
+      message: 'Course completed successfully',
+      courseId: id,
+      userId,
+      xpAwarded: xpReward,
+      progression: result,
+    };
   }
 }

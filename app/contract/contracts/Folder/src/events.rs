@@ -1427,3 +1427,26 @@ pub(crate) fn publish_pause_flags_changed(
     }
     .publish(env);
 }
+
+// -----------------------------------------------------------------------------
+// Escrow Cleanup Event (Issue #19)
+// -----------------------------------------------------------------------------
+
+#[contractevent(topics = ["TOPIC_ESCROW", "EscrowCleanup"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowCleanupEvent {
+    #[topic]
+    pub escrow_id: BytesN<32>,
+
+    pub schema_version: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_escrow_cleanup(env: &Env, commitment: BytesN<32>) {
+    EscrowCleanupEvent {
+        escrow_id: commitment,
+        schema_version: EVENT_SCHEMA_VERSION,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}

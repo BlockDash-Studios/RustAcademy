@@ -316,6 +316,27 @@ pub fn migrate(env: &Env, caller: &Address) -> Result<u32, RustAcademyError> {
 fn migrate_legacy_to_v1(env: &Env) -> u32 {
     storage::set_contract_version(env, storage::CURRENT_CONTRACT_VERSION);
     storage::set_initialized(env, true);
+
+    // Migrate FeeConfig schema version if it exists
+    let key = storage::DataKey::FeeConfig;
+    if let Some(mut fee_cfg) = env.storage().persistent().get(&key) {
+        storage::migrate_fee_config(&mut fee_cfg);
+        env.storage().persistent().set(&key, &fee_cfg);
+        storage::set_or_extend_ttl(env, &key, storage::RecordType::FeeConfig);
+    }
+
+    // Migrate OracleFeeConfig schema version if it exists
+    let key = storage::DataKey::OracleFeeConfig;
+    if let Some(mut oracle_cfg) = env.storage().persistent().get(&key) {
+        storage::migrate_oracle_fee_config(&mut oracle_cfg);
+        env.storage().persistent().set(&key, &oracle_cfg);
+        storage::set_or_extend_ttl(env, &key, storage::RecordType::FeeConfig);
+    }
+
+    // Note: EscrowEntry and StealthEscrowEntry records are migrated on-read
+    // via the schema_version field check in get_escrow/get_stealth_escrow.
+    // PerAssetFeeConfig records are migrated on-write via set_per_asset_fee.
+
     storage::CURRENT_CONTRACT_VERSION
 }
 

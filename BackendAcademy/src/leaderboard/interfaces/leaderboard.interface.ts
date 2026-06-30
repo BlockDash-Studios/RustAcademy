@@ -9,10 +9,14 @@ export interface LeaderboardEntry {
   streak: number;
 }
 
+import type { LeaderboardScope } from '../dto/get-leaderboard.dto';
+
 export interface LeaderboardFilters {
   timeRange?: 'daily' | 'weekly' | 'monthly' | 'allTime';
   category?: string;
   difficulty?: string;
+  scope?: LeaderboardScope;
+  courseId?: string;
   limit?: number;
   offset?: number;
 }

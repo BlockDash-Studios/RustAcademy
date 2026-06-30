@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
 import { ChallengesModule } from './challenges/challenges.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { SecurityModule } from './security/security.module';
@@ -19,6 +20,9 @@ import { TaskModule } from './tasks/task.module';
 import { ProgressModule } from './courses/progress/progress.module';
 import { AppConfigModule } from './config/config.module';
 import { ContractsModule } from './contracts/contracts.module';
+import { SearchModule } from './search/search.module';
+import { PaymentsModule } from './payments/payments.module';
+import { SessionsModule } from './sessions/sessions.module';
 
 @Module({
   imports: [
@@ -29,6 +33,7 @@ import { ContractsModule } from './contracts/contracts.module';
       },
     ]),
     AppConfigModule,
+    AuthModule,
     ContractsModule,
     UserProfileModule,
     TutorProfileModule,
@@ -44,6 +49,9 @@ import { ContractsModule } from './contracts/contracts.module';
     LessonModule,
     TaskModule,
     ProgressModule,
+    SearchModule,
+    PaymentsModule,
+    SessionsModule,
   ],
   controllers: [AppController],
   providers: [

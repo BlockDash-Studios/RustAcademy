@@ -2,6 +2,7 @@ import { Controller, Get, Post, Put, Delete, Body, Param } from '@nestjs/common'
 import { CourseService } from './course.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import { CompleteCourseDto } from './dto/complete-course.dto';
 
 @Controller('courses')
 export class CourseController {
@@ -35,5 +36,10 @@ export class CourseController {
   @Delete(':id')
   async remove(@Param('id') id: string) {
     return this.courseService.remove(id);
+  }
+
+  @Post(':id/complete')
+  async complete(@Param('id') id: string, @Body() dto: CompleteCourseDto) {
+    return this.courseService.completeCourse(id, dto.userId);
   }
 }
