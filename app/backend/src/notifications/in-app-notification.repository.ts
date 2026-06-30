@@ -2,6 +2,18 @@
 
 import { Injectable } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import {
+  applyCursorFilter,
+  clampLimit,
+  decodeCursor,
+  paginateResult,
+} from '../common/pagination/cursor.util';
+
+export interface InAppNotificationPage {
+  items: any[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
 
 @Injectable()
 export class InAppNotificationRepository {
@@ -22,14 +34,55 @@ export class InAppNotificationRepository {
     });
   }
 
-  async findByUser(publicKey: string, page = 1, limit = 20) {
-    return this.db
+  /**
+   * Fetch notifications for a user using cursor-based pagination.
+   * Returns notifications ordered newest first.
+   *
+   * @param publicKey - The user's public key
+   * @param limit - Max rows to return (capped at 100, default 20)
+   * @param cursor - Opaque cursor string from a previous response, or undefined for first page
+   */
+  async findByUser(
+    publicKey: string,
+    limit?: number,
+    cursor?: string,
+  ): Promise<InAppNotificationPage> {
+    const effectiveLimit = clampLimit(limit);
+    const decodedCursor = cursor ? decodeCursor(cursor) : null;
+
+    let query = this.db
       .getClient()
       .from("in_app_notifications")
       .select("*")
-      .eq("publicKey", publicKey)
-      .range((page - 1) * limit, page * limit - 1)
-      .order("createdAt", { ascending: false });
+      .eq("publicKey", publicKey);
+
+    query = applyCursorFilter(
+      query,
+      decodedCursor,
+      "createdAt",
+      false, // descending order (newest first)
+      effectiveLimit,
+    );
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(
+        `Failed to fetch notifications for user ${publicKey}: ${error.message}`,
+      );
+    }
+
+    const { data: pageData, next_cursor, has_more } = paginateResult(
+      data ?? [],
+      effectiveLimit,
+      "createdAt",
+    );
+
+    return {
+      items: pageData,
+      next_cursor,
+      has_more,
+    };
   }
 
   async markAsRead(id: string) {
