@@ -82,26 +82,59 @@ export class LeaderboardService {
   ];
 
   async getLeaderboard(getLeaderboardDto: GetLeaderboardDto): Promise<LeaderboardResponse> {
-    const { timeRange = 'allTime', category, difficulty, limit = 10, offset = 0, userId } = getLeaderboardDto;
-    
-    // In a real implementation, we would filter based on timeRange, category, and difficulty
-    // For now, we'll return all sample data sorted by score
-    let sortedEntries = [...this.sampleUsers]
+    const {
+      timeRange = 'allTime',
+      category,
+      difficulty,
+      scope,
+      courseId,
+      limit = 10,
+      offset = 0,
+      userId,
+    } = getLeaderboardDto;
+
+    // scope=`weekly` is currently a NO-OP filter: it pins `effectiveTimeRange`
+    // to 'weekly' only when the caller didn't supply an explicit timeRange
+    // (so timeRange wins if both are passed). The underlying sample data is
+    // NOT bucketed by date - this is a stub marker only.
+    // TODO: when LeaderboardsRepository lands, scope='weekly' should filter to
+    // entries with activity inside the rolling 7-day window.
+    const effectiveTimeRange = scope === 'weekly' && !timeRange ? 'weekly' : timeRange;
+
+    // scope=`course` returns only entries that belong to the requested course.
+    // NOTE: this is a stub backed by the in-memory sample set whose userIds are
+    // randomized `uuidv4()` values. We can't join a real CourseMembership table
+    // until IDs become stable, so we use a deterministic-but-arbitrary split:
+    // bucket = courseId.length % 2 -> every other entry by index.
+    // TODO: replace with a CourseRepository.findByUserId lookup.
+    // courseId sensitivity: the bucketing changes with courseId *length*, so
+    // `course-1` and `course-12` will return different subsets - intentional
+    // stub behavior, will be removed when the real lookup lands.
+    let candidates = [...this.sampleUsers];
+    if (scope === 'course' && courseId) {
+      const bucket = courseId.length % 2;
+      candidates = candidates.filter((_, idx) => idx % 2 === bucket);
+    }
+    if (scope === 'course' && !courseId) {
+      // course scope requires a courseId - return nothing rather than guess.
+      candidates = [];
+    }
+
+    // TODO: wire timeRange/category/difficulty against a real LeaderboardsRepository.
+    const sortedEntries = [...candidates]
       .sort((a, b) => b.score - a.score)
       .map((entry, index) => ({
         ...entry,
         rank: index + 1,
       }));
 
-    // Apply pagination
     const paginatedEntries = sortedEntries.slice(offset, offset + limit);
     const total = sortedEntries.length;
     const hasMore = offset + limit < total;
 
-    // Find current user's rank if userId is provided
     let userRank: LeaderboardEntry | undefined;
     if (userId) {
-      userRank = sortedEntries.find(entry => entry.userId === userId);
+      userRank = sortedEntries.find((entry) => entry.userId === userId);
     }
 
     return {
@@ -109,9 +142,11 @@ export class LeaderboardService {
       total,
       hasMore,
       filters: {
-        timeRange,
+        timeRange: effectiveTimeRange,
         category,
         difficulty,
+        scope,
+        courseId,
         limit,
         offset,
       },
