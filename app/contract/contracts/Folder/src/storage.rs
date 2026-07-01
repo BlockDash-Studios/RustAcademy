@@ -1020,6 +1020,7 @@ pub fn migrate_oracle_fee_config(config: &mut OracleFeeConfig) {
     if config.schema_version == 0 {
         config.schema_version = crate::types::ORACLE_FEE_CONFIG_SCHEMA_VERSION;
     }
+}
 // Dispute timeout configuration (Issue #49)
 // -----------------------------------------------------------------------------
 

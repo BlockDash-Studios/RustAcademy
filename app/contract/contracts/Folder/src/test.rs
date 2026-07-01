@@ -392,7 +392,7 @@ fn event_data_map(env: &Env, data: Val) -> Map<Symbol, Val> {
 #[test]
 fn test_event_schema_catalog_locks_canonical_topics_and_payloads() {
     assert_eq!(EVENT_SCHEMA_VERSION, 2);
-    assert_eq!(EVENT_SCHEMAS.len(), 31);
+    assert_eq!(EVENT_SCHEMAS.len(), 33);
 
     let escrow_deposited = EVENT_SCHEMAS
         .iter()
@@ -407,6 +407,7 @@ fn test_event_schema_catalog_locks_canonical_topics_and_payloads() {
         &[
             "amount_due",
             "amount_paid",
+            "event_type_id",
             "expires_at",
             "ledger_sequence",
             "schema_version",
