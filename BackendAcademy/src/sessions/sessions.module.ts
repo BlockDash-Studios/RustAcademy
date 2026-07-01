@@ -1,10 +1,14 @@
 import { Module } from '@nestjs/common';
-import { OfficeHoursController } from './office-hours.controller';
-import { OfficeHoursService } from './office-hours.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AttendanceEntity } from './attendance.entity';
+import { AttendanceController } from './attendance.controller';
+import { AttendanceService } from './attendance.service';
 
 @Module({
-  controllers: [OfficeHoursController],
-  providers: [OfficeHoursService],
-  exports: [OfficeHoursService],
+  imports: [TypeOrmModule.forFeature([AttendanceEntity])],
+  controllers: [AttendanceController],
+  providers: [AttendanceService],
+  exports: [AttendanceService],
 })
 export class SessionsModule {}
+
