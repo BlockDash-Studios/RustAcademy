@@ -31,6 +31,7 @@ import { MonitoringModule } from './monitoring/monitoring.module';
 import { SearchModule } from './search/search.module';
 import { PaymentsModule } from './payments/payments.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { SessionsModule } from './sessions/sessions.module';
     SearchModule,
     PaymentsModule,
     SessionsModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -28,7 +28,7 @@ import { RequiresFlag } from '../feature-flags/requires-flag.decorator';
 import { decodeCursor, clampLimit } from '../common/pagination/cursor.util';
 
 interface ApiKeyRequest extends Request {
-  apiKey: { id: string };
+  apiKey?: Request['apiKey'];
 }
 
 @ApiTags('admin/refunds')
@@ -55,7 +55,7 @@ export class RefundsController {
     @Body() dto: InitiateRefundDto,
     @Req() req: ApiKeyRequest,
   ) {
-    const actorId: string = req.apiKey.id;
+    const actorId = req.apiKey?.id ?? 'api';
     return this.refundsService.initiateRefund(dto, actorId);
   }
 
@@ -71,7 +71,7 @@ export class RefundsController {
     @Param('id') id: string,
     @Req() req: ApiKeyRequest,
   ) {
-    const actorId: string = req.apiKey.id;
+    const actorId = req.apiKey?.id ?? 'api';
     return this.refundsService.approveRefund(id, actorId);
   }
 
@@ -88,7 +88,7 @@ export class RefundsController {
     @Body() body: { notes?: string },
     @Req() req: ApiKeyRequest,
   ) {
-    const actorId: string = req.apiKey.id;
+    const actorId = req.apiKey?.id ?? 'api';
     return this.refundsService.rejectRefund(id, actorId, body.notes);
   }
 

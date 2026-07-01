@@ -10,7 +10,7 @@ import { FundingHelperService } from './funding-helper.service';
 import { ContractWritePolicyService } from '../feature-flags/contract-write-policy.service';
 
 interface ApiKeyRequest extends Request {
-  apiKey: { id: string };
+  apiKey?: Request['apiKey'];
 }
 
 @ApiTags('developer')

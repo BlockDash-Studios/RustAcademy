@@ -91,76 +91,9 @@ const validatedEnv = envSchema.validate(process.env, {
     EnvironmentParityModule,
     IndexerLagModule,
     SupportBundleModule,
+    ChatModule,
     ...getDynamicModules(validatedEnv),
   ],
-  imports: ((): AppImport[] => {
-    const baseImports: AppImport[] = [
-      SentryModule,
-      AppConfigModule,
-      // ScheduleModule registered once here — shared by NotificationsModule and ReconciliationModule
-      ScheduleModule.forRoot(),
-      EventEmitterModule.forRoot({
-        wildcard: true,
-        delimiter: ".",
-      }),
-      ThrottlerModule.forRoot(throttlerModuleProfiles),
-      SupabaseModule,
-      HealthModule,
-      AssetMetadataModule,
-      StellarModule,
-      UsernamesModule,
-      MetricsModule,
-      AnalyticsModule,
-      LinksModule,
-      ScamAlertsModule,
-      TransactionsModule,
-      PaymentsModule,
-      IngestionModule,
-      ApiKeysModule,
-      MarketplaceModule,
-      FiatRampsModule,
-      RefundsModule,
-      ExportsModule,
-      JobQueueModule,
-      AuditModule,
-      ContractsModule,
-      FeatureFlagsModule,
-      PrivacyModule,
-      SorobanToolingModule,
-      EnvironmentParityModule,
-      IndexerLagModule,
-      SupportBundleModule,
-      ChatModule,
-    ];
-
-    // In development, if SUPABASE_URL points to a localhost placeholder (i.e. you don't
-    // have a running Supabase instance), skip loading the Reconciliation module which
-    // interacts with Supabase and runs scheduled jobs. This avoids noisy network errors
-    // during local development and recording sessions.
-    try {
-      const supabaseUrl = process.env.SUPABASE_URL ?? "";
-      const isLocalSupabase =
-        supabaseUrl.includes("localhost") || supabaseUrl.includes("127.0.0.1");
-
-      // Only load Reconciliation & Notifications modules when Supabase is real/reachable.
-      if (!isLocalSupabase) {
-        baseImports.push(ReconciliationModule as AppImport);
-        baseImports.push(NotificationsModule as AppImport);
-        baseImports.push(DeveloperModule as AppImport);
-      } else {
-        // eslint-disable-next-line no-console
-        console.log(
-          "Skipping Reconciliation & Notifications modules in dev (local Supabase)",
-        );
-      }
-    } catch (e) {
-      // If anything goes wrong, default to including the modules.
-      baseImports.push(ReconciliationModule as AppImport);
-      baseImports.push(NotificationsModule as AppImport);
-      baseImports.push(DeveloperModule as AppImport);
-    }
-    return baseImports;
-  })(),
   providers: [
     {
       provide: APP_GUARD,
