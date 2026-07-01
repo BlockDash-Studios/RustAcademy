@@ -16,9 +16,10 @@ import { Request } from 'express';
 import { TutorReviewService, ReviewQueuePage, ReviewStats } from './tutor-review.service';
 import { ReviewSubmissionDto } from './dto/review-submission.dto';
 import { ReviewQueueQueryDto } from './dto/review-queue-query.dto';
-import { JwtTutorGuard, TutorJwtPayload } from '../auth/guards/jwt-tutor.guard';
+import { JwtTutorGuard } from '../auth/guards/jwt-tutor.guard';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 
-type AuthedRequest = Request & { tutor: TutorJwtPayload };
+type AuthedRequest = Request & { tutor: JwtPayload };
 
 /**
  * Tutor Review Queue API

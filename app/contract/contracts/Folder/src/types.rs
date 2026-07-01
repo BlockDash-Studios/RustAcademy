@@ -58,6 +58,12 @@ pub enum EscrowStatus {
     Disputed,
 }
 
+/// Storage schema version for escrow entries.
+///
+/// Increment when EscrowEntry fields are added that require migration.
+/// A value of 0 indicates legacy records (pre-versioning).
+pub const ESCROW_SCHEMA_VERSION: u32 = 1;
+
 /// Escrow entry structure.
 ///
 /// Stored under [`DataKey::Escrow`](crate::storage::DataKey::Escrow)(commitment) in persistent storage.
@@ -87,6 +93,9 @@ pub struct EscrowEntry {
     /// A value of 0 means single-arbiter mode (uses `arbiter` field).
     /// A value > 0 means multi-sig mode (uses `arbiters` array).
     pub arbiter_threshold: u32,
+    /// Storage schema version for this record. Used during migrations to detect
+    /// legacy records that need field upgrades.
+    pub schema_version: u32,
 }
 
 /// Privacy-aware view of an escrow entry.
@@ -198,6 +207,11 @@ pub struct StealthDepositParams {
     pub timeout_secs: u64,
 }
 
+/// Storage schema version for stealth escrow entries.
+///
+/// Increment when StealthEscrowEntry fields are added that require migration.
+pub const STEALTH_ESCROW_SCHEMA_VERSION: u32 = 1;
+
 /// Stealth escrow entry for Privacy v2 (Issue #157).
 ///
 /// Locked under a one-time stealth address derived via Diffie-Hellman.
@@ -226,7 +240,15 @@ pub struct StealthEscrowEntry {
     pub created_at: u64,
     /// Expiry timestamp; `0` means no expiry.
     pub expires_at: u64,
+    /// Storage schema version for this record. Used during migrations to detect
+    /// legacy records that need field upgrades.
+    pub schema_version: u32,
 }
+
+/// Storage schema version for fee configuration.
+///
+/// Increment when FeeConfig fields are added that require migration.
+pub const FEE_CONFIG_SCHEMA_VERSION: u32 = 1;
 
 /// Fee configuration for the platform.
 ///
@@ -236,7 +258,15 @@ pub struct StealthEscrowEntry {
 pub struct FeeConfig {
     /// Fee in basis points (1 = 0.01%, 100 = 1%, 10000 = 100%).
     pub fee_bps: u32,
+    /// Storage schema version for this record. Used during migrations to detect
+    /// legacy records that need field upgrades.
+    pub schema_version: u32,
 }
+
+/// Storage schema version for per-asset fee configuration.
+///
+/// Increment when PerAssetFeeConfig fields are added that require migration.
+pub const PER_ASSET_FEE_SCHEMA_VERSION: u32 = 1;
 
 /// Per-asset fee configuration (Fee Router v2 — Issue #305).
 ///
@@ -258,27 +288,15 @@ pub struct PerAssetFeeConfig {
     /// 0 = no arbiter split — entire fee goes to the collector.
     /// Example: fee_bps=200 (2%), arbiter_bps=2000 (20%) → arbiter gets 0.4%, collector 1.6%.
     pub arbiter_bps: u32,
-    /// Explicit arbiter payout share, using a prescaled numerator / denominator pair.
-    pub arbiter_fee: FeeRatio,
-    /// Explicit platform payout share, using a prescaled numerator / denominator pair.
-    pub platform_fee: FeeRatio,
-    /// Explicit collector payout share, using a prescaled numerator / denominator pair.
-    pub collector_fee: FeeRatio,
+    /// Storage schema version for this record. Used during migrations to detect
+    /// legacy records that need field upgrades.
+    pub schema_version: u32,
 }
 
-impl PerAssetFeeConfig {
-    /// Validate the configuration before persisting it.
-    pub fn validate(&self) -> Result<(), RustAcademyError> {
-        if self.fee_bps > 10_000 || self.arbiter_bps > 10_000 {
-            return Err(RustAcademyError::InvalidFeeConfiguration);
-        }
-
-        self.arbiter_fee.validate()?;
-        self.platform_fee.validate()?;
-        self.collector_fee.validate()?;
-        Ok(())
-    }
-}
+/// Storage schema version for oracle fee configuration.
+///
+/// Increment when OracleFeeConfig fields are added that require migration.
+pub const ORACLE_FEE_CONFIG_SCHEMA_VERSION: u32 = 1;
 
 /// Oracle fee configuration for dynamic USD-based fee collection.
 #[contracttype]
@@ -290,6 +308,9 @@ pub struct OracleFeeConfig {
     pub usd_fee_micros: i128,
     /// Maximum age of oracle price data before falling back.
     pub stale_threshold_secs: u64,
+    /// Storage schema version for this record. Used during migrations to detect
+    /// legacy records that need field upgrades.
+    pub schema_version: u32,
 }
 
 /// Supported escrow operation bounds and published worst-case budget envelopes.

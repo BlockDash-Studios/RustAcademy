@@ -13,6 +13,7 @@ import { EscrowEventRepository } from "./escrow-event.repository";
 import { PrivacyEventRepository } from "./privacy-event.repository";
 import { AdminEventRepository } from "./admin-event.repository";
 import { StealthEventRepository } from "./stealth-event.repository";
+import { SchemaObservabilityService } from "./schema-observability.service";
 import type { RustAcademyContractEvent } from "./types/contract-event.types";
 
 const PAGE_LIMIT = 200;
@@ -48,15 +49,58 @@ export class SorobanEventIndexerService {
     private readonly stealthRepo: StealthEventRepository,
     private readonly metrics: MetricsService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly schemaObservability: SchemaObservabilityService,
   ) {
     this.horizonUrl = HORIZON_BASE_URLS[this.config.network];
 
-    this.parser = new SorobanEventParser((eventName, version, pagingToken) => {
-      this.logger.warn(
-        `Unknown schema_version=${version} for event ${eventName} paging_token=${pagingToken}`,
-      );
-      this.metrics.recordUnknownSchemaVersion(eventName, version);
-    });
+    this.parser = new SorobanEventParser(
+      (eventName, version, pagingToken) => {
+        this.logger.warn(
+          `Unknown schema_version=${version} for event ${eventName} paging_token=${pagingToken}`,
+        );
+        this.metrics.recordUnknownSchemaVersion(eventName, version);
+      },
+      {
+        onUnknownSchemaVersion: (eventName, version, pagingToken) => {
+          // Build a minimal synthetic raw for diagnostics
+          this.schemaObservability.recordUnsupportedVersion(
+            eventName,
+            version,
+            { paging_token: pagingToken } as RawHorizonContractEvent,
+          );
+        },
+        onUnknownEvent: (raw, rawEventName) => {
+          this.schemaObservability.recordUnknownEvent(raw, rawEventName);
+        },
+        onFieldMismatch: (eventName, schemaVersion, raw, missingFields, unexpectedFields) => {
+          this.schemaObservability.recordFieldMismatch(
+            eventName,
+            schemaVersion,
+            raw,
+            missingFields,
+            unexpectedFields,
+          );
+        },
+        onUnexpectedFields: (eventName, schemaVersion, raw, unexpectedFields) => {
+          this.schemaObservability.recordUnexpectedFields(
+            eventName,
+            schemaVersion,
+            raw,
+            unexpectedFields,
+          );
+        },
+        onIncompatibleVersion: (eventName, schemaVersion, raw) => {
+          this.schemaObservability.recordIncompatibleVersion(
+            eventName,
+            schemaVersion,
+            raw,
+          );
+        },
+        onParseError: (raw, errorMessage) => {
+          this.schemaObservability.recordParseError(raw, errorMessage);
+        },
+      },
+    );
   }
 
   async indexLedgerRange(

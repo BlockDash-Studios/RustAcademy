@@ -14,6 +14,7 @@ import { SubmissionService } from './submission.service';
 import { GradingResultService } from './grading-result.service';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import { UpdateSubmissionDto } from './dto/update-submission.dto';
+import { SaveDraftDto } from './dto/save-draft.dto';
 import { SaveGradingResultDto } from './dto/save-grading-result.dto';
 import { SubmissionStatus } from './interfaces/submission-status.enum';
 
@@ -48,6 +49,11 @@ export class SubmissionController {
     return this.submissionService.findByUserId(userId);
   }
 
+  @Get('user/:userId/drafts')
+  async findDraftsByUserId(@Param('userId') userId: string) {
+    return this.submissionService.findDraftsByUserId(userId);
+  }
+
   @Get('status/:status')
   async findByStatus(@Param('status') status: SubmissionStatus) {
     return this.submissionService.findByStatus(status);
@@ -80,6 +86,33 @@ export class SubmissionController {
   @Delete(':id')
   async remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.submissionService.remove(id);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Draft endpoints
+  // ---------------------------------------------------------------------------
+
+  /**
+   * POST /submissions/draft
+   *
+   * Create or update a draft submission. If a draft already exists for the
+   * same userId + taskId it is updated (upsert). Otherwise a new draft is
+   * created with status = DRAFT.
+   */
+  @Post('draft')
+  async saveDraft(@Body() dto: SaveDraftDto) {
+    return this.submissionService.saveDraft(dto);
+  }
+
+  /**
+   * POST /submissions/:id/publish
+   *
+   * Promote a draft submission to PENDING status, entering the normal review
+   * workflow. Returns 400 if the submission is not a draft.
+   */
+  @Post(':id/publish')
+  async publishDraft(@Param('id', ParseUUIDPipe) id: string) {
+    return this.submissionService.publishDraft(id);
   }
 
   // ---------------------------------------------------------------------------

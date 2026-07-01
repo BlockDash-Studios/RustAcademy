@@ -1,22 +1,35 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { CreateChatRequestDto } from './dto/create-chat-request.dto';
 import { GetHintDto } from './dto/get-hint.dto';
 import { PreScoreDto } from './dto/pre-score.dto';
+import { VoiceInteractionDto } from './dto/voice-interaction.dto';
+import { TtsRequestDto } from './dto/tts-request.dto';
 import {
   AiChatResponse,
+  AiChatRecord,
   AiHintResponse,
   ChatMessage,
   Hint,
+  VoiceInteractionResponse,
+  TtsResponse,
 } from './interfaces/ai.interface';
 import { PreScoreResult } from './interfaces/pre-score.interface';
+import { AiProvider } from './interfaces/ai-provider.interface';
 import { v4 as uuidv4 } from 'uuid';
+
+export const AI_PROVIDER = 'AI_PROVIDER';
 
 @Injectable()
 export class AiService {
   private chatHistory: Map<string, ChatMessage[]> = new Map();
+  private chatRecords: Map<string, AiChatRecord> = new Map();
   private hints: Map<string, Hint[]> = new Map();
 
-  constructor() {
+  constructor(
+    @Optional() @Inject(AI_PROVIDER) private aiProvider?: AiProvider,
+    private configService?: ConfigService,
+  ) {
     this.initializeSampleHints();
   }
 
@@ -25,7 +38,14 @@ export class AiService {
   ): Promise<AiChatResponse> {
     const { message, userId, context } = createChatRequestDto;
 
-    const response = this.generateAiResponse(message, context);
+    const response = this.aiProvider
+      ? await this.aiProvider.generateChatCompletion({
+          messages: [
+            { role: 'system', content: 'You are a helpful Rust programming tutor.' },
+            { role: 'user', content: message },
+          ],
+        })
+      : this.fallbackResponse(message);
 
     const chatMessage: ChatMessage = {
       id: uuidv4(),
@@ -135,17 +155,42 @@ export class AiService {
     return this.chatHistory.get(userId) || [];
   }
 
+  getChatRecord(sessionId: string): AiChatRecord | null {
+    return this.chatRecords.get(sessionId) ?? null;
+  }
+
+  listChatRecords(userId: string): AiChatRecord[] {
+    return Array.from(this.chatRecords.values()).filter((r) => r.userId === userId);
+  }
+
+  async processVoice(dto: VoiceInteractionDto) {
+    const transcription = `[Transcribed: ${dto.audioData.slice(0, 50)}...]`;
+    const response: VoiceInteractionResponse = {
+      transcription,
+      confidence: 0.85,
+      processedAt: new Date(),
+    };
+    return response;
+  }
+
+  async generateTts(dto: TtsRequestDto) {
+    const response: TtsResponse = {
+      audioData: Buffer.from(dto.text).toString('base64'),
+      format: 'audio/wav',
+      durationMs: dto.text.length * 60,
+    };
+    return response;
+  }
+
   private generateAiResponse(
     userMessage: string,
     context?: Record<string, any>,
   ): string {
+  private fallbackResponse(userMessage: string): string {
     const responses = [
       "That's a great question! Let me help you work through that. Based on what you've shared, I think the first thing you should understand is the core concept behind the problem.",
-      'I see what you\'re working on. Let\'s break this down step by step. What part of the problem are you finding most challenging right now?',
       "Good thinking! You're on the right track. To move forward, I'd recommend reviewing the documentation on this topic and trying to implement a small piece first.",
-      "That's a common challenge many developers face. Let's think about this differently - what if we approach it from another angle?",
     ];
-
     return responses[Math.floor(Math.random() * responses.length)];
   }
 
@@ -154,21 +199,21 @@ export class AiService {
       {
         id: uuidv4(),
         challengeId: 'sample-challenge-001',
-        hint: 'Start by understanding the problem requirements thoroughly. List out all the inputs and expected outputs.',
+        hint: 'Start by understanding the problem requirements thoroughly.',
         difficulty: 1,
         usedCount: 0,
       },
       {
         id: uuidv4(),
         challengeId: 'sample-challenge-001',
-        hint: 'Consider edge cases - what happens if the input is empty, null, or outside the expected range?',
+        hint: 'Consider edge cases - empty, null, or out-of-range inputs.',
         difficulty: 2,
         usedCount: 0,
       },
       {
         id: uuidv4(),
         challengeId: 'sample-challenge-001',
-        hint: 'Try to implement a brute-force solution first, then optimize it. This helps you understand the problem better.',
+        hint: 'Implement brute-force first, then optimize.',
         difficulty: 3,
         usedCount: 0,
       },

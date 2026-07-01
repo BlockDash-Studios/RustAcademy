@@ -274,4 +274,31 @@ export class AppConfigService {
       infer: true,
     });
   }
+
+  /**
+   * Whether the reconciliation module is enabled
+   */
+  get reconciliationEnabled(): boolean {
+    return this.configService.get("FEATURES_RECONCILIATION_ENABLED", {
+      infer: true,
+    });
+  }
+
+  /**
+   * Whether the notifications module is enabled
+   */
+  get notificationsEnabled(): boolean {
+    return this.configService.get("FEATURES_NOTIFICATIONS_ENABLED", {
+      infer: true,
+    });
+  }
+
+  /**
+   * Whether the developer routes/module is enabled
+   */
+  get developerRoutesEnabled(): boolean {
+    return this.configService.get("FEATURES_DEVELOPER_ROUTES_ENABLED", {
+      infer: true,
+    });
+  }
 }

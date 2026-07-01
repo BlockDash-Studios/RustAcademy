@@ -9,6 +9,10 @@ export interface ISubmission {
   status: SubmissionStatus;
   feedback?: string;
   score?: number;
+  /** True when this submission is saved as a draft and not yet submitted. */
+  isDraft: boolean;
+  /** Timestamp of the last time this draft was saved. Null for non-drafts. */
+  draftSavedAt?: Date;
   submittedAt: Date;
   reviewedAt?: Date;
   reviewedBy?: string;

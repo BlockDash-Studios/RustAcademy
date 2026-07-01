@@ -5,6 +5,7 @@ export { SubmissionStatus } from './interfaces/submission-status.enum';
 export { ISubmission } from './interfaces/submission.interface';
 export { CreateSubmissionDto } from './dto/create-submission.dto';
 export { UpdateSubmissionDto } from './dto/update-submission.dto';
+export { SaveDraftDto } from './dto/save-draft.dto';
 export { ReviewSubmissionDto } from './dto/review-submission.dto';
 export { ReviewQueueQueryDto } from './dto/review-queue-query.dto';
 export { TutorReviewService } from './tutor-review.service';

@@ -26,3 +26,25 @@ export interface AiHintResponse {
   hintId: string;
   difficulty: number;
 }
+
+export interface AiChatRecord {
+  id: string;
+  userId: string;
+  sessionId: string;
+  messages: ChatMessage[];
+  startedAt: Date;
+  lastActivityAt: Date;
+  metadata?: Record<string, unknown>;
+}
+
+export interface VoiceInteractionResponse {
+  transcription: string;
+  confidence: number;
+  processedAt: Date;
+}
+
+export interface TtsResponse {
+  audioData: string;
+  format: string;
+  durationMs: number;
+}

@@ -9,10 +9,17 @@ export interface ChatRoom {
   courseId?: string;
 }
 
+export interface CodeSnippet {
+  code: string;
+  language?: string;
+  title?: string;
+}
+
 export interface Message {
   id: string;
   roomId: string;
   senderId: string;
   content: string;
+  codeSnippet?: CodeSnippet;
   createdAt: Date;
 }
