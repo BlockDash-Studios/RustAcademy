@@ -168,9 +168,13 @@ fn test_insufficient_role_error() {
     let ctx = TestContext::with_admin();
 
     // Alice (no roles) tries to set fee config
-    let res = ctx
-        .client
-        .try_set_fee_config(&ctx.alice, &crate::types::FeeConfig { fee_bps: 100 });
+    let res = ctx.client.try_set_fee_config(
+        &ctx.alice,
+        &crate::types::FeeConfig {
+            fee_bps: 100,
+            schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+        },
+    );
 
     match res {
         Err(Ok(RustAcademyError::InsufficientRole)) => (),

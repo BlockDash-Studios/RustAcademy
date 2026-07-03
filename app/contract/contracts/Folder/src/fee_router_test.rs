@@ -46,7 +46,13 @@ fn test_fee_router_per_asset_overrides_global_across_assets() {
     sac_admin.mint(&user, &10_000);
 
     // Global fee = 5%.
-    client.set_fee_config(&admin, &crate::types::FeeConfig { fee_bps: 500 });
+    client.set_fee_config(
+        &admin,
+        &crate::types::FeeConfig {
+            fee_bps: 500,
+            schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+        },
+    );
     client.set_platform_wallet(&admin, &collector);
 
     // Per-asset override for XLM token = 10%.
@@ -56,6 +62,7 @@ fn test_fee_router_per_asset_overrides_global_across_assets() {
         &PerAssetFeeConfig {
             fee_bps: 1_000,
             arbiter_bps: 0,
+            schema_version: crate::types::PER_ASSET_FEE_SCHEMA_VERSION,
             ..Default::default()
         },
     );
@@ -115,6 +122,7 @@ fn test_fee_router_dispute_with_optional_arbiter_split() {
         &PerAssetFeeConfig {
             fee_bps: 1_000,     // 10% total fee
             arbiter_bps: 2_000, // 20% of fee to arbiter
+            schema_version: crate::types::PER_ASSET_FEE_SCHEMA_VERSION,
             arbiter_fee: FeeRatio {
                 numerator: 1,
                 denominator: 5,
@@ -184,7 +192,13 @@ fn test_fee_router_collector_rotation_applies_to_new_payouts_and_old_escrows() {
 
     token_admin.mint(&owner, &20_000);
 
-    client.set_fee_config(&admin, &crate::types::FeeConfig { fee_bps: 1_000 });
+    client.set_fee_config(
+        &admin,
+        &crate::types::FeeConfig {
+            fee_bps: 1_000,
+            schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+        },
+    );
     client.set_platform_wallet(&admin, &collector_v1);
 
     // Escrow created before rotation.
@@ -244,6 +258,7 @@ fn test_fee_router_rejects_overallocated_explicit_split() {
         &PerAssetFeeConfig {
             fee_bps: 1_000,
             arbiter_bps: 0,
+            schema_version: crate::types::PER_ASSET_FEE_SCHEMA_VERSION,
             arbiter_fee: FeeRatio {
                 numerator: 0,
                 denominator: 1,
@@ -256,6 +271,7 @@ fn test_fee_router_rejects_overallocated_explicit_split() {
                 numerator: 2,
                 denominator: 3,
             },
+            ..Default::default()
         },
     );
 

@@ -65,6 +65,7 @@ fn seed_escrow(
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
+        schema_version: crate::types::ESCROW_SCHEMA_VERSION,
     };
     env.as_contract(contract_id, || {
         let key: Bytes = commitment.into();

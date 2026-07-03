@@ -96,8 +96,13 @@ impl<'a> TestContext<'a> {
     /// `with_admin()` + a fee already set. `fee_bps` is in basis points (250 = 2.5%).
     pub fn with_fees(fee_bps: u32) -> Self {
         let ctx = Self::with_admin();
-        ctx.client
-            .set_fee_config(&ctx.admin, &FeeConfig { fee_bps });
+        ctx.client.set_fee_config(
+            &ctx.admin,
+            &FeeConfig {
+                fee_bps,
+                schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+            },
+        );
         ctx.client
             .set_platform_wallet(&ctx.admin, &ctx.platform_wallet);
         ctx

@@ -67,12 +67,13 @@ use crate::{
     errors::RustAcademyError,
     escrow_id, events, fee_router, hook,
     storage::{
-        self, clear_dispute_state, count_dispute_votes, get_commitment_escrow_id,
+        clear_dispute_state, count_dispute_votes, get_commitment_escrow_id,
         get_dispute_vote, get_escrow, get_escrow_id_mapping, get_fee_config,
         get_oracle_fee_config, get_per_asset_fee, get_platform_wallet, has_dispute_vote,
         has_escrow, put_commitment_escrow_id, put_dispute_vote, put_escrow,
-        put_escrow_id_mapping, remove_commitment_escrow_id, remove_dispute_vote,
-        remove_dispute_votes_for_escrow, remove_escrow, remove_escrow_id_mapping,
+        put_escrow_id_mapping, remove_commitment_escrow_id,
+        remove_dispute_votes_for_escrow, remove_escrow, remove_escrow_id_mapping, DataKey,
+        LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS,
     },
     types::{
         DisputeVote, EscrowEntry, EscrowOperationEstimate, EscrowOperationLimits, EscrowStatus,
@@ -1065,7 +1066,7 @@ pub fn cleanup_escrow(env: &Env, commitment: BytesN<32>) -> Result<(),  RustAcad
             remove_escrow(env, &commitment_bytes);
 
             // Publish cleanup event for indexers
-            events::publish_escrow_cleanup(env, commitment);
+            events::publish_escrow_cleanup(env, commitment.clone());
 
             // Issue #49: reclaim dispute expiry metadata storage rent.
             clear_dispute_state(env, &commitment_bytes, &entry.arbiters);

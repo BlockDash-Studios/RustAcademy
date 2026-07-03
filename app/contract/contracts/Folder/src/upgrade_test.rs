@@ -227,7 +227,10 @@ fn build_golden_state() -> (Env, GoldenState) {
         client.dispute(&c_disputed);
 
         // Fee config + alice's privacy flag.
-        client.set_fee_config(&FeeConfig { fee_bps });
+        client.set_fee_config(&FeeConfig {
+            fee_bps,
+            schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+        });
         client.set_privacy(&alice, &true);
 
         (c_refunded, c_spent, c_pending, c_disputed)
@@ -451,7 +454,13 @@ fn upgrade_harness_admin_role_is_seeded_post_migration() {
     client.migrate(&gs.admin);
 
     // If migrate() didn't seed the Admin role, this would return InsufficientRole.
-    let result = client.try_set_fee_config(&gs.admin, &FeeConfig { fee_bps: 300 });
+    let result = client.try_set_fee_config(
+        &gs.admin,
+        &FeeConfig {
+            fee_bps: 300,
+            schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+        },
+    );
     assert!(
         result.is_ok(),
         "admin must retain role-gated access after migration (role seeding)"
@@ -755,7 +764,13 @@ fn upgrade_safety_gate_invariant_failure_deterministic() {
 
     // Deliberately corrupt fee config to violate invariant (fee_bps > 10_000).
     env.as_contract(&gs.contract_id, || {
-        crate::storage::set_fee_config(&env, &FeeConfig { fee_bps: 99999 });
+        crate::storage::set_fee_config(
+            &env,
+            &FeeConfig {
+                fee_bps: 99999,
+                schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+            },
+        );
     });
 
     // complete_upgrade must fail deterministically when invariants are violated (AC2).
@@ -768,7 +783,13 @@ fn upgrade_safety_gate_invariant_failure_deterministic() {
 
     // Restore fee config and complete the upgrade cleanly.
     env.as_contract(&gs.contract_id, || {
-        crate::storage::set_fee_config(&env, &FeeConfig { fee_bps: 200 });
+        crate::storage::set_fee_config(
+            &env,
+            &FeeConfig {
+                fee_bps: 200,
+                schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+            },
+        );
     });
     // complete_upgrade internally calls migrate and finalizes the upgrade.
     client.complete_upgrade(&gs.admin, &CURRENT_CONTRACT_VERSION);

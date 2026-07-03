@@ -34,7 +34,10 @@ fn test_fee_admin() {
     env.mock_all_auths();
 
     // Set fee config
-    let fee_config = FeeConfig { fee_bps: 250 }; // 2.5%
+    let fee_config = FeeConfig {
+        fee_bps: 250,
+        schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+    }; // 2.5%
     client.set_fee_config(&admin, &fee_config);
 
     assert_eq!(client.get_fee_config().fee_bps, 250);
@@ -64,7 +67,13 @@ fn test_withdrawal_with_fee() {
     token_admin_client.mint(&owner, &10000);
 
     // Configure fees
-    client.set_fee_config(&admin, &FeeConfig { fee_bps: 1000 }); // 10%
+    client.set_fee_config(
+        &admin,
+        &FeeConfig {
+            fee_bps: 1000,
+            schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+        },
+    ); // 10%
     client.set_platform_wallet(&admin, &platform_wallet);
 
     // Deposit
@@ -127,7 +136,13 @@ fn test_zero_fee() {
     token_admin_client.mint(&owner, &10000);
 
     // 0 Fee bps
-    client.set_fee_config(&admin, &FeeConfig { fee_bps: 0 });
+    client.set_fee_config(
+        &admin,
+        &FeeConfig {
+            fee_bps: 0,
+            schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+        },
+    );
     client.set_platform_wallet(&admin, &platform_wallet);
 
     let amount = 1000i128;

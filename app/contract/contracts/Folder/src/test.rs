@@ -161,6 +161,7 @@ fn setup_escrow(
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
+        schema_version: crate::types::ESCROW_SCHEMA_VERSION,
     };
 
     env.as_contract(contract_id, || {
@@ -196,6 +197,7 @@ fn setup_escrow_with_owner(
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
+        schema_version: crate::types::ESCROW_SCHEMA_VERSION,
     };
     env.as_contract(contract_id, || {
         let storage_commitment: Bytes = commitment.into();
@@ -1210,7 +1212,13 @@ fn test_config_mutation_before_initialize_fails_deterministically() {
     let (env, client) = setup();
     let caller = Address::generate(&env);
 
-    let result = client.try_set_fee_config(&caller, &crate::types::FeeConfig { fee_bps: 100 });
+    let result = client.try_set_fee_config(
+        &caller,
+        &crate::types::FeeConfig {
+            fee_bps: 100,
+            schema_version: crate::types::FEE_CONFIG_SCHEMA_VERSION,
+        },
+    );
     assert_contract_error(result,  RustAcademyError::Unauthorized);
 }
 
@@ -1550,6 +1558,7 @@ fn test_get_commitment_state_spent() {
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
+        schema_version: crate::types::ESCROW_SCHEMA_VERSION,
     };
 
     env.as_contract(&client.address, || {
@@ -1701,6 +1710,7 @@ fn test_verify_proof_view_spent_commitment() {
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
+        schema_version: crate::types::ESCROW_SCHEMA_VERSION,
     };
 
     let escrow_key = soroban_sdk::Symbol::new(&env, "escrow");
@@ -1800,6 +1810,7 @@ fn test_get_escrow_details_spent_status() {
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
+        schema_version: crate::types::ESCROW_SCHEMA_VERSION,
     };
 
     env.as_contract(&client.address, || {
@@ -3153,6 +3164,7 @@ mod tests {
                 #[allow(clippy::needless_borrow)]
                 arbiters: Vec::new(&env),
                 arbiter_threshold: 0,
+                schema_version: crate::types::ESCROW_SCHEMA_VERSION,
             }
         }
 
@@ -3240,6 +3252,7 @@ mod tests {
                 #[allow(clippy::needless_borrow)]
                 arbiters: Vec::new(&env),
                 arbiter_threshold: 0,
+                schema_version: crate::types::ESCROW_SCHEMA_VERSION,
             }
         }
 

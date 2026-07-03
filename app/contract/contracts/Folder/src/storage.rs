@@ -457,7 +457,7 @@ pub fn remove_escrow(env: &Env, commitment: &Bytes) {
 /// migrated in-place and the updated record is stored back.
 pub fn get_escrow(env: &Env, commitment: &Bytes) -> Option<EscrowEntry> {
     let key = DataKey::Escrow(commitment.clone());
-    let result = env.storage().persistent().get(&key);
+    let result: Option<EscrowEntry> = env.storage().persistent().get(&key);
     if let Some(mut entry) = result {
         // Migrate legacy records on read (Issue #18)
         if entry.schema_version == 0 {

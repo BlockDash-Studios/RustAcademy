@@ -21,6 +21,7 @@ fn test_ttl_auto_extend_on_activity() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+            schema_version: crate::types::ESCROW_SCHEMA_VERSION,
         };
         put_escrow(&env, &commitment, &entry);
 
@@ -55,6 +56,7 @@ fn test_ttl_expiry_of_inactive_record() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+            schema_version: crate::types::ESCROW_SCHEMA_VERSION,
         };
         put_escrow(&env, &commitment, &entry);
 
@@ -87,6 +89,7 @@ fn test_cleanup_does_not_remove_active_escrow() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+            schema_version: crate::types::ESCROW_SCHEMA_VERSION,
         };
         put_escrow(&env, &commitment, &entry);
         // Attempt cleanup (should not remove active escrow)
@@ -125,6 +128,7 @@ fn test_escrow_storage() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+            schema_version: crate::types::ESCROW_SCHEMA_VERSION,
         };
 
         // Test put_escrow
@@ -171,6 +175,7 @@ fn test_escrow_status_update() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+            schema_version: crate::types::ESCROW_SCHEMA_VERSION,
         };
 
         put_escrow(&env, &commitment, &entry);
@@ -346,6 +351,7 @@ fn test_cleanup_removes_auxiliary_indices() {
             arbiter: None,
             arbiters,
             arbiter_threshold: 1,
+            schema_version: crate::types::ESCROW_SCHEMA_VERSION,
         };
         put_escrow(&env, &commitment, &entry);
         put_escrow_id_mapping(&env, &escrow_id, &commitment_n);
@@ -454,6 +460,7 @@ fn test_cleanup_stealth_escrow_removes_terminal_entry() {
             status: EscrowStatus::Spent,
             created_at: 0,
             expires_at: 0,
+            schema_version: crate::types::STEALTH_ESCROW_SCHEMA_VERSION,
         };
         put_stealth_escrow(&env, &stealth, &entry);
         assert!(get_stealth_escrow(&env, &stealth).is_some());
@@ -482,6 +489,7 @@ fn test_cleanup_stealth_escrow_rejects_non_terminal() {
             status: EscrowStatus::Pending,
             created_at: 0,
             expires_at: 0,
+            schema_version: crate::types::STEALTH_ESCROW_SCHEMA_VERSION,
         };
         put_stealth_escrow(&env, &stealth, &entry);
 
