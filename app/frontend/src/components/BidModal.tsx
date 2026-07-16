@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { MarketplaceListing, formatCountdown, placeBid } from "@/hooks/marketplaceApi";
+import type { MarketplaceListing } from "@/hooks/marketplaceApi";
+import { useMarketplaceApi } from "@/hooks/MarketplaceApiContext";
 import { SigningSummary } from "./SigningSummary";
 
 type BidModalProps = {
@@ -17,6 +18,11 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
   const [bidState, setBidState] = useState<BidState>("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [showPreview, setShowPreview] = useState(false);
+
+  // Consume placeBid and formatCountdown from the active provider via context.
+  // BidModal no longer imports any concrete provider — the caller's provider
+  // tree determines whether mock or production behaviour is used.
+  const { placeBid, formatCountdown } = useMarketplaceApi();
 
   const minBid = listing ? listing.currentBid + 1 : 1;
   const parsedAmount = parseFloat(amount);
@@ -72,7 +78,7 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
                 <span className="text-white font-bold">@{listing.username}</span>.
               </p>
               <div className="p-4 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-left text-xs text-neutral-400 font-mono">
-                <p className="font-bold text-indigo-400 mb-1">tx signed & broadcast ✓</p>
+                <p className="font-bold text-indigo-400 mb-1">tx signed &amp; broadcast ✓</p>
                 <p>Network: Stellar Testnet</p>
                 <p>Asset: USDC</p>
                 <p>Amount: {parsedAmount}.00 USDC</p>
@@ -167,11 +173,14 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
                 <span className="text-amber-400 mt-0.5">🔑</span>
                 <div className="text-[11px] text-amber-400/80 leading-relaxed">
                   <p className="font-bold mb-1">Wallet Connection Required</p>
-                  <p>Confirming will request a signature from your Stellar wallet (Freighter/Lobstr). No funds will be deducted until auction ends.</p>
+                  <p>
+                    Confirming will request a signature from your Stellar wallet
+                    (Freighter/Lobstr). No funds will be deducted until auction ends.
+                  </p>
                 </div>
               </div>
 
-              {/* Bidding rules (Only show if not previewing) */}
+              {/* Bidding rules */}
               {!showPreview && (
                 <div className="flex items-start gap-3 p-3 mb-5 bg-indigo-500/5 border border-indigo-500/15 rounded-2xl">
                   <span className="text-indigo-400 mt-0.5">📋</span>
