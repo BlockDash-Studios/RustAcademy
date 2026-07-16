@@ -1,16 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { NetworkBadge } from "@/components/NetworkBadge";
 import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 import '@/lib/i18n';
 import { useTranslation } from "react-i18next";
+import { useApi } from "@/hooks/useApi";
+import { getProfile, saveProfile } from "@/lib/api";
+import { validateProfile, type Profile, type ProfileValidationErrors } from "@/types/profile";
 
 export default function Settings() {
   const { t } = useTranslation();
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<Profile>({
     username: "john_doe",
     primaryColor: "#6366f1",
     avatarUrl: "",
@@ -20,11 +23,49 @@ export default function Settings() {
     githubHandle: "",
   });
 
+  const [errors, setErrors] = useState<ProfileValidationErrors>({});
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
 
-  const handleSave = () => {
-    console.log("Saving profile:", form);
-    // TODO: Call API to save profile
+  const { error: apiError, loading, callApi } = useApi<Profile>();
+
+  useEffect(() => {
+    let active = true;
+    const loadData = async () => {
+      try {
+        const data = await getProfile("john_doe");
+        if (active && data) {
+          setForm(data);
+        }
+      } catch (err) {
+        console.error("Failed to load profile settings", err);
+      }
+    };
+    loadData();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleSave = async () => {
+    setSuccessMessage(null);
+    setErrors({});
+
+    const validation = validateProfile(form);
+    if (!validation.isValid) {
+      setErrors(validation.errors);
+      return;
+    }
+
+    try {
+      await callApi(() => saveProfile(form));
+      setSuccessMessage("Settings saved successfully!");
+      setTimeout(() => {
+        setSuccessMessage(null);
+      }, 5000);
+    } catch (err) {
+      console.error("Save profile error", err);
+    }
   };
 
   return (
@@ -119,6 +160,18 @@ export default function Settings() {
           </Link>
         </nav>
 
+        {successMessage && (
+          <div className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-200">
+            <span>✓</span> {successMessage}
+          </div>
+        )}
+
+        {apiError && (
+          <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-200">
+            <span>⚠️</span> {apiError}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
           {/* Settings Form */}
           <div className="space-y-4 sm:space-y-6">
@@ -152,6 +205,9 @@ export default function Settings() {
                       placeholder="#6366f1"
                     />
                   </div>
+                  {errors.primaryColor && (
+                    <p className="text-red-500 text-xs mt-1.5 font-medium">{errors.primaryColor}</p>
+                  )}
                 </div>
 
                 <div>
@@ -167,6 +223,9 @@ export default function Settings() {
                     className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base"
                     placeholder="https://example.com/avatar.jpg"
                   />
+                  {errors.avatarUrl && (
+                    <p className="text-red-500 text-xs mt-1.5 font-medium">{errors.avatarUrl}</p>
+                  )}
                 </div>
 
                 <div>
@@ -184,6 +243,9 @@ export default function Settings() {
                   <p className="text-xs text-neutral-600 mt-1">
                     {form.bio.length}/160 characters
                   </p>
+                  {errors.bio && (
+                    <p className="text-red-500 text-xs mt-1.5 font-medium">{errors.bio}</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -224,6 +286,9 @@ export default function Settings() {
                       maxLength={15}
                     />
                   </div>
+                  {errors.twitterHandle && (
+                    <p className="text-red-500 text-xs mt-1.5 font-medium">{errors.twitterHandle}</p>
+                  )}
                 </div>
 
                 <div>
@@ -240,6 +305,9 @@ export default function Settings() {
                     placeholder="user#1234"
                     maxLength={32}
                   />
+                  {errors.discordHandle && (
+                    <p className="text-red-500 text-xs mt-1.5 font-medium">{errors.discordHandle}</p>
+                  )}
                 </div>
 
                 <div>
@@ -256,6 +324,9 @@ export default function Settings() {
                     placeholder="stellar"
                     maxLength={39}
                   />
+                  {errors.githubHandle && (
+                    <p className="text-red-500 text-xs mt-1.5 font-medium">{errors.githubHandle}</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -264,9 +335,17 @@ export default function Settings() {
             <div className="hidden sm:flex gap-3 sm:gap-4">
               <button
                 onClick={handleSave}
-                className="flex-1 px-4 sm:px-6 py-3 sm:py-4 bg-indigo-500 text-white font-bold rounded-xl hover:scale-105 active:scale-95 transition text-sm sm:text-base"
+                disabled={loading}
+                className="flex-1 px-4 sm:px-6 py-3 sm:py-4 bg-indigo-500 text-white font-bold rounded-xl hover:scale-105 active:scale-95 transition text-sm sm:text-base disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {t('saveChanges')}
+                {loading ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  t('saveChanges')
+                )}
               </button>
               <button
                 onClick={() => setShowPreview(!showPreview)}
@@ -308,9 +387,17 @@ export default function Settings() {
         <div className="flex gap-3">
           <button
             onClick={handleSave}
-            className="flex-1 px-4 py-3 bg-indigo-500 text-white font-bold rounded-xl active:scale-95 transition"
+            disabled={loading}
+            className="flex-1 px-4 py-3 bg-indigo-500 text-white font-bold rounded-xl active:scale-95 transition disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {t('saveChanges')}
+            {loading ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Saving...
+              </>
+            ) : (
+              t('saveChanges')
+            )}
           </button>
           <button
             onClick={() => setShowPreview(!showPreview)}

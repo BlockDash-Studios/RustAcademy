@@ -27,7 +27,6 @@ class MockWebSocket {
 
   connect() {
     this.isConnected = true;
-    console.log('🔌 Connected to marketplace WebSocket');
 
     // Simulate periodic bid updates
     this.intervalId = setInterval(() => {
@@ -43,7 +42,6 @@ class MockWebSocket {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
-    console.log('🔌 Disconnected from marketplace WebSocket');
   }
 
   subscribe(listingId: string) {

@@ -27,7 +27,7 @@ export function NetworkBadge() {
 
   return (
     <div
-      className={`fixed top-4 left-60 px-3 py-1 rounded-full text-xs font-bold transition-all ${badgeStyles[normalized] || ""}`}
+      className={`fixed top-4 right-4 md:right-auto md:left-80 px-3 py-1 rounded-full text-xs font-bold transition-all z-50 ${badgeStyles[normalized] || ""}`}
     >
       {label}
 

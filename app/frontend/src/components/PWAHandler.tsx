@@ -1,10 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { errorReporter } from "@/lib/errorReporter";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
+
+const DISMISSED_KEY = "pwa-install-dismissed-at";
+const DISMISS_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // re-offer after 7 days
+
+function wasRecentlyDismissed(): boolean {
+  try {
+    const dismissedAt = Number(localStorage.getItem(DISMISSED_KEY));
+    return !!dismissedAt && Date.now() - dismissedAt < DISMISS_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+function isStandalone(): boolean {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    // iOS Safari
+    (navigator as { standalone?: boolean }).standalone === true
+  );
 }
 
 export function PWAHandler() {
@@ -19,7 +40,7 @@ export function PWAHandler() {
       navigator.serviceWorker
         .register("/sw.js")
         .then((reg) => {
-          console.log("SW registered", reg);
+          // SW registered
 
           reg.addEventListener("updatefound", () => {
             const newWorker = reg.installing;
@@ -31,7 +52,7 @@ export function PWAHandler() {
                 // New content is available; please refresh.
                 if (
                   confirm(
-                    "A new version of  RustAcademy is available. Refresh now?",
+                    "A new version of RustAcademy is available. Refresh now?",
                   )
                 ) {
                   window.location.reload();
@@ -40,18 +61,20 @@ export function PWAHandler() {
             });
           });
         })
-        .catch((err) => console.error("SW registration failed", err));
+        .catch((err) => errorReporter.captureError(err, { context: { component: 'PWAHandler' } }));
     }
 
     // Check if already installed
-    if (window.matchMedia("(display-mode: standalone)").matches) {
+    if (isStandalone()) {
       setIsInstalled(true);
     }
 
     const handler = (e: Event) => {
       e.preventDefault();
       setInstallPrompt(e as BeforeInstallPromptEvent);
-      setShowBanner(true);
+      if (!wasRecentlyDismissed()) {
+        setShowBanner(true);
+      }
     };
 
     window.addEventListener("beforeinstallprompt", handler);
@@ -71,6 +94,15 @@ export function PWAHandler() {
     const { outcome } = await installPrompt.userChoice;
     if (outcome === "accepted") {
       setShowBanner(false);
+    }
+  };
+
+  const handleDismiss = () => {
+    setShowBanner(false);
+    try {
+      localStorage.setItem(DISMISSED_KEY, String(Date.now()));
+    } catch {
+      // localStorage unavailable (private mode) — banner just reappears next visit
     }
   };
 
@@ -104,7 +136,7 @@ export function PWAHandler() {
                 Install Now
               </button>
               <button
-                onClick={() => setShowBanner(false)}
+                onClick={handleDismiss}
                 className="px-4 py-2.5 text-sm font-medium text-neutral-400 hover:text-white transition-colors"
               >
                 Later

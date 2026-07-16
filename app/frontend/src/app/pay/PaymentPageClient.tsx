@@ -9,7 +9,7 @@ import { PaidPaymentState } from "@/components/payment-states/PaidPaymentState";
 import { RefundedPaymentState } from "@/components/payment-states/RefundedPaymentState";
 import { LoadingState } from "@/components/payment-states/LoadingState";
 import { ErrorState } from "@/components/payment-states/ErrorState";
-import { get RustAcademyApiBase } from "@/lib/api";
+import { getRustAcademyApiBase } from "@/lib/api";
 
 type LinkState = "ACTIVE" | "EXPIRED" | "PAID" | "REFUNDED" | "DRAFT";
 
@@ -64,7 +64,7 @@ function PaymentPageContent() {
     setError(null);
 
     try {
-      const apiBase = get RustAcademyApiBase();
+      const apiBase = getRustAcademyApiBase();
       const params = new URLSearchParams({
         username,
         amount,
@@ -254,7 +254,7 @@ function LoadingFallback() {
 function trackAnalyticsEvent(event: string, data: Record<string, unknown>) {
   if (typeof window !== "undefined") {
     // Replace with your analytics provider (e.g., PostHog, Google Analytics, etc.)
-    console.log(`[Analytics] ${event}`, data);
+    // console.log(`[Analytics] ${event}`, data);
 
     // Example: window.posthog?.capture(event, data);
     // Example: window.gtag?.('event', event, data);

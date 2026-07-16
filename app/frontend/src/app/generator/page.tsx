@@ -5,7 +5,7 @@ import Link from "next/link";
 import { QRPreview } from "@/components/QRPreview";
 import { NetworkBadge } from "@/components/NetworkBadge";
 import { useApi } from "@/hooks/useApi";
-import { get RustAcademyApiBase } from "@/lib/api";
+import { getRustAcademyApiBase } from "@/lib/api";
 import {
   buildGeneratedLinksCsv,
   BulkCsvDraftRow,
@@ -117,7 +117,7 @@ type BulkLinkRequestItem = {
 
 export default function Generator() {
   const { t } = useTranslation();
-  const apiBase = useMemo(() => get RustAcademyApiBase(), []);
+  const apiBase = useMemo(() => getRustAcademyApiBase(), []);
   const { error, loading, callApi, data } = useApi<LinkMetadataSuccess>();
   const csvInputRef = useRef<HTMLInputElement | null>(null);
 
