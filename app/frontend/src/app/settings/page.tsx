@@ -23,7 +23,6 @@ export default function Settings() {
   const [showPreview, setShowPreview] = useState(false);
 
   const handleSave = () => {
-    console.log("Saving profile:", form);
     // TODO: Call API to save profile
   };
 

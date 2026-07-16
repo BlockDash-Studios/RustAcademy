@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { errorReporter } from "@/lib/errorReporter";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -39,6 +40,8 @@ export function PWAHandler() {
       navigator.serviceWorker
         .register("/sw.js")
         .then((reg) => {
+          // SW registered
+
           reg.addEventListener("updatefound", () => {
             const newWorker = reg.installing;
             newWorker?.addEventListener("statechange", () => {
@@ -58,7 +61,7 @@ export function PWAHandler() {
             });
           });
         })
-        .catch((err) => console.error("SW registration failed", err));
+        .catch((err) => errorReporter.captureError(err, { context: { component: 'PWAHandler' } }));
     }
 
     // Check if already installed
