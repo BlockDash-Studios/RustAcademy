@@ -67,7 +67,16 @@ export function NotificationFeed({
                 Unread
               </span>
             ) : null}
-            <span className="ml-auto text-xs text-neutral-400">
+            {/*
+             * suppressHydrationWarning: formatRelativeTime calls Date.now() so
+             * the server-rendered string and the first client render may differ
+             * by a second or two.  This is cosmetic — suppressing the warning
+             * is the correct approach here rather than deferring the render.
+             */}
+            <span
+              className="ml-auto text-xs text-neutral-400"
+              suppressHydrationWarning
+            >
               {formatRelativeTime(notification.createdAt)}
             </span>
           </div>

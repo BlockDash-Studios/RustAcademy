@@ -17,6 +17,7 @@ Users can:
 * Manage rewards and certifications
 * Connect Stellar wallets
 * Track XP, streaks, and achievements
+* Install as an app (PWA) and keep working offline
 
 ---
 
@@ -164,7 +165,51 @@ Receive NFT Certificate
 
 ---
 
-## Deployment
+## PWA & Offline Support
+
+RustAcademy Web is an installable Progressive Web App with offline-first caching.
+
+### How it works
+
+| Piece | File | Role |
+| --- | --- | --- |
+| Web manifest | `src/app/manifest.ts` | App name, icons, theme, standalone display, and app shortcuts (Generate Link, Dashboard). Served at `/manifest.webmanifest`. |
+| Service worker | `public/sw.js` | Precaches the app shell and handles runtime caching (see strategy below). |
+| Install/update UI | `src/components/PWAHandler.tsx` | Registers the service worker, shows the install banner, and prompts to refresh when a new version is deployed. Mounted globally in `src/app/layout.tsx`. |
+| Offline fallback | `src/app/offline/page.tsx` | Shown for navigations when the network is unreachable and no cached copy exists. |
+
+### Caching strategy
+
+* **Navigations (HTML)** — network-first. Fresh pages when online; the last cached copy (or `/offline`) when the connection drops.
+* **Static assets** (`/_next/static`, images, fonts, styles, scripts) — cache-first with runtime population. Hashed Next.js assets are immutable, so cache hits are always safe.
+* **Never cached** — `/api/*` routes and cross-origin requests. Payment data is always fetched live.
+
+Bump the `VERSION` constant in `public/sw.js` when changing cache behavior; old caches are cleaned up on activation.
+
+### Install flow
+
+1. On first eligible visit, the browser fires `beforeinstallprompt`; `PWAHandler` shows an install banner (bottom-right on desktop).
+2. "Install Now" triggers the native install prompt. "Later" hides the banner for 7 days (stored in `localStorage`).
+3. Installed users (standalone display mode, including iOS "Add to Home Screen") never see the banner.
+4. When a new service worker is deployed, users get a refresh prompt on their next visit.
+
+### Testing locally
+
+Service workers require a secure context. `localhost` counts, so:
+
+```bash
+pnpm build && pnpm start
+```
+
+Then in Chrome DevTools → **Application**:
+
+* **Manifest** — verify name, icons, and installability.
+* **Service workers** — confirm `sw.js` is activated.
+* **Network → Offline** — reload to see cached pages / the offline fallback.
+
+> Note: the dev server (`pnpm dev`) serves `sw.js`, but caching behavior is only meaningful against a production build.
+
+---
 
 Recommended:
 

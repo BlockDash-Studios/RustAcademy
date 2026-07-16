@@ -254,7 +254,7 @@ function LoadingFallback() {
 function trackAnalyticsEvent(event: string, data: Record<string, unknown>) {
   if (typeof window !== "undefined") {
     // Replace with your analytics provider (e.g., PostHog, Google Analytics, etc.)
-    console.log(`[Analytics] ${event}`, data);
+    // console.log(`[Analytics] ${event}`, data);
 
     // Example: window.posthog?.capture(event, data);
     // Example: window.gtag?.('event', event, data);

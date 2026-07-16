@@ -19,6 +19,9 @@ type NotificationCenterContextValue = {
   unreadCount: number;
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
+  /** True once localStorage has been read on the client. Use this to suppress
+   *  hydration mismatches in any component that renders unread-count badges. */
+  hasHydrated: boolean;
 };
 
 const NotificationCenterContext =
@@ -54,7 +57,7 @@ export function NotificationCenterProvider({
   children: ReactNode;
   userId?: string;
 }) {
-  const [notifications, setNotifications] = usePersistentState<StoredNotification[]>(
+  const [notifications, setNotifications, hasHydrated] = usePersistentState<StoredNotification[]>(
     NOTIFICATION_STORAGE_KEY,
     sortNotifications(INITIAL_NOTIFICATIONS),
     {
@@ -82,6 +85,7 @@ export function NotificationCenterProvider({
     () => ({
       notifications,
       unreadCount,
+      hasHydrated,
       markAsRead: (id: string) => {
         setNotifications((currentNotifications) =>
           sortNotifications(
@@ -111,7 +115,7 @@ export function NotificationCenterProvider({
         );
       },
     }),
-    [notifications, unreadCount, setNotifications],
+    [notifications, unreadCount, hasHydrated, setNotifications],
   );
 
   return (

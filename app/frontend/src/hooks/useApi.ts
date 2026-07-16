@@ -14,6 +14,7 @@ export function useApi<T>() {
     try {
       const res = await fn();
       setData(res);
+      setError(null);
       return res;
     } catch (err: unknown) {
       const msg =
@@ -22,6 +23,7 @@ export function useApi<T>() {
           : "Something went wrong. Please try again.";
       setError(msg);
       console.error(err);
+      throw err;
     } finally {
       setLoading(false);
     }
