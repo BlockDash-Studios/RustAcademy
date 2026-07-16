@@ -5,14 +5,18 @@ import {
   useContext,
   useState,
   useEffect,
+  useCallback,
   ReactNode,
 } from "react";
+import {
+  WatchlistItem,
+  WATCHLIST_STORAGE_KEY,
+  getWatchlistFromStorage,
+  saveWatchlistToStorage,
+  syncWatchlistToBackend,
+} from "@/lib/watchlist";
 
-export type WatchlistItem = {
-  id: string;
-  username: string;
-  addedAt: Date;
-};
+export type { WatchlistItem };
 
 type WatchlistContextType = {
   watchlist: WatchlistItem[];
@@ -26,40 +30,61 @@ const WatchlistContext = createContext<WatchlistContextType | undefined>(
   undefined,
 );
 
-const WATCHLIST_STORAGE_KEY = " RustAcademy-marketplace-watchlist";
-
-export function WatchlistProvider({ children }: { children: ReactNode }) {
+export function WatchlistProvider({
+  children,
+  userId,
+}: {
+  children: ReactNode;
+  userId?: string;
+}) {
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [hasHydrated, setHasHydrated] = useState(false);
 
-  // Load watchlist from localStorage on mount
+  // Load watchlist from localStorage on mount and optional backend sync
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(WATCHLIST_STORAGE_KEY);
-      if (stored) {
-        const parsed: { id: string; username: string; addedAt: string }[] =
-          JSON.parse(stored);
-        // Convert date strings back to Date objects
-        const watchlistWithDates = parsed.map((item) => ({
-          ...item,
-          addedAt: new Date(item.addedAt),
-        }));
-        setWatchlist(watchlistWithDates);
-      }
-    } catch (error) {
-      console.error("Failed to load watchlist from localStorage:", error);
+    const loadedWatchlist = getWatchlistFromStorage();
+    setWatchlist(loadedWatchlist);
+    setHasHydrated(true);
+    
+    // Attempt backend sync on mount if user is present
+    if (userId) {
+      syncWatchlistToBackend(loadedWatchlist, userId);
     }
+  }, [userId]);
+
+  // Sync state across tabs
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === WATCHLIST_STORAGE_KEY && e.newValue) {
+        try {
+          const parsed: { id: string; username: string; addedAt: string }[] = JSON.parse(e.newValue);
+          const watchlistWithDates = parsed.map((item) => ({
+            ...item,
+            addedAt: new Date(item.addedAt),
+          }));
+          setWatchlist(watchlistWithDates);
+        } catch (error) {
+          console.error("Failed to parse watchlist from storage event:", error);
+        }
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
   // Save watchlist to localStorage whenever it changes
   useEffect(() => {
-    try {
-      localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist));
-    } catch (error) {
-      console.error("Failed to save watchlist to localStorage:", error);
+    if (!hasHydrated) return;
+    saveWatchlistToStorage(watchlist);
+    
+    // Sync to backend when watchlist changes
+    if (userId) {
+      syncWatchlistToBackend(watchlist, userId);
     }
-  }, [watchlist]);
+  }, [watchlist, hasHydrated, userId]);
 
-  const addToWatchlist = (id: string, username: string) => {
+  const addToWatchlist = useCallback((id: string, username: string) => {
     setWatchlist((prev) => {
       // Don't add if already exists
       if (prev.some((item) => item.id === id)) return prev;
@@ -73,23 +98,29 @@ export function WatchlistProvider({ children }: { children: ReactNode }) {
         },
       ];
     });
-  };
+  }, []);
 
-  const removeFromWatchlist = (id: string) => {
+  const removeFromWatchlist = useCallback((id: string) => {
     setWatchlist((prev) => prev.filter((item) => item.id !== id));
-  };
+  }, []);
 
-  const isInWatchlist = (id: string) => {
-    return watchlist.some((item) => item.id === id);
-  };
+  const isInWatchlist = useCallback(
+    (id: string) => {
+      return watchlist.some((item) => item.id === id);
+    },
+    [watchlist]
+  );
 
-  const toggleWatchlist = (id: string, username: string) => {
-    if (isInWatchlist(id)) {
-      removeFromWatchlist(id);
-    } else {
-      addToWatchlist(id, username);
-    }
-  };
+  const toggleWatchlist = useCallback(
+    (id: string, username: string) => {
+      if (isInWatchlist(id)) {
+        removeFromWatchlist(id);
+      } else {
+        addToWatchlist(id, username);
+      }
+    },
+    [isInWatchlist, removeFromWatchlist, addToWatchlist]
+  );
 
   return (
     <WatchlistContext.Provider
