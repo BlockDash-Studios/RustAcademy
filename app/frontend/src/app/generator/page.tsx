@@ -5,6 +5,7 @@ import Link from "next/link";
 import { QRPreview } from "@/components/QRPreview";
 import { NetworkBadge } from "@/components/NetworkBadge";
 import { useApi } from "@/hooks/useApi";
+import { errorReporter } from "@/lib/errorReporter";
 import { getRustAcademyApiBase } from "@/lib/api";
 import {
   buildGeneratedLinksCsv,
@@ -201,10 +202,14 @@ export default function Generator() {
         if (!cancelled) {
           setVerifiedAssets(json.assets ?? []);
         }
-      } catch {
+      } catch (err) {
         if (!cancelled) {
           setAssetsError(t('couldNotLoadAssets'));
           setVerifiedAssets([]);
+          errorReporter.captureError(err instanceof Error ? err : new Error(String(err)), {
+            route: "/generator",
+            extra: { source: "generator", operation: "fetchVerifiedAssets" },
+          });
         }
       } finally {
         if (!cancelled) {
@@ -310,6 +315,10 @@ export default function Generator() {
       setPathError(e instanceof Error ? e.message : "Path preview failed.");
       setPathData(null);
       setQuoteFetchedAt(null);
+      errorReporter.captureError(e instanceof Error ? e : new Error(String(e)), {
+        route: "/generator",
+        extra: { source: "generator", operation: "fetchPathPreview" },
+      });
     } finally {
       setPathLoading(false);
     }
@@ -472,10 +481,14 @@ export default function Generator() {
         return;
       }
       setPreflightResult(json as ComposeSuccess | ComposeError);
-    } catch {
+    } catch (err) {
       setPreflightResult({
         success: false,
         userMessage: t('networkError'),
+      });
+      errorReporter.captureError(err instanceof Error ? err : new Error(String(err)), {
+        route: "/generator",
+        extra: { source: "generator", operation: "runPreflight" },
       });
     } finally {
       setPreflightLoading(false);
@@ -747,12 +760,13 @@ export default function Generator() {
       } catch (generationError) {
         window.clearInterval(progressTimer);
         setBulkProgress(0);
-        setBulkError(
-          generationError instanceof Error
-            ? generationError.message
-            : "Unable to generate invoices.",
-        );
+        const err = generationError instanceof Error ? generationError : new Error(String(generationError));
+        setBulkError(err.message || "Unable to generate invoices.");
         setBulkResult(null);
+        errorReporter.captureError(err, {
+          route: "/generator",
+          extra: { source: "generator", operation: "submitBulkLinks" },
+        });
       } finally {
         setBulkLoading(false);
       }

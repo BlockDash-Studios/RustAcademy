@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { errorReporter } from "@/lib/errorReporter";
 
 export function useApi<T>() {
   const [data, setData] = useState<T | null>(null);
@@ -17,12 +18,13 @@ export function useApi<T>() {
       setError(null);
       return res;
     } catch (err: unknown) {
-      const msg =
-        err instanceof Error && err.message
-          ? err.message
-          : "Something went wrong. Please try again.";
+      const capturedError = err instanceof Error ? err : new Error(String(err));
+      const msg = capturedError.message || "Something went wrong. Please try again.";
       setError(msg);
-      console.error(err);
+      errorReporter.captureError(capturedError, {
+        route: typeof window !== "undefined" ? window.location.pathname : undefined,
+        extra: { source: "useApi" },
+      });
       throw err;
     } finally {
       setLoading(false);

@@ -59,6 +59,14 @@ export class ErrorBoundary extends Component<
     );
   };
 
+  handleRetry = () => {
+    this.setState({
+      hasError: false,
+      error: undefined,
+      componentStack: undefined,
+    });
+  };
+
   render() {
     if (this.state.hasError) {
       return (
@@ -70,13 +78,33 @@ export class ErrorBoundary extends Component<
           <p className="max-w-xl text-neutral-300">
             This issue has been captured and can be reported with your request details.
           </p>
-          <button
-            type="button"
-            onClick={this.handleReportClick}
-            className="rounded-full bg-white px-6 py-3 text-sm font-semibold text-neutral-950 transition hover:bg-neutral-100"
-          >
-            Report Issue
-          </button>
+          {this.state.error && (
+            <details className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-4 text-left">
+              <summary className="cursor-pointer text-sm font-semibold text-neutral-300 hover:text-neutral-100">
+                Error details
+              </summary>
+              <p className="mt-3 whitespace-pre-wrap break-all font-mono text-xs text-neutral-400">
+                {this.state.error.message}
+                {this.state.componentStack ? `\n\n${this.state.componentStack}` : ""}
+              </p>
+            </details>
+          )}
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={this.handleRetry}
+              className="rounded-full border border-white/20 bg-white/10 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/20"
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              onClick={this.handleReportClick}
+              className="rounded-full bg-white px-6 py-3 text-sm font-semibold text-neutral-950 transition hover:bg-neutral-100"
+            >
+              Report Issue
+            </button>
+          </div>
         </section>
       );
     }

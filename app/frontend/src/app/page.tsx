@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { NetworkBadge } from "@/components/NetworkBadge";
 import { fetchAnalytics } from "@/hooks/analyticsApi";
 import { fetchListings } from "@/hooks/marketplaceApi";
+import { errorReporter } from "@/lib/errorReporter";
 import '@/lib/i18n';
 import { useTranslation } from 'react-i18next';
 
@@ -17,8 +18,18 @@ export default function Home() {
     const handlePrefetch = () => {
       router.prefetch("/dashboard");
       router.prefetch("/marketplace");
-      fetchListings();
-      fetchAnalytics("30d");
+      fetchListings().catch((err: unknown) =>
+        errorReporter.captureError(err instanceof Error ? err : new Error(String(err)), {
+          route: "/",
+          extra: { source: "page.tsx", operation: "fetchListings" },
+        })
+      );
+      fetchAnalytics("30d").catch((err: unknown) =>
+        errorReporter.captureError(err instanceof Error ? err : new Error(String(err)), {
+          route: "/",
+          extra: { source: "page.tsx", operation: "fetchAnalytics" },
+        })
+      );
     };
     const id = window.setTimeout(handlePrefetch, 250);
     return () => window.clearTimeout(id);
