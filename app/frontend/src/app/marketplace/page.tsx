@@ -83,11 +83,19 @@ function MarketplacePageContent() {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<Category>("all");
   const [sortKey, setSortKey] = useState("ending");
-  const [activeListing, setActiveListing] = useState<MarketplaceListing | null>(
-    null,
+  const [activeListingId, setActiveListingId] = useState<string | null>(null);
+  const [detailListingId, setDetailListingId] = useState<string | null>(null);
+  const [showWatchlistOnly, setShowWatchlistOnly] = useState(false);
+
+  // Modals hold a listing id, not a snapshot, so realtime bid updates keep
+  // the open modal (current bid, minimum bid) from going stale.
+  const activeListing = useMemo(
+    () => listings.find((l) => l.id === activeListingId) ?? null,
+    [listings, activeListingId],
   );
-  const [detailListing, setDetailListing] = useState<MarketplaceListing | null>(
-    null,
+  const detailListing = useMemo(
+    () => listings.find((l) => l.id === detailListingId) ?? null,
+    [listings, detailListingId],
   );
   const [showWatchlistOnly, setShowWatchlistOnly] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -108,7 +116,8 @@ function MarketplacePageContent() {
     });
   }, [marketplaceApi]);
 
-  // Subscribe to real-time updates for all listings
+  // Latest listings, readable from effects without being an effect dependency.
+  const listingsRef = useRef<MarketplaceListing[]>([]);
   useEffect(() => {
     if (listings.length > 0) {
       listings.forEach((listing) =>
@@ -122,7 +131,8 @@ function MarketplacePageContent() {
     }
   }, [listings, realtimeApi]);
 
-  // Handle real-time bid updates
+  // Handle real-time bid updates. applyBidUpdate discards stale, duplicate,
+  // and out-of-order deliveries so bidCount only moves for genuinely new bids.
   useEffect(() => {
     const unsubscribe = realtimeApi.onBidUpdate((update) => {
       setLastUpdate(update.timestamp);
@@ -156,8 +166,8 @@ function MarketplacePageContent() {
   );
 
   function handleOpenBid(listing: MarketplaceListing) {
-    setDetailListing(null);
-    setActiveListing(listing);
+    setDetailListingId(null);
+    setActiveListingId(listing.id);
   }
 
   const filtered = useMemo(() => {
@@ -454,7 +464,7 @@ function MarketplacePageContent() {
                 key={listing.id}
                 listing={listing}
                 onBid={handleOpenBid}
-                onViewDetails={setDetailListing}
+                onViewDetails={(l) => setDetailListingId(l.id)}
               />
             ))}
           </div>
@@ -464,7 +474,7 @@ function MarketplacePageContent() {
       <ListingDetailModal
         listing={detailListing}
         isWatched={detailListing ? isInWatchlist(detailListing.id) : false}
-        onClose={() => setDetailListing(null)}
+        onClose={() => setDetailListingId(null)}
         onToggleWatchlist={(listing) =>
           toggleWatchlist(listing.id, listing.username)
         }
@@ -474,10 +484,10 @@ function MarketplacePageContent() {
       {/* ── BID MODAL ─────────────────────────────── */}
       <BidModal
         listing={activeListing}
-        onClose={() => setActiveListing(null)}
+        onClose={() => setActiveListingId(null)}
         onBidSuccess={(username, amount) => {
           handleBidSuccess(username, amount);
-          setTimeout(() => setActiveListing(null), 2500);
+          setTimeout(() => setActiveListingId(null), 2500);
         }}
       />
     </div>

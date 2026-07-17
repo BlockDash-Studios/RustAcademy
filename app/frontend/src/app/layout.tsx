@@ -7,7 +7,7 @@ import "./globals.css";
 
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-  "https:// RustAcademy.to";
+  "https://RustAcademy.to";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

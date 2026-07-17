@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "echo 'Skipping frontend checks in backend release pipeline' || exit 0"
+    "test": "echo 'Skipping frontend checks in backend release pipeline' || exit 0",
+    "test:unit": "vitest run",
+    "type-check": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
     "i18next": "^26.0.1",

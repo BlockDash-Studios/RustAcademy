@@ -8,20 +8,26 @@ type BidUpdate = {
   newBid: number;
   bidderAddress: string;
   timestamp: Date;
+  /** Authoritative total bid count, when the backend provides one. */
+  bidCount?: number;
 };
 
 type RealtimeUpdatesHook = {
   isConnected: boolean;
   lastUpdate: Date | null;
-  subscribeToListing: (listingId: string) => void;
+  subscribeToListing: (listingId: string, currentBid?: number) => void;
   unsubscribeFromListing: (listingId: string) => void;
   onBidUpdate: (callback: (update: BidUpdate) => void) => () => void;
 };
 
-// Mock WebSocket simulation for real-time bid updates
-class MockWebSocket {
+// Mock WebSocket simulation for real-time bid updates.
+// Deliveries are NOT guaranteed to be fresh: like a real websocket feed, this
+// occasionally replays a previous bid (duplicate / out-of-order delivery), so
+// consumers must guard before applying updates (see lib/bidUpdates.ts).
+export class MockWebSocket {
   private listeners: ((update: BidUpdate) => void)[] = [];
   private subscribedListings: Set<string> = new Set();
+  private lastBids: Map<string, number> = new Map();
   private intervalId: NodeJS.Timeout | null = null;
   private isConnected = false;
 
@@ -44,8 +50,14 @@ class MockWebSocket {
     }
   }
 
-  subscribe(listingId: string) {
+  subscribe(listingId: string, currentBid?: number) {
     this.subscribedListings.add(listingId);
+    if (currentBid !== undefined) {
+      this.lastBids.set(
+        listingId,
+        Math.max(this.lastBids.get(listingId) ?? 0, currentBid),
+      );
+    }
   }
 
   unsubscribe(listingId: string) {
@@ -67,10 +79,18 @@ class MockWebSocket {
     if (subscribedArray.length === 0) return;
 
     const randomListingId = subscribedArray[Math.floor(Math.random() * subscribedArray.length)];
+    const lastBid = this.lastBids.get(randomListingId) ?? 500;
 
-    // Generate a realistic bid increase (5-20% of current bid)
-    const baseIncrease = Math.floor(Math.random() * 100) + 50; // 50-150 USDC increase
-    const newBid = Math.floor(Math.random() * 5000) + 1000 + baseIncrease; // Random base + increase
+    // ~20% of deliveries replay the previous bid, simulating the duplicate /
+    // out-of-order messages a real feed can produce. Consumers must discard
+    // any update that does not raise the current bid.
+    const isStaleReplay = this.lastBids.has(randomListingId) && Math.random() < 0.2;
+    const newBid = isStaleReplay
+      ? lastBid
+      : lastBid + Math.floor(Math.random() * 100) + 50; // 50-150 USDC increase
+    if (!isStaleReplay) {
+      this.lastBids.set(randomListingId, newBid);
+    }
 
     const update: BidUpdate = {
       listingId: randomListingId,
@@ -104,9 +124,12 @@ export function useRealtimeUpdates(): RealtimeUpdatesHook {
     };
   }, []);
 
-  const subscribeToListing = useCallback((listingId: string) => {
-    mockWebSocket.subscribe(listingId);
-  }, []);
+  const subscribeToListing = useCallback(
+    (listingId: string, currentBid?: number) => {
+      mockWebSocket.subscribe(listingId, currentBid);
+    },
+    [],
+  );
 
   const unsubscribeFromListing = useCallback((listingId: string) => {
     mockWebSocket.unsubscribe(listingId);
