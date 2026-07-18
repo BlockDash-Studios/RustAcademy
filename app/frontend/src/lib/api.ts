@@ -17,6 +17,13 @@ export const getRustAcademyInternalApiBase = (): string =>
   getRustAcademyApiBase();
 
 /**
+ * Get the WebSocket URL for realtime connections
+ * Override in `.env.local`: `NEXT_PUBLIC_WS_URL=wss://api.example.com`
+ */
+export const getWsUrl = (): string =>
+  process.env.NEXT_PUBLIC_WS_URL?.replace(/\/$/, "") ?? "ws://localhost:4000";
+
+/**
  * Get the site URL (for OpenGraph metadata, etc.)
  * Falls back to the API base URL (with port adjusted for development)
  */
