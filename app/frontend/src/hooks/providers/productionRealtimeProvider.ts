@@ -11,9 +11,7 @@
  */
 
 import type { BidUpdate, RealtimeApiProvider } from "@/hooks/realtimeApi";
-
-const getWsUrl = (): string =>
-  process.env.NEXT_PUBLIC_WS_URL?.replace(/\/$/, "") ?? "ws://localhost:4000";
+import { getWsUrl } from "@/lib/api";
 
 export class ProductionRealtimeProvider implements RealtimeApiProvider {
   private listeners: ((update: BidUpdate) => void)[] = [];

@@ -9,20 +9,10 @@
  *  - memo                  → only included when it is a short, non-sensitive label
  */
 
+import { getRustAcademyInternalApiBase, getSiteUrl } from "@/lib/api";
+
 export const SITE_NAME = " RustAcademy";
 export const SITE_DESCRIPTION = "Privacy-focused payments on Stellar";
-
-/** Resolved at build/request time from the environment. Falls back to a relative path. */
-export function getSiteUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-    process.env.NEXT_PUBLIC_RustAcademy_API_URL?.replace(/\/$/, "").replace(
-      /:4000$/,
-      ":3000",
-    ) ||
-    "https:// RustAcademy.to"
-  );
-}
 
 /** The default OG image served from /public */
 export const DEFAULT_OG_IMAGE = "/og-default.png";
@@ -49,10 +39,7 @@ export async function fetchPaymentMeta(params: {
   acceptedAssets?: string;
 }): Promise<SafePaymentMeta | null> {
   try {
-    const apiBase =
-      process.env.RustAcademy_INTERNAL_API_URL?.replace(/\/$/, "") ||
-      process.env.NEXT_PUBLIC_RustAcademy_API_URL?.replace(/\/$/, "") ||
-      "http://localhost:4000";
+    const apiBase = getRustAcademyInternalApiBase();
 
     const qs = new URLSearchParams({ username: params.username, amount: params.amount });
     if (params.asset) qs.set("asset", params.asset);
