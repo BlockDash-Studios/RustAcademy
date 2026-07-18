@@ -1,5 +1,6 @@
 export interface Profile {
   username: string;
+  publicKey?: string;
   primaryColor: string;
   avatarUrl: string;
   bio: string;

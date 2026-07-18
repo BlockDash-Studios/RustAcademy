@@ -2,31 +2,23 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { NetworkBadge } from "@/components/NetworkBadge";
 import { QRPreview } from "@/components/QRPreview";
-
-type Profile = {
-  username: string;
-  publicKey: string;
-  primaryColor?: string;
-  avatarUrl?: string;
-  bio?: string;
-  twitterHandle?: string;
-  discordHandle?: string;
-  githubHandle?: string;
-};
+import { getProfile, ProfileNotFoundError } from "@/lib/api";
+import type { Profile } from "@/types/profile";
 
 const FOCUS_RING_CLASS =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-black";
 
 export default function PublicProfile() {
   const params = useParams();
+  const router = useRouter();
   const username = params.username as string;
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const [paymentForm, setPaymentForm] = useState({
     amount: "",
@@ -35,37 +27,73 @@ export default function PublicProfile() {
   });
 
   useEffect(() => {
-    // TODO: Fetch profile from API
-    // Mock data for now
-    setTimeout(() => {
-      setProfile({
-        username,
-        publicKey: "GABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
-        primaryColor: "#6366f1",
-        avatarUrl: "",
-        bio: "Building the future of payments on Stellar",
-        twitterHandle: "stellarorg",
-        discordHandle: "",
-        githubHandle: "stellar",
-      });
-      setLoading(false);
-    }, 500);
+    let mounted = true;
+
+    async function fetchProfile() {
+      if (!username) {
+        setError("Invalid username");
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(null);
+        const data = await getProfile(username);
+        
+        if (mounted) {
+          setProfile(data);
+        }
+      } catch (err) {
+        if (!mounted) return;
+
+        if (err instanceof ProfileNotFoundError) {
+          setError("Username not found or profile is private");
+        } else if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError("Failed to load profile");
+        }
+        setProfile(null);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchProfile();
+
+    return () => {
+      mounted = false;
+    };
   }, [username]);
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-white">
-        <p>Loading profile...</p>
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-neutral-400">Loading profile...</p>
+        </div>
       </div>
     );
   }
 
   if (error || !profile) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-white">
-        <div className="text-center">
-          <h1 className="text-4xl font-black mb-4">404</h1>
-          <p className="text-neutral-400">Username not found</p>
+      <div className="min-h-screen flex items-center justify-center text-white px-4">
+        <div className="text-center max-w-md">
+          <h1 className="text-6xl font-black mb-4">404</h1>
+          <p className="text-xl text-neutral-300 mb-6">
+            {error || "Username not found"}
+          </p>
+          <button
+            onClick={() => router.push("/")}
+            className={`px-6 py-3 bg-indigo-500 hover:bg-indigo-600 rounded-lg font-semibold transition ${FOCUS_RING_CLASS}`}
+          >
+            Go Home
+          </button>
         </div>
       </div>
     );
@@ -251,7 +279,7 @@ export default function PublicProfile() {
         </div>
 
         {/* QR Code Preview */}
-        {paymentForm.amount && (
+        {paymentForm.amount && profile.publicKey && (
           <div className="rounded-3xl bg-black/40 border border-white/5 backdrop-blur-2xl p-8">
             <h3 className="text-xl font-bold mb-4">Payment QR Code</h3>
             <QRPreview

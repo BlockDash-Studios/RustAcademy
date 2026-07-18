@@ -61,6 +61,15 @@ Users can:
 * Certificate viewing
 * Badge collection
 
+### 👤 Public Profiles
+
+* Username-based payment pages (`/[username]`)
+* Real-time profile fetching from backend API
+* Error handling with fallback UI
+* Server-side validation and metadata generation
+* localStorage fallback for additional profile metadata
+* 404 error pages with navigation
+
 ---
 
 ## Tech Stack
@@ -99,6 +108,9 @@ src/
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:4000
 NEXT_PUBLIC_WS_URL=ws://localhost:4000
+
+# RustAcademy Backend API URL (overrides NEXT_PUBLIC_API_URL for profile endpoints)
+NEXT_PUBLIC_RustAcademy_API_URL=http://localhost:4000
 
 NEXT_PUBLIC_STELLAR_NETWORK=testnet
 
