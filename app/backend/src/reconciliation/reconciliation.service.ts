@@ -4,6 +4,11 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { AppConfigService } from '../config/app-config.service';
 import { SupabaseService } from '../supabase/supabase.service';
+import {
+  SupabaseAuthError,
+  SupabaseSerializationError,
+  SupabaseTimeoutError,
+} from '../supabase/supabase.errors';
 import { MetricsService } from '../metrics/metrics.service';
 import {
   EscrowDbStatus,
@@ -95,10 +100,27 @@ export class ReconciliationService {
     runId: string,
     batchSize: number,
   ): Promise<EscrowReconciliationResult[]> {
-    const records = await this.supabase.fetchPendingEscrows(
-      this.ACTIONABLE_ESCROW_STATUSES,
-      batchSize,
-    );
+    let records: EscrowRecord[];
+    try {
+      records = await this.supabase.fetchPendingEscrows(
+        this.ACTIONABLE_ESCROW_STATUSES,
+        batchSize,
+      );
+    } catch (err) {
+      if (err instanceof SupabaseTimeoutError) {
+        this.logger.error(
+          `[${runId}] Escrow batch fetch timed out — skipping escrow reconciliation: ${err.message}`,
+        );
+        return [];
+      }
+      if (err instanceof SupabaseAuthError) {
+        this.logger.error(
+          `[${runId}] Escrow batch fetch rejected (auth failure) — skipping escrow reconciliation: ${err.message}`,
+        );
+        return [];
+      }
+      throw err;
+    }
 
     this.logger.log(
       `[${runId}] Found ${records.length} escrow(s) to reconcile`,
@@ -210,7 +232,11 @@ export class ReconciliationService {
     // ─────────────────────────────────────────────────────────────────────────
 
     if (onChainState === OnChainState.Claimed) {
-      await this.supabase.updateEscrowStatus(id, EscrowDbStatus.Claimed);
+      try {
+        await this.supabase.updateEscrowStatus(id, EscrowDbStatus.Claimed);
+      } catch (err) {
+        return this.handleEscrowWriteError(runId, id, err, base, onChainState);
+      }
       this.logger.log(
         `[${runId}] Escrow ${id}: DB was '${dbStatus}' but chain is Claimed → updated to 'claimed'`,
       );
@@ -218,7 +244,11 @@ export class ReconciliationService {
     }
 
     if (onChainState === OnChainState.Expired) {
-      await this.supabase.updateEscrowStatus(id, EscrowDbStatus.Expired);
+      try {
+        await this.supabase.updateEscrowStatus(id, EscrowDbStatus.Expired);
+      } catch (err) {
+        return this.handleEscrowWriteError(runId, id, err, base, onChainState);
+      }
       this.logger.log(
         `[${runId}] Escrow ${id}: DB was '${dbStatus}' but chain indicates Expired → updated to 'expired'`,
       );
@@ -227,7 +257,11 @@ export class ReconciliationService {
 
     if (onChainState === OnChainState.NonExistent) {
       const reason = `DB status is '${dbStatus}' but escrow account does not exist on-chain`;
-      await this.supabase.flagIrreconcilableEscrow(id, reason);
+      try {
+        await this.supabase.flagIrreconcilableEscrow(id, reason);
+      } catch (err) {
+        return this.handleEscrowWriteError(runId, id, err, base, onChainState);
+      }
       this.logger.error(
         `[${runId}] IRRECONCILABLE escrow ${id} (${record.contract_address}): ${reason}`,
       );
@@ -238,6 +272,39 @@ export class ReconciliationService {
     return { ...base, onChainState, resolvedDbStatus: dbStatus, action: ReconciliationAction.NoOp, irreconcilable: false };
   }
 
+  /**
+   * Central handler for Supabase write errors during escrow transitions.
+   * Serialization errors and timeouts are skipped so the record can be
+   * retried on the next reconciliation run. Auth errors bubble up to abort
+   * the entire run.
+   */
+  private handleEscrowWriteError(
+    runId: string,
+    id: string,
+    err: unknown,
+    base: Omit<EscrowReconciliationResult, 'onChainState' | 'resolvedDbStatus' | 'action' | 'irreconcilable' | 'irreconcilableReason'>,
+    onChainState: OnChainState,
+  ): EscrowReconciliationResult {
+    if (err instanceof SupabaseSerializationError) {
+      this.logger.warn(
+        `[${runId}] Escrow ${id}: serialization failure during DB write — will retry next run: ${err.message}`,
+      );
+      return { ...base, onChainState, resolvedDbStatus: null, action: ReconciliationAction.Skipped, irreconcilable: false };
+    }
+    if (err instanceof SupabaseTimeoutError) {
+      this.logger.warn(
+        `[${runId}] Escrow ${id}: DB write timed out — will retry next run: ${err.message}`,
+      );
+      return { ...base, onChainState, resolvedDbStatus: null, action: ReconciliationAction.Skipped, irreconcilable: false };
+    }
+    if (err instanceof SupabaseAuthError) {
+      this.logger.error(
+        `[${runId}] Escrow ${id}: DB write rejected (auth failure) — aborting: ${err.message}`,
+      );
+    }
+    throw err;
+  }
+
   // ---------------------------------------------------------------------------
   // Payment reconciliation
   // ---------------------------------------------------------------------------
@@ -246,10 +313,27 @@ export class ReconciliationService {
     runId: string,
     batchSize: number,
   ): Promise<PaymentReconciliationResult[]> {
-    const records = await this.supabase.fetchPendingPayments(
-      this.ACTIONABLE_PAYMENT_STATUSES,
-      batchSize,
-    );
+    let records: PaymentRecord[];
+    try {
+      records = await this.supabase.fetchPendingPayments(
+        this.ACTIONABLE_PAYMENT_STATUSES,
+        batchSize,
+      );
+    } catch (err) {
+      if (err instanceof SupabaseTimeoutError) {
+        this.logger.error(
+          `[${runId}] Payment batch fetch timed out — skipping payment reconciliation: ${err.message}`,
+        );
+        return [];
+      }
+      if (err instanceof SupabaseAuthError) {
+        this.logger.error(
+          `[${runId}] Payment batch fetch rejected (auth failure) — skipping payment reconciliation: ${err.message}`,
+        );
+        return [];
+      }
+      throw err;
+    }
 
     this.logger.log(
       `[${runId}] Found ${records.length} payment(s) to reconcile`,
@@ -337,7 +421,11 @@ export class ReconciliationService {
         // Already consistent
         return { ...base, onChainState, resolvedDbStatus: PaymentDbStatus.Paid, action: ReconciliationAction.NoOp, irreconcilable: false };
       }
-      await this.supabase.updatePaymentStatus(id, PaymentDbStatus.Paid);
+      try {
+        await this.supabase.updatePaymentStatus(id, PaymentDbStatus.Paid);
+      } catch (err) {
+        return this.handlePaymentWriteError(runId, id, err, base, onChainState);
+      }
       this.logger.log(
         `[${runId}] Payment ${id}: DB was '${dbStatus}' but chain confirms tx → updated to 'paid'`,
       );
@@ -347,7 +435,11 @@ export class ReconciliationService {
     if (onChainState === OnChainState.NonExistent) {
       if (dbStatus === PaymentDbStatus.Paid) {
         const reason = `DB status is 'paid' but transaction ${record.stellar_tx_hash} not found on-chain`;
-        await this.supabase.flagIrreconcilablePayment(id, reason);
+        try {
+          await this.supabase.flagIrreconcilablePayment(id, reason);
+        } catch (err) {
+          return this.handlePaymentWriteError(runId, id, err, base, onChainState);
+        }
         this.logger.error(
           `[${runId}] IRRECONCILABLE payment ${id}: ${reason}`,
         );
@@ -355,7 +447,11 @@ export class ReconciliationService {
       }
 
       // pending/processing with no on-chain record — mark failed
-      await this.supabase.updatePaymentStatus(id, PaymentDbStatus.Failed);
+      try {
+        await this.supabase.updatePaymentStatus(id, PaymentDbStatus.Failed);
+      } catch (err) {
+        return this.handlePaymentWriteError(runId, id, err, base, onChainState);
+      }
       this.logger.warn(
         `[${runId}] Payment ${id}: DB was '${dbStatus}' but tx not found on-chain → updated to 'failed'`,
       );
@@ -364,6 +460,38 @@ export class ReconciliationService {
 
     // Unknown / skip
     return { ...base, onChainState, resolvedDbStatus: dbStatus, action: ReconciliationAction.NoOp, irreconcilable: false };
+  }
+
+  /**
+   * Central handler for Supabase write errors during payment transitions.
+   * Serialization errors and timeouts skip the record for next-run retry.
+   * Auth errors bubble up to abort the run.
+   */
+  private handlePaymentWriteError(
+    runId: string,
+    id: string,
+    err: unknown,
+    base: Omit<PaymentReconciliationResult, 'onChainState' | 'resolvedDbStatus' | 'action' | 'irreconcilable' | 'irreconcilableReason'>,
+    onChainState: OnChainState,
+  ): PaymentReconciliationResult {
+    if (err instanceof SupabaseSerializationError) {
+      this.logger.warn(
+        `[${runId}] Payment ${id}: serialization failure during DB write — will retry next run: ${err.message}`,
+      );
+      return { ...base, onChainState, resolvedDbStatus: null, action: ReconciliationAction.Skipped, irreconcilable: false };
+    }
+    if (err instanceof SupabaseTimeoutError) {
+      this.logger.warn(
+        `[${runId}] Payment ${id}: DB write timed out — will retry next run: ${err.message}`,
+      );
+      return { ...base, onChainState, resolvedDbStatus: null, action: ReconciliationAction.Skipped, irreconcilable: false };
+    }
+    if (err instanceof SupabaseAuthError) {
+      this.logger.error(
+        `[${runId}] Payment ${id}: DB write rejected (auth failure) — aborting: ${err.message}`,
+      );
+    }
+    throw err;
   }
 
   // ---------------------------------------------------------------------------

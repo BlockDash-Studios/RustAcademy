@@ -70,6 +70,50 @@ The API manages:
 
 ---
 
+## Supabase Error Handling
+
+All Supabase interactions are routed through `SupabaseService.handleError()`, which classifies raw PostgREST / PostgreSQL errors into typed exceptions before they propagate. This keeps error-handling logic in one place and lets callers use `instanceof` checks rather than inspecting raw error codes.
+
+### Error classes (`supabase.errors.ts`)
+
+| Class | Code constant | When thrown |
+|---|---|---|
+| `SupabaseUniqueConstraintError` | `23505` | Duplicate key / unique index violation |
+| `SupabaseTimeoutError` | `TIMEOUT` | PG `57014` (statement_timeout), PostgREST `PGRST504`, or message containing "timeout" / "timed out" |
+| `SupabaseAuthError` | `AUTH_ERROR` | PostgREST `PGRST301` / `PGRST302` (JWT expired / invalid), Supabase Auth codes `invalid_grant`, `invalid_token`, `token_expired`, or message containing "jwt" / "unauthorized" / "forbidden" |
+| `SupabaseSerializationError` | `SERIALIZATION_ERROR` | PG `40001` (serialization_failure) or `40P01` (deadlock_detected) — safe to retry |
+| `SupabaseNetworkError` | `NETWORK_ERROR` | Message containing "fetch" / "network" / "econnrefused" / "enotfound" / "connection refused" |
+| `SupabaseError` | _(original code)_ | Any unclassified error — catch-all fallback |
+
+All classes extend `SupabaseError`, so `catch (err) { if (err instanceof SupabaseError) ... }` covers every case.
+
+### Retry guidance
+
+`SupabaseSerializationError` and `SupabaseTimeoutError` are **transient** — the operation can be retried safely with exponential back-off. The reconciliation service already skips affected records and defers them to the next scheduled run instead of marking them irreconcilable.
+
+`SupabaseAuthError` is a **configuration error** — retrying without fixing the credentials will not help. The reconciliation service aborts the affected batch and logs at `ERROR` level.
+
+```typescript
+import {
+  SupabaseAuthError,
+  SupabaseSerializationError,
+  SupabaseTimeoutError,
+  SupabaseUniqueConstraintError,
+} from './supabase/supabase.errors';
+
+try {
+  await supabaseService.insertUsername(name, key);
+} catch (err) {
+  if (err instanceof SupabaseUniqueConstraintError) { /* conflict */ }
+  if (err instanceof SupabaseTimeoutError)          { /* retry */    }
+  if (err instanceof SupabaseSerializationError)    { /* retry */    }
+  if (err instanceof SupabaseAuthError)             { /* alert */    }
+  throw err; // re-raise anything else
+}
+```
+
+---
+
 ## Architecture
 
 ```text
