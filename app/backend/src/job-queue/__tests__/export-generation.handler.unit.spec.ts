@@ -89,22 +89,22 @@ describe('ExportGenerationHandler', () => {
     });
 
     it('should throw PermanentJobError for invalid exportType', async () => {
-      const invalidPayload = { ...mockPayload, exportType: 'invalid' as any };
+      const invalidPayload = { ...mockPayload, exportType: 'invalid' as unknown as ExportGenerationPayload['exportType'] };
       await expect(handler.validate(invalidPayload)).rejects.toThrow(PermanentJobError);
     });
 
     it('should throw PermanentJobError for invalid format', async () => {
-      const invalidPayload = { ...mockPayload, format: 'xml' as any };
+      const invalidPayload = { ...mockPayload, format: 'xml' as unknown as ExportGenerationPayload['format'] };
       await expect(handler.validate(invalidPayload)).rejects.toThrow(PermanentJobError);
     });
 
     it('should throw PermanentJobError for invalid deliveryMethod', async () => {
-      const invalidPayload = { ...mockPayload, deliveryMethod: 'sms' as any };
+      const invalidPayload = { ...mockPayload, deliveryMethod: 'sms' as unknown as ExportGenerationPayload['deliveryMethod'] };
       await expect(handler.validate(invalidPayload)).rejects.toThrow(PermanentJobError);
     });
 
     it('should throw PermanentJobError for missing filters', async () => {
-      const invalidPayload = { ...mockPayload, filters: undefined as any };
+      const invalidPayload = { ...mockPayload, filters: undefined as unknown as ExportGenerationPayload['filters'] };
       await expect(handler.validate(invalidPayload)).rejects.toThrow(PermanentJobError);
     });
   });
@@ -139,7 +139,7 @@ describe('ExportGenerationHandler', () => {
 
     it('should re-throw PermanentJobError without notification', async () => {
       const job = createMockJob({
-        payload: { ...mockPayload, exportType: 'invalid' as any },
+        payload: { ...mockPayload, exportType: 'invalid' as unknown as ExportGenerationPayload['exportType'] },
       });
 
       await expect(handler.execute(job, mockCancellationToken)).rejects.toThrow(PermanentJobError);
