@@ -6,6 +6,7 @@ import { AuditService } from "../audit/audit.service";
 import { ContractRegistryService } from "./contract-registry.service";
 import { ContractChangeWebhookService } from "./contract-change-webhook.service";
 import { ContractChangeWebhookDispatcher } from "./contract-change-webhook.dispatcher";
+import { ContractWritePolicyService } from "../feature-flags/contract-write-policy.service";
 
 describe("ContractRegistryService", () => {
   let service: ContractRegistryService;
@@ -18,6 +19,9 @@ describe("ContractRegistryService", () => {
   >;
   let mockWebhookDispatcher: jest.Mocked<
     Partial<ContractChangeWebhookDispatcher>
+  >;
+  let mockContractWritePolicyService: jest.Mocked<
+    Partial<ContractWritePolicyService>
   >;
 
   beforeEach(() => {
@@ -59,6 +63,10 @@ describe("ContractRegistryService", () => {
       dispatch: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<Partial<ContractChangeWebhookDispatcher>>;
 
+    mockContractWritePolicyService = {
+      assertWritePermission: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<Partial<ContractWritePolicyService>>;
+
     service = new ContractRegistryService(
       mockSupabaseService as unknown as SupabaseService,
       mockAuditService as unknown as AuditService,
@@ -66,6 +74,7 @@ describe("ContractRegistryService", () => {
       mockEventEmitter,
       mockContractChangeWebhookService as unknown as ContractChangeWebhookService,
       mockWebhookDispatcher as unknown as ContractChangeWebhookDispatcher,
+      mockContractWritePolicyService as unknown as ContractWritePolicyService,
     );
   });
 
@@ -99,6 +108,7 @@ describe("ContractRegistryService", () => {
       "deploy-1",
       expect.any(Object),
     );
+    expect(mockContractWritePolicyService.assertWritePermission).toHaveBeenCalled();
   });
 
   it("rejects a mismatched passphrase", async () => {
@@ -228,6 +238,126 @@ describe("ContractRegistryService", () => {
       await expect(service.finalizeDualRead(" RustAcademy")).rejects.toThrow(
         "Registry entry for rustacademy is not in a dual-read transition window",
       );
+    });
+  });
+
+  describe("Ingestion registration safety", () => {
+    it("surfaces dual-read fields and schema version in the registry view", async () => {
+      const mockClient = mockSupabaseService.getClient();
+      mockClient.from.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockResolvedValue({
+          data: [
+            {
+              contract_name: "rustacademy",
+              network: "testnet",
+              contract_id: "C123",
+              previous_contract_id: "CPREV",
+              effective_ledger: 12345,
+              effective_time: "2026-06-02T12:00:00Z",
+              wasm_hash: "abc123",
+              contract_version: 2,
+              deployment_id: "deploy-1",
+              metadata: { eventSchemaVersion: 2 },
+              published_by: "deploy",
+              version: 3,
+              created_at: "2026-06-01T00:00:00Z",
+              updated_at: "2026-06-02T00:00:00Z",
+              network_passphrase: "Test SDF Network ; September 2015",
+              is_active: true,
+            },
+          ],
+          error: null,
+        }),
+      } as never);
+
+      const result = await service.getRegistry();
+
+      expect(result.data.rustacademy).toEqual(
+        expect.objectContaining({
+          id: "C123",
+          previousContractId: "CPREV",
+          effectiveLedger: 12345,
+          effectiveTime: "2026-06-02T12:00:00Z",
+          eventSchemaVersion: 2,
+        }),
+      );
+    });
+
+    it("returns validated ingestion registration when contract and schema match", async () => {
+      const mockClient = mockSupabaseService.getClient();
+      mockClient.from.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockResolvedValue({
+          data: [
+            {
+              contract_name: "rustacademy",
+              network: "testnet",
+              contract_id: "C123",
+              previous_contract_id: null,
+              effective_ledger: null,
+              effective_time: null,
+              wasm_hash: "abc123",
+              contract_version: 2,
+              deployment_id: "deploy-1",
+              metadata: { ingestion: { eventSchemaVersion: 2 } },
+              published_by: "deploy",
+              version: 3,
+              created_at: "2026-06-01T00:00:00Z",
+              updated_at: "2026-06-02T00:00:00Z",
+              network_passphrase: "Test SDF Network ; September 2015",
+              is_active: true,
+            },
+          ],
+          error: null,
+        }),
+      } as never);
+
+      await expect(
+        service.getValidatedIngestionRegistration("RustAcademy", "C123", 2),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          contractId: "C123",
+          eventSchemaVersion: 2,
+        }),
+      );
+    });
+
+    it("rejects ingestion registration when schema metadata is missing", async () => {
+      const mockClient = mockSupabaseService.getClient();
+      mockClient.from.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockResolvedValue({
+          data: [
+            {
+              contract_name: "rustacademy",
+              network: "testnet",
+              contract_id: "C123",
+              previous_contract_id: null,
+              effective_ledger: null,
+              effective_time: null,
+              wasm_hash: "abc123",
+              contract_version: 2,
+              deployment_id: "deploy-1",
+              metadata: {},
+              published_by: "deploy",
+              version: 3,
+              created_at: "2026-06-01T00:00:00Z",
+              updated_at: "2026-06-02T00:00:00Z",
+              network_passphrase: "Test SDF Network ; September 2015",
+              is_active: true,
+            },
+          ],
+          error: null,
+        }),
+      } as never);
+
+      await expect(
+        service.getValidatedIngestionRegistration("RustAcademy", "C123", 2),
+      ).rejects.toThrow("must declare metadata.eventSchemaVersion");
     });
   });
 

@@ -26,6 +26,7 @@ import { CorrelationIdMiddleware } from "./common/middleware/correlation-id.midd
 import { OrganizationContextMiddleware } from "./common/middleware/organization-context.middleware";
 import { ShadowTrafficMiddleware } from "./environment-parity/shadow-traffic.middleware";
 import { IngestionModule } from "./ingestion/ingestion.module";
+import { IngestionBootstrapService } from "./ingestion/ingestion-bootstrap.service";
 import { ApiKeysModule } from "./api-keys/api-keys.module";
 import { MarketplaceModule } from "./marketplace/marketplace.module";
 import { SentryModule } from "./sentry";
@@ -95,6 +96,7 @@ const validatedEnv = envSchema.validate(process.env, {
     ...getDynamicModules(validatedEnv),
   ],
   providers: [
+    ...(validatedEnv.INGESTION_ENABLED ? [IngestionBootstrapService] : []),
     {
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,

@@ -79,6 +79,18 @@ describe("Environment Schema Validation", () => {
       expect(error).toBeUndefined();
       expect(value.SUPABASE_URL).toBe("http://localhost:54321");
     });
+
+    it("should allow explicit ingestion enablement when contract id is configured", () => {
+      const env = {
+        ...validEnv,
+        RustAcademy_CONTRACT_ID: "C1234567890EXAMPLE",
+        INGESTION_ENABLED: true,
+      };
+      const { error, value } = envSchema.validate(env);
+
+      expect(error).toBeUndefined();
+      expect(value.INGESTION_ENABLED).toBe(true);
+    });
   });
 
   describe("missing required variables", () => {
@@ -182,6 +194,15 @@ describe("Environment Schema Validation", () => {
 
       expect(error).toBeDefined();
       expect(error?.message).toContain("SUPABASE_URL");
+    });
+
+    it("should reject INGESTION_ENABLED without RustAcademy_CONTRACT_ID", () => {
+      const env = { ...validEnv, INGESTION_ENABLED: true };
+      const { error } = envSchema.validate(env);
+
+      expect(error).toBeDefined();
+      expect(error?.message).toContain("RustAcademy_CONTRACT_ID");
+      expect(error?.message).toContain("INGESTION_ENABLED");
     });
   });
 

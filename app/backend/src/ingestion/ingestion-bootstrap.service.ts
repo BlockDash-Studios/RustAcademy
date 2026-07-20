@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { AppConfigService } from "../config";
+import { RustAcademy_EVENT_SCHEMA_VERSION } from "./event-schema";
 import { StellarIngestionService } from "./stellar-ingestion.service";
 import { ContractRegistryService } from "../contracts/contract-registry.service";
 
@@ -13,49 +15,51 @@ export class IngestionBootstrapService implements OnModuleInit {
   private readonly logger = new Logger(IngestionBootstrapService.name);
 
   constructor(
+    private readonly config: AppConfigService,
     private readonly ingestion: StellarIngestionService,
     private readonly registry: ContractRegistryService,
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const contractId = process.env["RustAcademy_CONTRACT_ID"];
+    const contractId = this.config.RustAcademyContractId;
 
-    if (!contractId) {
+    if (!this.config.ingestionEnabled) {
       this.logger.warn(
-        " RustAcademy_CONTRACT_ID is not set; Stellar ingestion will NOT start. " +
-          "Set this env var to enable event streaming.",
+        "INGESTION_ENABLED is false; automatic Stellar ingestion bootstrap is disabled.",
       );
       return;
     }
 
-    this.logger.log(`Starting Stellar ingestion for contract ${contractId}`);
-
-    try {
-      const registryData = await this.registry.getRegistry();
-      const RustAcademyEntry = registryData.data.RustAcademy as Record<
-        string,
-        unknown
-      >;
-
-      if (RustAcademyEntry && RustAcademyEntry.previousContractId) {
-        this.logger.log(
-          `Contract registry has dual-read config; starting with previous contract ${RustAcademyEntry.previousContractId}`,
-        );
-        await this.ingestion.startStreamingWithDualRead({
-          contractId,
-          previousContractId: RustAcademyEntry.previousContractId as string,
-          effectiveLedger: RustAcademyEntry.effectiveLedger as
-            | number
-            | undefined,
-        });
-      } else {
-        await this.ingestion.startStreaming(contractId);
-      }
-    } catch (err) {
-      this.logger.warn(
-        `Could not load registry config, using basic streaming: ${(err as Error).message}`,
+    if (!contractId) {
+      throw new Error(
+        "INGESTION_ENABLED is true but RustAcademy_CONTRACT_ID is not configured.",
       );
-      await this.ingestion.startStreaming(contractId);
     }
+
+    this.logger.log(`Validating ingestion startup for contract ${contractId}`);
+
+    const registration = await this.registry.getValidatedIngestionRegistration(
+      "RustAcademy",
+      contractId,
+      RustAcademy_EVENT_SCHEMA_VERSION,
+    );
+
+    this.logger.log(
+      `Starting Stellar ingestion for contract ${registration.contractId} with schema v${registration.eventSchemaVersion}`,
+    );
+
+    if (registration.previousContractId) {
+      this.logger.log(
+        `Contract registry dual-read is active; starting previous contract stream ${registration.previousContractId}`,
+      );
+      await this.ingestion.startStreamingWithDualRead({
+        contractId: registration.contractId,
+        previousContractId: registration.previousContractId,
+        effectiveLedger: registration.effectiveLedger,
+      });
+      return;
+    }
+
+    await this.ingestion.startStreaming(registration.contractId);
   }
 }

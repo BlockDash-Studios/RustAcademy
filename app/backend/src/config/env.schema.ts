@@ -148,6 +148,12 @@ export const envSchema = Joi.object({
       "Soroban contract ID to stream events from (enables Stellar ingestion service)",
     ),
 
+  INGESTION_ENABLED: Joi.boolean()
+    .default(false)
+    .description(
+      "Explicit safety gate for starting contract event ingestion at boot",
+    ),
+
   // ---------------------------------------------------------------------------
   // Notification providers (all optional; omit to disable that channel)
   // ---------------------------------------------------------------------------
@@ -373,7 +379,20 @@ export const envSchema = Joi.object({
   FEATURES_DEVELOPER_ROUTES_ENABLED: Joi.boolean()
     .default(false)
     .description("Whether the developer routes/module is enabled"),
-});
+})
+  .custom((value, helpers) => {
+    if (value.INGESTION_ENABLED && !value.RustAcademy_CONTRACT_ID) {
+      return helpers.error("any.custom", {
+        message:
+          "RustAcademy_CONTRACT_ID is required when INGESTION_ENABLED is true",
+      });
+    }
+
+    return value;
+  }, "ingestion safety validation")
+  .messages({
+    "any.custom": "{{#message}}",
+  });
 
 /**
  * Interface for typed environment variables
@@ -402,6 +421,7 @@ export interface EnvConfig {
   FEATURE_FLAGS_CACHE_TTL_MS: number;
   FEATURE_FLAGS_BOOTSTRAP_JSON?: string;
   RustAcademy_CONTRACT_ID?: string;
+  INGESTION_ENABLED: boolean;
   SENDGRID_API_KEY?: string;
   SENDGRID_FROM_EMAIL?: string;
   EXPO_ACCESS_TOKEN?: string;
