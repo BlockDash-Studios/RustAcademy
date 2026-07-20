@@ -31,6 +31,7 @@ pub mod nonce;
 mod nonce_test;
 mod oracle;
 mod privacy;
+mod legacy_privacy;
 #[cfg(test)]
 mod role_test;
 mod stealth;
@@ -49,6 +50,7 @@ mod upgrade_test;
 
 use errors::RustAcademyError;
 use storage::*;
+use privacy::{add_privacy_history, get_privacy_history, get_privacy_level, set_privacy_level};
 use types::{
     ContractHealth, DeploymentMetadata, DisputeExpiryAction, EscrowEntry,
     EscrowOperationEstimate, EscrowOperationLimits, EscrowStatus, FeatureFlags, FeeConfig,

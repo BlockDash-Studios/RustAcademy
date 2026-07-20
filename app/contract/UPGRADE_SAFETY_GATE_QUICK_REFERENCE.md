@@ -223,6 +223,31 @@ assert_eq!(contract.get_version(), 2);
 
 ---
 
+## Privacy Storage Decoupling (Issue #317)
+
+Legacy boolean privacy (`privacy_enabled`) and the new numeric `PrivacyLevel`
+storage paths are now maintained independently:
+
+| Module              | Responsibility                                              |
+|---------------------|-------------------------------------------------------------|
+| `legacy_privacy.rs` | Backward-compatible boolean read/write with key migration   |
+| `privacy.rs`        | `PrivacyLevel` (numeric), history, and boolean→level migration |
+| `storage.rs`        | All other persistent storage (escrow, fees, admin, etc.)    |
+
+### Migration helper
+
+```rust
+// Convert a legacy boolean flag to the numeric PrivacyLevel API.
+// false → 0, true → 1.  No-op if no boolean flag exists.
+privacy::migrate_boolean_to_level(env, account)
+```
+
+During a rolling upgrade call `migrate_boolean_to_level` for each account
+that may have a legacy boolean flag. Both storage paths coexist until the
+migration completes.
+
+---
+
 ## Related Documentation
 
 - **UPGRADE_SAFETY_GATE.md**: Full spec, usage examples, checklist
