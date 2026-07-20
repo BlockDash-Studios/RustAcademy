@@ -46,8 +46,14 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
       .getRequest<RequestWithRateLimitContext>();
 
     const group = this.resolveGroup(context, req);
-    const window =
-      throttler.name === THROTTLER_BURST_NAME ? "burst" : "sustained";
+
+    if (!throttler.name.startsWith(`${group}_`)) {
+      return true;
+    }
+
+    const window = throttler.name.endsWith(`_${THROTTLER_BURST_NAME}`)
+      ? "burst"
+      : "sustained";
     const windowConfig = throttlerConfig.groups[group][window];
 
     req.rateLimitContext = {

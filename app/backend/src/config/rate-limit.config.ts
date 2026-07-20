@@ -89,15 +89,25 @@ export const throttlerConfig: RateLimitConfig = {
   keyOrder: parseKeyOrder(process.env["RATE_LIMIT_KEY_ORDER"]),
 };
 
-export const throttlerModuleProfiles = [
-  {
-    name: THROTTLER_BURST_NAME,
-    ttl: throttlerConfig.groups.public.burst.ttlMs,
-    limit: throttlerConfig.groups.public.burst.limit,
-  },
-  {
-    name: THROTTLER_SUSTAINED_NAME,
-    ttl: throttlerConfig.groups.public.sustained.ttlMs,
-    limit: throttlerConfig.groups.public.sustained.limit,
-  },
-];
+function buildThrottlerProfiles(): { name: string; ttl: number; limit: number }[] {
+  const profiles: { name: string; ttl: number; limit: number }[] = [];
+  const groups: RateLimitGroup[] = ["public", "authenticated", "webhooks"];
+
+  for (const group of groups) {
+    const config = throttlerConfig.groups[group];
+    profiles.push({
+      name: `${group}_${THROTTLER_BURST_NAME}`,
+      ttl: config.burst.ttlMs,
+      limit: config.burst.limit,
+    });
+    profiles.push({
+      name: `${group}_${THROTTLER_SUSTAINED_NAME}`,
+      ttl: config.sustained.ttlMs,
+      limit: config.sustained.limit,
+    });
+  }
+
+  return profiles;
+}
+
+export const throttlerModuleProfiles = buildThrottlerProfiles();

@@ -76,12 +76,32 @@ describe("CustomThrottlerGuard", () => {
       imports: [
         ThrottlerModule.forRoot([
           {
-            name: THROTTLER_BURST_NAME,
+            name: `public_${THROTTLER_BURST_NAME}`,
             ttl: 10_000,
             limit: 10,
           },
           {
-            name: THROTTLER_SUSTAINED_NAME,
+            name: `public_${THROTTLER_SUSTAINED_NAME}`,
+            ttl: 60_000,
+            limit: 20,
+          },
+          {
+            name: `authenticated_${THROTTLER_BURST_NAME}`,
+            ttl: 10_000,
+            limit: 10,
+          },
+          {
+            name: `authenticated_${THROTTLER_SUSTAINED_NAME}`,
+            ttl: 60_000,
+            limit: 20,
+          },
+          {
+            name: `webhooks_${THROTTLER_BURST_NAME}`,
+            ttl: 10_000,
+            limit: 10,
+          },
+          {
+            name: `webhooks_${THROTTLER_SUSTAINED_NAME}`,
             ttl: 60_000,
             limit: 20,
           },
@@ -116,7 +136,7 @@ describe("CustomThrottlerGuard", () => {
       baseUrl: "/links",
       route: { path: "/metadata" },
     });
-    const props = buildProps(context, THROTTLER_BURST_NAME);
+    const props = buildProps(context, `public_${THROTTLER_BURST_NAME}`);
 
     await guard.handleRequest(props);
 
@@ -135,7 +155,7 @@ describe("CustomThrottlerGuard", () => {
       baseUrl: "/transactions",
       route: { path: "/" },
     });
-    const props = buildProps(context, THROTTLER_SUSTAINED_NAME);
+    const props = buildProps(context, `authenticated_${THROTTLER_SUSTAINED_NAME}`);
 
     await guard.handleRequest(props);
 
@@ -155,7 +175,7 @@ describe("CustomThrottlerGuard", () => {
       { ip: "127.0.0.1", baseUrl: "/webhooks", route: { path: "/:publicKey" } },
       handler,
     );
-    const props = buildProps(context, THROTTLER_BURST_NAME);
+    const props = buildProps(context, `webhooks_${THROTTLER_BURST_NAME}`);
 
     await guard.handleRequest(props);
 
@@ -173,7 +193,7 @@ describe("CustomThrottlerGuard", () => {
       baseUrl: "/links",
       route: { path: "/metadata" },
     });
-    const props = buildProps(context, THROTTLER_BURST_NAME);
+    const props = buildProps(context, `public_${THROTTLER_BURST_NAME}`);
 
     superHandleRequest.mockRejectedValueOnce(new ThrottlerException());
 
@@ -198,7 +218,7 @@ describe("CustomThrottlerGuard", () => {
       route: { path: "/metadata" },
       method: "GET",
     });
-    const props = buildProps(context, THROTTLER_BURST_NAME);
+    const props = buildProps(context, `public_${THROTTLER_BURST_NAME}`);
 
     superHandleRequest.mockRejectedValueOnce(new ThrottlerException());
 
@@ -227,5 +247,19 @@ describe("CustomThrottlerGuard", () => {
   it("falls back to ip tracker when identity headers are absent", async () => {
     const tracker = await guard.getTracker({ ip: "10.0.0.9" });
     expect(tracker).toBe("ip:10.0.0.9");
+  });
+
+  it("skips throttler when name does not match resolved group", async () => {
+    const context = buildContext({
+      ip: "127.0.0.1",
+      baseUrl: "/links",
+      route: { path: "/metadata" },
+    });
+    const props = buildProps(context, `authenticated_${THROTTLER_BURST_NAME}`);
+
+    const result = await guard.handleRequest(props);
+
+    expect(result).toBe(true);
+    expect(superHandleRequest).not.toHaveBeenCalled();
   });
 });
