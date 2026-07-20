@@ -220,7 +220,8 @@ impl RustAcademyContract {
     /// Enable or disable privacy for an account.
     ///
     /// Access: **owner** — `owner` must authorize the call. Gated by the
-    /// [`PauseFlag::SetPrivacy`] feature flag.
+    /// [`PauseFlag::SetPrivacy`] feature flag. The auth check is enforced
+    /// inside [`privacy::set_privacy`].
     ///
     /// # Arguments
     /// * `env` - The contract environment
@@ -232,10 +233,9 @@ impl RustAcademyContract {
     /// * `OperationPaused` - The `SetPrivacy` feature is paused
     /// * `PrivacyAlreadySet` - Privacy state is already at the requested value
     pub fn set_privacy(env: Env, owner: Address, enabled: bool) -> Result<(), RustAcademyError> {
-        // Owner-gated: only the account itself may change its privacy state.
-        // guard_initialized also ensures the contract is properly set up.
+        // guard_initialized ensures the contract is properly set up before any
+        // state is mutated. Owner auth is enforced inside privacy::set_privacy.
         admin::guard_initialized(&env)?;
-        owner.require_auth();
         if storage::is_feature_paused(&env, PauseFlag::SetPrivacy) {
             return Err(RustAcademyError::OperationPaused);
         }

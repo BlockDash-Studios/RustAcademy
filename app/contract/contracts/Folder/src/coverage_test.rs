@@ -368,7 +368,7 @@ fn test_demo_expiry_and_refund_under_10_lines() {
 /// Privacy toggle and balance privacy using TestContext in ≤ 10 lines.
 #[test]
 fn test_demo_privacy_toggle_under_10_lines() {
-    let ctx = TestContext::new(); // 1
+    let ctx = TestContext::with_admin(); // 1 — set_privacy requires initialization
     assert!(!ctx.client.get_privacy(&ctx.alice)); // 2
     ctx.client.set_privacy(&ctx.alice, &true); // 3
     assert!(ctx.client.get_privacy(&ctx.alice)); // 4
