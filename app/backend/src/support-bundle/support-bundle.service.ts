@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AppConfigService } from '../config';
-import { ContractRegistryService } from '../contracts/contract-registry.service';
+import {
+  ContractRegistryService,
+  ContractRegistryViewRecord,
+} from '../contracts/contract-registry.service';
 import { IndexerLagService } from '../indexer-lag/indexer-lag.service';
 import { IndexerCheckpointRepository } from '../ingestion/indexer-checkpoint.repository';
 import { AuditService } from '../audit/audit.service';
@@ -102,13 +105,13 @@ export class SupportBundleService {
     try {
       const registry = await this.registry.getRegistry();
       const activeContracts = Object.entries(registry.data).map(([name, data]) => {
-        const entry = data as Record<string, unknown>;
+        const entry = data as ContractRegistryViewRecord;
         return {
           name,
-          contract_id: (entry.id as string) || '[REDACTED]',
-          version: (entry.version as number) || 0,
-          wasm_hash: ((entry.wasmHash as string) || '').substring(0, 16) + '...',
-          updated_at: (entry.updatedAt as string) || new Date().toISOString(),
+          contract_id: entry.id || '[REDACTED]',
+          version: entry.version || 0,
+          wasm_hash: (entry.wasmHash || '').substring(0, 16) + '...',
+          updated_at: entry.updatedAt || new Date().toISOString(),
         };
       });
 
@@ -159,8 +162,8 @@ export class SupportBundleService {
       const checkpoints: CheckpointDto[] = [];
       for (const contract of contracts) {
         // Try to extract contract ID from registry
-        const registryEntry = registry.data[contract] as Record<string, unknown>;
-        const contractId = registryEntry?.id as string | undefined;
+        const registryEntry = registry.data[contract] as ContractRegistryViewRecord;
+        const contractId = registryEntry?.id;
 
         if (!contractId) continue;
 

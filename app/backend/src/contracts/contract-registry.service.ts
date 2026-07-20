@@ -635,9 +635,7 @@ async finalizeDualRead(
       this.readNestedMetadataNumber(metadata, ["eventSchema", "version"]),
     ];
 
-    return candidates.find(
-      (value): value is number => Number.isInteger(value) && value > 0,
-    );
+    return candidates.find(this.isPositiveInteger);
   }
 
   private readNestedMetadataNumber(
@@ -655,6 +653,10 @@ async finalizeDualRead(
     }
 
     return typeof current === "number" ? current : undefined;
+  }
+
+  private isPositiveInteger(value: unknown): value is number {
+    return typeof value === "number" && Number.isInteger(value) && value > 0;
   }
 
   private buildEtag(version: number): string {
