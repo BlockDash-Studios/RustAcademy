@@ -106,7 +106,6 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
       // Other errors are transient (database errors, network errors, etc.)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const attemptCount = job.attempts + 1;
-      ];
 
       this.logger.error(
         `Export generation failed (jobId: ${job.id}, attempt: ${attemptCount}/${job.maxAttempts}): ${errorMessage}`,
