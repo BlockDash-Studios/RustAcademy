@@ -95,7 +95,7 @@ export const envSchema = Joi.object({
     .empty("")
     .optional()
     .custom((value, helpers) => {
-      if (helpers.prefs?.context === "production" && (!value || value.trim() === "")) {
+      if (process.env.NODE_ENV === "production" && (!value || value.trim() === "")) {
         return helpers.error("any.invalid", {
           message:
             "CORS_ALLOWED_ORIGINS is empty — in production, all cross-origin requests will be blocked unless a Vercel preview project is configured via CORS_VERCEL_PROJECT.",
