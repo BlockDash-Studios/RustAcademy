@@ -178,7 +178,11 @@ fn test_insufficient_role_error() {
 
     match res {
         Err(Ok(RustAcademyError::InsufficientRole)) => (),
-        _ => panic!("Expected InsufficientRole error"),
+        other => assert!(
+            false,
+            "Expected InsufficientRole error but got: {:?}",
+            other
+        ),
     }
 }
 

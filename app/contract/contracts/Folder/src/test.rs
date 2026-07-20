@@ -86,10 +86,18 @@ fn test_emergency_mode_blocks_risky_entry_points_and_allows_safe_paths() {
 
     let refund_res = client.try_refund(&commitment, &user);
 
-    match refund_res {
-        Ok(Ok(_)) => (),
-        Ok(Err(e)) => panic!("Contract Logic Error (Check Status/Expiry): {:?}", e),
-        Err(e) => panic!("Host Auth Error 10 (Check Auth/Account existence): {:?}", e),
+    match &refund_res {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => assert!(
+            false,
+            "Expected refund to succeed but got contract logic error: {:?}",
+            e
+        ),
+        Err(e) => assert!(
+            false,
+            "Expected refund to succeed but got host error: {:?}",
+            e
+        ),
     }
 
     assert!(client.try_cleanup_escrow(&commitment).is_ok());
@@ -368,8 +376,26 @@ fn assert_contract_error<T>(
     expected:  RustAcademyError,
 ) {
     match result {
-        Err(Ok(actual)) => assert_eq!(actual, expected),
-        _ => panic!("expected contract error"),
+        Err(Ok(actual)) => assert_eq!(
+            actual, expected,
+            "Expected contract error {:?} but got {:?}",
+            expected, actual
+        ),
+        Err(Err(host_err)) => assert!(
+            false,
+            "Expected contract error {:?} but got host error: {:?}",
+            expected, host_err
+        ),
+        Ok(Ok(_)) => assert!(
+            false,
+            "Expected contract error {:?} but call succeeded",
+            expected
+        ),
+        Ok(Err(conversion_err)) => assert!(
+            false,
+            "Expected contract error {:?} but got conversion error: {:?}",
+            expected, conversion_err
+        ),
     }
 }
 
@@ -378,17 +404,20 @@ fn latest_contract_event(env: &Env, contract_id: &Address) -> (soroban_sdk::Vec<
     let len = all.len();
 
     for i in (0..len).rev() {
-        let event = all.get(i).unwrap();
+        let event = all.get(i).expect("Event index out of bounds while scanning events");
         if event.0 == *contract_id {
             return (event.1, event.2);
         }
     }
 
-    panic!("no contract event found for contract id")
+    panic!(
+        "No contract event found for contract id — expected at least one event to have been emitted"
+    )
 }
 
 fn event_data_map(env: &Env, data: Val) -> Map<Symbol, Val> {
-    data.try_into_val(env).unwrap()
+    data.try_into_val(env)
+        .expect("Failed to convert event data to Map<Symbol, Val>")
 }
 
 #[test]

@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
-    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable must be set by cargo");
     let dest_path = Path::new(&out_dir).join("build_manifest.rs");
 
     let git_hash = get_git_hash();
@@ -45,7 +45,8 @@ pub const BUILD_MANIFEST_SCHEMA_VERSION: u32 = {};
         schema_version
     );
 
-    fs::write(&dest_path, manifest_content).unwrap();
+    fs::write(&dest_path, manifest_content)
+        .expect("Failed to write build manifest to OUT_DIR");
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/");
@@ -56,9 +57,7 @@ fn get_git_hash() -> String {
     let output = Command::new("git")
         .args(&["rev-parse", "HEAD"])
         .output()
-        .unwrap_or_else(|_| {
-            panic!("Failed to get git hash");
-        });
+        .expect("Failed to execute `git rev-parse HEAD` — is git installed and is this a git repository?");
 
     if output.status.success() {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
