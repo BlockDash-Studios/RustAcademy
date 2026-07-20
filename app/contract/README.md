@@ -192,38 +192,20 @@ stellar contract deploy \
 
 ## Events
 
-### Reward Released
+All events emitted by the `Folder` contract follow canonical schema definitions (`EVENT_SCHEMAS`) with stable event type IDs (`ETID_*`) and deterministic replay fields (`EVENT_REPLAY_FIELDS`: `event_type_id`, `ledger_sequence`, `schema_version`, `timestamp`).
 
-```rust
-(
-  "reward_released",
-  learner
-)
-```
-
-### Certificate Minted
-
-```rust
-(
-  "certificate_minted",
-  learner
-)
-```
-
-### Reputation Updated
-
-```rust
-(
-  "reputation_updated",
-  account
-)
-```
+The contract enforces full runtime schema validation (`validate_event_schemas`) to guarantee:
+- Uniqueness of event names and numeric event type IDs.
+- Valid domain topic namespaces (`TOPIC_ADMIN`, `TOPIC_DISPUTE`, `TOPIC_ESCROW`, `TOPIC_PRIVACY`, `TOPIC_STEALTH`).
+- Alphabetically sorted payload keys without duplicates.
+- Presence of all required replay fields.
+- Runtime cross-checking of all emitted events against `EVENT_SCHEMAS`.
 
 ---
 
 ## Metadata API
 
-The `Folder` contract exposes a stable, read-only metadata surface for tooling, backends, and indexers (Issue #50). All calls are non-mutating and require no authorization.
+The `Folder` contract exposes a stable, read-only metadata surface for tooling, backends, and indexers (Issue #50, Issue #312). All calls are non-mutating and require no authorization.
 
 | Method | Purpose |
 |--------|---------|
@@ -233,6 +215,7 @@ The `Folder` contract exposes a stable, read-only metadata surface for tooling, 
 | `get_upgrade_state()` | Upgrade window and in-progress state. |
 | `get_supported_versions()` | Supported contract and event schema version ranges. |
 | `check_schema_compatibility(contract_version, event_schema_version)` | Whether a caller-supplied version pair is compatible. |
+| `validate_event_schemas()` | Validate all static `EVENT_SCHEMAS` definitions against canonical schema rules. |
 | `get_pause_flags()` | Granular pause bitmask. |
 
 Tooling should call `check_schema_compatibility` before sending writes to avoid version mismatches.

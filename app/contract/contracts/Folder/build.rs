@@ -54,7 +54,7 @@ pub const BUILD_MANIFEST_SCHEMA_VERSION: u32 = {};
 
 fn get_git_hash() -> String {
     let output = Command::new("git")
-        .args(&["rev-parse", "HEAD"])
+        .args(["rev-parse", "HEAD"])
         .output()
         .unwrap_or_else(|_| {
             panic!("Failed to get git hash");
@@ -84,7 +84,7 @@ fn hash_directory(hasher: &mut blake3::Hasher, path: &Path) -> std::io::Result<(
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
             let contents = fs::read(&path)?;
             hasher.update(path.to_string_lossy().as_bytes());
             hasher.update(&contents);

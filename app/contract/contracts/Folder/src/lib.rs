@@ -14,6 +14,8 @@ mod escrow_id;
 #[cfg(test)]
 mod escrow_id_test;
 mod events;
+#[cfg(test)]
+mod events_test;
 mod fee;
 mod fee_router;
 #[cfg(test)]
@@ -816,6 +818,16 @@ impl RustAcademyContract {
             requested_contract_version,
             requested_event_schema_version,
         )
+    }
+
+    /// Validate all static event schema definitions against canonical rules (Issue #312).
+    ///
+    /// Returns `Ok(true)` if all schemas in `EVENT_SCHEMAS` satisfy canonical
+    /// uniqueness, topic prefix, sorted payload keys, mandatory replay fields, and
+    /// versioning constraints.
+    pub fn validate_event_schemas(_env: Env) -> Result<bool, RustAcademyError> {
+        events::validate_event_schemas().map_err(|_| RustAcademyError::InternalError)?;
+        Ok(true)
     }
 
     /// Return the current granular pause bitmask.

@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
+use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol, TryIntoVal, Val};
 
 /// Canonical event schema version.
 ///
@@ -43,6 +43,7 @@ pub const ETID_ESCROW_DISPUTED: u32 = 4;
 pub const ETID_ESCROW_FINALIZED: u32 = 5;
 pub const ETID_PARTIAL_PAYMENT: u32 = 6;
 pub const ETID_AUX_INDICES_CLEANED: u32 = 7;
+pub const ETID_ESCROW_CLEANUP: u32 = 8;
 
 /// Dispute domain IDs (10–19)
 pub const ETID_ARBITER_VOTE_CAST: u32 = 10;
@@ -332,7 +333,19 @@ pub const EVENT_SCHEMAS: &[EventSchema] = &[
         name: "EscrowWithdrawn",
         event_type_id: ETID_ESCROW_WITHDRAWN,
         topics: &[EVENT_TOPIC_ESCROW, "EscrowWithdrawn", "escrow_id", "owner"],
-        payload_keys: &["amount", "event_type_id", "fee", "ledger_sequence", "schema_version", "timestamp", "token"],
+        payload_keys: &[
+            "amount",
+            "arbiter_fee",
+            "collector_fee",
+            "event_type_id",
+            "fee",
+            "ledger_sequence",
+            "net_payout",
+            "platform_fee",
+            "schema_version",
+            "timestamp",
+            "token",
+        ],
         schema_version: EVENT_SCHEMA_VERSION,
     },
     EventSchema {
@@ -369,7 +382,20 @@ pub const EVENT_SCHEMAS: &[EventSchema] = &[
         name: "PerAssetFeeSet",
         event_type_id: ETID_PER_ASSET_FEE_SET,
         topics: &[EVENT_TOPIC_ADMIN, "PerAssetFeeSet", "token"],
-        payload_keys: &["arbiter_bps", "event_type_id", "fee_bps", "ledger_sequence", "schema_version", "timestamp"],
+        payload_keys: &[
+            "arbiter_bps",
+            "arbiter_fee_denominator",
+            "arbiter_fee_numerator",
+            "collector_fee_denominator",
+            "collector_fee_numerator",
+            "event_type_id",
+            "fee_bps",
+            "ledger_sequence",
+            "platform_fee_denominator",
+            "platform_fee_numerator",
+            "schema_version",
+            "timestamp",
+        ],
         schema_version: EVENT_SCHEMA_VERSION,
     },
     EventSchema {
@@ -468,6 +494,13 @@ pub const EVENT_SCHEMAS: &[EventSchema] = &[
         name: "StealthEscrowCleaned",
         event_type_id: ETID_STEALTH_ESCROW_CLEANED,
         topics: &[EVENT_TOPIC_STEALTH, "StealthEscrowCleaned", "stealth_address"],
+        payload_keys: &["event_type_id", "ledger_sequence", "schema_version", "timestamp"],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "EscrowCleanup",
+        event_type_id: ETID_ESCROW_CLEANUP,
+        topics: &[EVENT_TOPIC_ESCROW, "EscrowCleanup", "escrow_id"],
         payload_keys: &["event_type_id", "ledger_sequence", "schema_version", "timestamp"],
         schema_version: EVENT_SCHEMA_VERSION,
     },
@@ -844,6 +877,7 @@ pub(crate) fn publish_contract_migrated(
     .publish(env);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn publish_escrow_withdrawn(
     env: &Env,
     commitment: BytesN<32>,
@@ -1375,6 +1409,7 @@ pub struct DisputeAutoResolvedEvent {
 
     pub recipient: Address,
     pub amount: i128,
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub timestamp: u64,
@@ -1392,6 +1427,7 @@ pub(crate) fn publish_dispute_auto_resolved(
         action: dispute_action_symbol(env, action),
         recipient,
         amount,
+        event_type_id: ETID_DISPUTE_AUTO_RESOLVED,
         schema_version: EVENT_SCHEMA_VERSION,
         ledger_sequence: env.ledger().sequence(),
         timestamp: env.ledger().timestamp(),
@@ -1403,6 +1439,7 @@ pub(crate) fn publish_dispute_auto_resolved(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisputeExpiryActionSetEvent {
     pub action: Symbol,
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub timestamp: u64,
@@ -1414,6 +1451,7 @@ pub(crate) fn publish_dispute_expiry_action_set(
 ) {
     DisputeExpiryActionSetEvent {
         action: dispute_action_symbol(env, action),
+        event_type_id: ETID_DISPUTE_EXPIRY_ACTION_SET,
         schema_version: EVENT_SCHEMA_VERSION,
         ledger_sequence: env.ledger().sequence(),
         timestamp: env.ledger().timestamp(),
@@ -1425,6 +1463,7 @@ pub(crate) fn publish_dispute_expiry_action_set(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisputeTimeoutConfigSetEvent {
     pub timeout_secs: u64,
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub timestamp: u64,
@@ -1433,6 +1472,7 @@ pub struct DisputeTimeoutConfigSetEvent {
 pub(crate) fn publish_dispute_timeout_config_set(env: &Env, timeout_secs: u64) {
     DisputeTimeoutConfigSetEvent {
         timeout_secs,
+        event_type_id: ETID_DISPUTE_TIMEOUT_CONFIG_SET,
         schema_version: EVENT_SCHEMA_VERSION,
         ledger_sequence: env.ledger().sequence(),
         timestamp: env.ledger().timestamp(),
@@ -1448,6 +1488,7 @@ pub struct FeeCollectorRotatedEvent {
     #[topic]
     pub new_collector: Address,
     pub rotation_index: u32,
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub timestamp: u64,
@@ -1461,6 +1502,7 @@ pub(crate) fn publish_fee_collector_rotated(
     FeeCollectorRotatedEvent {
         new_collector,
         rotation_index,
+        event_type_id: ETID_FEE_COLLECTOR_ROTATED,
         schema_version: EVENT_SCHEMA_VERSION,
         ledger_sequence: env.ledger().sequence(),
         timestamp: env.ledger().timestamp(),
@@ -1481,6 +1523,7 @@ pub struct PerAssetFeeSetEvent {
     pub platform_fee_denominator: u32,
     pub collector_fee_numerator: u32,
     pub collector_fee_denominator: u32,
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub timestamp: u64,
@@ -1505,6 +1548,7 @@ pub(crate) fn publish_per_asset_fee_set(
         platform_fee_denominator: platform_fee.denominator,
         collector_fee_numerator: collector_fee.numerator,
         collector_fee_denominator: collector_fee.denominator,
+        event_type_id: ETID_PER_ASSET_FEE_SET,
         schema_version: EVENT_SCHEMA_VERSION,
         ledger_sequence: env.ledger().sequence(),
         timestamp: env.ledger().timestamp(),
@@ -1518,6 +1562,7 @@ pub struct HookRegisteredEvent {
     #[topic]
     pub hook_contract: Address,
 
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub timestamp: u64,
@@ -1526,6 +1571,7 @@ pub struct HookRegisteredEvent {
 pub(crate) fn publish_hook_registered(env: &Env, hook_contract: Address) {
     HookRegisteredEvent {
         hook_contract,
+        event_type_id: ETID_HOOK_REGISTERED,
         schema_version: EVENT_SCHEMA_VERSION,
         ledger_sequence: env.ledger().sequence(),
         timestamp: env.ledger().timestamp(),
@@ -1539,6 +1585,7 @@ pub struct HookUnregisteredEvent {
     #[topic]
     pub hook_contract: Address,
 
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub timestamp: u64,
@@ -1547,6 +1594,7 @@ pub struct HookUnregisteredEvent {
 pub(crate) fn publish_hook_unregistered(env: &Env, hook_contract: Address) {
     HookUnregisteredEvent {
         hook_contract,
+        event_type_id: ETID_HOOK_UNREGISTERED,
         schema_version: EVENT_SCHEMA_VERSION,
         ledger_sequence: env.ledger().sequence(),
         timestamp: env.ledger().timestamp(),
@@ -1560,6 +1608,7 @@ pub struct UpgradeWindowSetEvent {
     #[topic]
     pub admin: Address,
 
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub window_start: u64,
@@ -1575,6 +1624,7 @@ pub(crate) fn publish_upgrade_window_set(
 ) {
     UpgradeWindowSetEvent {
         admin,
+        event_type_id: ETID_UPGRADE_WINDOW_SET,
         schema_version: EVENT_SCHEMA_VERSION,
         ledger_sequence: env.ledger().sequence(),
         window_start,
@@ -1590,6 +1640,7 @@ pub struct PauseFlagsChangedEvent {
     #[topic]
     pub admin: Address,
 
+    pub event_type_id: u32,
     pub schema_version: u32,
     pub ledger_sequence: u32,
     pub flags_enabled: u64,
@@ -1605,6 +1656,7 @@ pub(crate) fn publish_pause_flags_changed(
 ) {
     PauseFlagsChangedEvent {
         admin,
+        event_type_id: ETID_PAUSE_FLAGS_CHANGED,
         schema_version: EVENT_SCHEMA_VERSION,
         ledger_sequence: env.ledger().sequence(),
         flags_enabled,
@@ -1624,15 +1676,166 @@ pub struct EscrowCleanupEvent {
     #[topic]
     pub escrow_id: BytesN<32>,
 
+    pub event_type_id: u32,
     pub schema_version: u32,
+    pub ledger_sequence: u32,
     pub timestamp: u64,
 }
 
 pub(crate) fn publish_escrow_cleanup(env: &Env, commitment: BytesN<32>) {
     EscrowCleanupEvent {
         escrow_id: commitment,
+        event_type_id: ETID_ESCROW_CLEANUP,
         schema_version: EVENT_SCHEMA_VERSION,
+        ledger_sequence: env.ledger().sequence(),
         timestamp: env.ledger().timestamp(),
     }
     .publish(env);
 }
+
+// -----------------------------------------------------------------------------
+// Runtime Schema Validation & Cross-Checking (Issue #312)
+// -----------------------------------------------------------------------------
+
+/// Validate an individual [`EventSchema`] against canonical schema rules.
+#[allow(dead_code)]
+pub fn validate_event_schema_entry(schema: &EventSchema) -> Result<(), &'static str> {
+    if schema.name.is_empty() {
+        return Err("Event schema name cannot be empty");
+    }
+    if schema.event_type_id == 0 {
+        return Err("Event type ID cannot be zero");
+    }
+    if schema.schema_version != EVENT_SCHEMA_VERSION {
+        return Err("Event schema version mismatch");
+    }
+    if schema.topics.len() < 2 {
+        return Err("Event topics must have at least 2 elements");
+    }
+    let valid_topics = [
+        EVENT_TOPIC_ADMIN,
+        EVENT_TOPIC_DISPUTE,
+        EVENT_TOPIC_ESCROW,
+        EVENT_TOPIC_PRIVACY,
+        EVENT_TOPIC_STEALTH,
+    ];
+    if !valid_topics.contains(&schema.topics[0]) {
+        return Err("Invalid event topic domain namespace");
+    }
+    if schema.topics[1] != schema.name {
+        return Err("Second event topic must match event name");
+    }
+
+    // Check payload keys are strictly sorted alphabetically without duplicates.
+    for window in schema.payload_keys.windows(2) {
+        if window[0] >= window[1] {
+            return Err("Payload keys must be strictly sorted alphabetically without duplicates");
+        }
+    }
+
+    // Check mandatory replay fields are present in payload_keys.
+    for replay_field in EVENT_REPLAY_FIELDS {
+        if !schema.payload_keys.contains(replay_field) {
+            return Err("Missing mandatory event replay field in payload keys");
+        }
+    }
+
+    Ok(())
+}
+
+/// Enforce static runtime validation over all entries in [`EVENT_SCHEMAS`].
+#[allow(dead_code)]
+pub fn validate_event_schemas() -> Result<(), &'static str> {
+    if EVENT_SCHEMAS.is_empty() {
+        return Err("EVENT_SCHEMAS catalog cannot be empty");
+    }
+
+    for (i, schema) in EVENT_SCHEMAS.iter().enumerate() {
+        validate_event_schema_entry(schema)?;
+
+        for other_schema in EVENT_SCHEMAS.iter().skip(i + 1) {
+            if schema.name == other_schema.name {
+                return Err("Duplicate event schema name found");
+            }
+            if schema.event_type_id == other_schema.event_type_id {
+                return Err("Duplicate event type ID found");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Cross-check an emitted Soroban event against the [`EVENT_SCHEMAS`] catalog.
+#[allow(dead_code)]
+pub fn validate_emitted_event(
+    env: &Env,
+    topics: &soroban_sdk::Vec<Val>,
+    data: &Val,
+) -> Result<&'static EventSchema, &'static str> {
+    if topics.len() < 2 {
+        return Err("Emitted event has fewer than 2 topics");
+    }
+
+    let topic_name_val = topics.get(1).ok_or("Missing topic[1]")?;
+    let topic_name: Symbol = topic_name_val
+        .try_into_val(env)
+        .map_err(|_| "Failed to parse topic[1] as Symbol")?;
+
+    // Find matching schema by name
+    let schema = EVENT_SCHEMAS
+        .iter()
+        .find(|s| Symbol::new(env, s.name) == topic_name)
+        .ok_or("No matching EventSchema found for emitted event name")?;
+
+    // Check topics count match
+    if topics.len() != schema.topics.len() as u32 {
+        return Err("Emitted event topics count does not match schema topics count");
+    }
+
+    // Validate topic 0 namespace
+    let topic_domain_val = topics.get(0).ok_or("Missing topic[0]")?;
+    let topic_domain: Symbol = topic_domain_val
+        .try_into_val(env)
+        .map_err(|_| "Failed to parse topic[0] as Symbol")?;
+    if Symbol::new(env, schema.topics[0]) != topic_domain {
+        return Err("Emitted event domain topic[0] mismatch");
+    }
+
+    // Validate payload fields
+    let data_map: soroban_sdk::Map<Symbol, Val> = data
+        .try_into_val(env)
+        .map_err(|_| "Failed to convert event data payload to Map")?;
+
+    for &key_str in schema.payload_keys {
+        let key_sym = Symbol::new(env, key_str);
+        if !data_map.contains_key(key_sym) {
+            return Err("Emitted event payload missing expected schema key");
+        }
+    }
+
+    // Validate event_type_id in payload
+    let etid_val = data_map
+        .get(Symbol::new(env, "event_type_id"))
+        .ok_or("Missing event_type_id in payload")?;
+    let etid: u32 = etid_val
+        .try_into_val(env)
+        .map_err(|_| "Failed to parse event_type_id as u32")?;
+    if etid != schema.event_type_id {
+        return Err("Emitted event_type_id does not match schema event_type_id");
+    }
+
+    // Validate schema_version in payload
+    let version_val = data_map
+        .get(Symbol::new(env, "schema_version"))
+        .ok_or("Missing schema_version in payload")?;
+    let version: u32 = version_val
+        .try_into_val(env)
+        .map_err(|_| "Failed to parse schema_version as u32")?;
+    if version != schema.schema_version {
+        return Err("Emitted schema_version does not match schema schema_version");
+    }
+
+    Ok(schema)
+}
+

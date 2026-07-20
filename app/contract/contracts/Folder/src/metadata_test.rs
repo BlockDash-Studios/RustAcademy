@@ -456,3 +456,10 @@ fn golden_supported_versions_schema_is_stable() {
     let _min_event_schema_version: u32 = versions.min_event_schema_version;
     let _supported_event_versions: soroban_sdk::Vec<u32> = versions.supported_event_versions;
 }
+
+#[test]
+fn metadata_validate_event_schemas_succeeds() {
+    let (_env, client) = setup();
+    let valid = client.validate_event_schemas();
+    assert!(valid);
+}
