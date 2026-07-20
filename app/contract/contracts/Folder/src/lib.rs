@@ -219,17 +219,24 @@ impl RustAcademyContract {
 
     /// Enable or disable privacy for an account.
     ///
+    /// Access: **owner** — `owner` must authorize the call. Gated by the
+    /// [`PauseFlag::SetPrivacy`] feature flag.
+    ///
     /// # Arguments
     /// * `env` - The contract environment
-    /// * `owner` - The account address to configure
+    /// * `owner` - The account address to configure (must authorize)
     /// * `enabled` - `true` to enable privacy, `false` to disable
     ///
     /// # Errors
-    /// * `ContractPaused` - Contract is currently paused
+    /// * `Unauthorized` - Contract is not initialized
+    /// * `OperationPaused` - The `SetPrivacy` feature is paused
     /// * `PrivacyAlreadySet` - Privacy state is already at the requested value
     pub fn set_privacy(env: Env, owner: Address, enabled: bool) -> Result<(), RustAcademyError> {
+        // Owner-gated: only the account itself may change its privacy state.
+        // guard_initialized also ensures the contract is properly set up.
         admin::guard_initialized(&env)?;
-        if is_feature_paused(&env, PauseFlag::SetPrivacy) {
+        owner.require_auth();
+        if storage::is_feature_paused(&env, PauseFlag::SetPrivacy) {
             return Err(RustAcademyError::OperationPaused);
         }
         privacy::set_privacy(&env, owner, enabled)
@@ -359,13 +366,20 @@ impl RustAcademyContract {
     /// Returns the new counter value. Parameters `_from`, `_to`, `_amount` are reserved for
     /// future use; the implementation only increments the counter.
     ///
+    /// Access: requires initialized contract. Gated by `guard_initialized` to prevent
+    /// counter manipulation on an uninitialized deployment.
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `_from` - Reserved (depositor address for future use)
     /// * `_to` - Reserved (recipient address for future use)
     /// * `_amount` - Reserved (amount for future use)
-    pub fn create_escrow(env: Env, _from: Address, _to: Address, _amount: u64) -> u64 {
-        increment_escrow_counter(&env)
+    ///
+    /// # Errors
+    /// * `Unauthorized` - Contract has not been initialized
+    pub fn create_escrow(env: Env, _from: Address, _to: Address, _amount: u64) -> Result<u64, RustAcademyError> {
+        admin::guard_initialized(&env)?;
+        Ok(increment_escrow_counter(&env))
     }
 
     /// Health check for deployment and monitoring.
@@ -572,7 +586,7 @@ impl RustAcademyContract {
         env: Env,
         stealth_address: BytesN<32>,
     ) -> Result<(), RustAcademyError> {
-        admin::require_initialized(&env)?;
+        admin::guard_initialized(&env)?;
         stealth::cleanup_stealth_escrow(&env, stealth_address)
     }
 
@@ -871,13 +885,6 @@ impl RustAcademyContract {
     pub fn set_paused(env: Env, caller: Address, new_state: bool) -> Result<(), RustAcademyError> {
         admin::guard_admin_config(&env)?;
         admin::set_paused(&env, caller, new_state)
-    }
-
-    /// Check if the function is currently paused.
-    ///
-    /// Returns `true` if paused, `false` otherwise.
-    pub fn is_feature_paused(env: &Env, flag: PauseFlag) -> bool {
-        storage::is_feature_paused(env, flag)
     }
 
     /// Pause a function in the contract (**Admin only**).
