@@ -94,6 +94,15 @@ export const envSchema = Joi.object({
   CORS_ALLOWED_ORIGINS: Joi.string()
     .empty("")
     .optional()
+    .custom((value, helpers) => {
+      if (helpers.state?.prefs?.context === "production" && (!value || value.trim() === "")) {
+        return helpers.error("any.invalid", {
+          message:
+            "CORS_ALLOWED_ORIGINS is empty — in production, all cross-origin requests will be blocked unless a Vercel preview project is configured via CORS_VERCEL_PROJECT.",
+        });
+      }
+      return value;
+    })
     .description(
       "Comma-separated list of allowed CORS origins (e.g. https:// RustAcademy.to,https://app. RustAcademy.to). " +
         "Required in production when no wildcard is desired.",
