@@ -102,6 +102,7 @@ use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 
 use crate::{
     storage::*,
+    privacy::{add_privacy_history, get_privacy_history, get_privacy_level, set_privacy_level},
     types::{EscrowEntry, EscrowStatus},
 };
 
