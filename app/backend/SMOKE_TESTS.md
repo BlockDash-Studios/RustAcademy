@@ -117,6 +117,19 @@ The smoke test workflow (`.github/workflows/smoke-tests.yml`):
 - `SMOKE_TEST_BASE_URL`: Target API URL
 - `NODE_ENV`: Test environment
 - `STELLAR_NETWORK`: Stellar network (mainnet/testnet)
+- `RustAcademy_CONTRACT_ID`: Active contract ID used by Soroban-dependent checks
+- `INGESTION_ENABLED`: Must be `true` before boot-time ingestion is allowed
+
+### Ingestion Safety Gate
+
+Before enabling contract event ingestion in any shared environment:
+
+1. Set `INGESTION_ENABLED=true`; `RustAcademy_CONTRACT_ID` alone no longer starts ingestion.
+2. Publish the active `RustAcademy` registry entry with matching `contractId`.
+3. Include `metadata.eventSchemaVersion` in the registry entry and keep it aligned with the backend-supported schema version.
+4. If dual-read is configured, provide `previousContractId` plus `effectiveLedger` or `effectiveTime`.
+
+If registry validation fails, the backend now refuses to start ingestion instead of falling back to an unvalidated event stream.
 
 ## Test Categories
 

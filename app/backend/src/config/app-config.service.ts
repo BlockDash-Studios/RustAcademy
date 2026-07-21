@@ -207,6 +207,14 @@ export class AppConfigService {
   }
 
   /**
+   * Explicit ingestion boot gate.
+   * Contract ingestion only starts automatically when this flag is enabled.
+   */
+  get ingestionEnabled(): boolean {
+    return this.configService.get("INGESTION_ENABLED", { infer: true });
+  }
+
+  /**
    * Sentry DSN for error reporting. Undefined means Sentry is disabled.
    */
   get sentryDsn(): string | undefined {
