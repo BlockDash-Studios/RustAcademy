@@ -151,6 +151,31 @@ STELLAR_RPC_URL=
 REWARD_POOL_SECRET_KEY=
 ```
 
+### CORS Configuration
+
+In production (`NODE_ENV=production`), CORS is enforced by the origin allow list:
+
+| Variable | Description |
+|---|---|
+| `CORS_ALLOWED_ORIGINS` | Comma-separated list of exact origin URLs to allow (e.g. `https:// RustAcademy.to,https://app. RustAcademy.to`). **Required in production** unless only Vercel preview URLs are needed. |
+| `CORS_VERCEL_PROJECT` | Vercel project slug (e.g. ` RustAcademy-frontend`). When set, preview URLs matching `https://<slug>-<hash>.vercel.app` are allowed. |
+
+#### Vercel Preview URL Validation
+
+When `CORS_VERCEL_PROJECT` is set, the following URL formats are allowed in production:
+
+- `https://<project>-<hash>.vercel.app` (hash only)
+- `https://<project>-<hash>-<team>.vercel.app` (hash + team slug)
+- `https://<project>-<hash>-<team>-<segment>.vercel.app` (multiple segments)
+
+The `<hash>` segment may contain uppercase and lowercase alphanumeric characters (`A-Za-z0-9`). Special characters in the project slug (e.g., dots, underscores) are properly escaped so they are matched literally.
+
+URLs with a different project name, missing hash segment, or non-Vercel domains are blocked. Spoofed project names in subdomains (e.g., `https://evil-project-<hash>.vercel.app`) are also rejected.
+
+In non-production environments all origins are permitted for development convenience.
+
+**Note:** Setting `CORS_ALLOWED_ORIGINS` to an empty value in production will cause a validation warning, as this blocks all cross-origin requests.
+
 ---
 
 ## Run Locally

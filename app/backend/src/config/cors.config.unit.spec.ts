@@ -71,11 +71,38 @@ describe("buildCorsOptions", () => {
       vercelProject: " RustAcademy-frontend",
     });
 
-    it("allows a valid Vercel preview URL", async () => {
+    it("allows a valid Vercel preview URL with hash and team", async () => {
       await expect(
         resolveOrigin(
           opts,
           "https:// RustAcademy-frontend-abc123-team.vercel.app",
+        ),
+      ).resolves.toBe(true);
+    });
+
+    it("allows a preview URL with only a hash segment (no team)", async () => {
+      await expect(
+        resolveOrigin(
+          opts,
+          "https:// RustAcademy-frontend-abc123def.vercel.app",
+        ),
+      ).resolves.toBe(true);
+    });
+
+    it("allows a preview URL with uppercase hash characters", async () => {
+      await expect(
+        resolveOrigin(
+          opts,
+          "https:// RustAcademy-frontend-AbCdEf12-team.vercel.app",
+        ),
+      ).resolves.toBe(true);
+    });
+
+    it("allows a preview URL with multiple hash-team segments", async () => {
+      await expect(
+        resolveOrigin(
+          opts,
+          "https:// RustAcademy-frontend-abc123-def456-team789.vercel.app",
         ),
       ).resolves.toBe(true);
     });
@@ -95,6 +122,24 @@ describe("buildCorsOptions", () => {
       ).rejects.toThrow("Origin not allowed");
     });
 
+    it("blocks a URL without a hash segment", async () => {
+      await expect(
+        resolveOrigin(
+          opts,
+          "https:// RustAcademy-frontend.vercel.app",
+        ),
+      ).rejects.toThrow("Origin not allowed");
+    });
+
+    it("blocks a URL with non-vercel domain", async () => {
+      await expect(
+        resolveOrigin(
+          opts,
+          "https:// RustAcademy-frontend-abc123-team.evil-app.com",
+        ),
+      ).rejects.toThrow("Origin not allowed");
+    });
+
     it("still allows the static production origin", async () => {
       await expect(
         resolveOrigin(opts, "https:// RustAcademy.to"),
@@ -110,6 +155,84 @@ describe("buildCorsOptions", () => {
       });
       expect(opts.origin).not.toBe(true);
       expect(opts.origin).not.toBe("*");
+    });
+  });
+
+  describe("production — Vercel project with special regex characters", () => {
+    const opts = buildCorsOptions({
+      nodeEnv: "production",
+      allowedOrigins: [],
+      vercelProject: "my.app_v2",
+    });
+
+    it("allows a preview URL when project name contains dots and underscores", async () => {
+      await expect(
+        resolveOrigin(
+          opts,
+          "https://my.app_v2-abc123-team.vercel.app",
+        ),
+      ).resolves.toBe(true);
+    });
+
+    it("blocks a URL that uses unescaped regex wildcard", async () => {
+      await expect(
+        resolveOrigin(
+          opts,
+          "https://myXappXv2-abc123-team.vercel.app",
+        ),
+      ).rejects.toThrow("Origin not allowed");
+    });
+  });
+
+  describe("production — empty CORS_ALLOWED_ORIGINS", () => {
+    it("allows requests with no origin (server-to-server) even with empty list", async () => {
+      const opts = buildCorsOptions({
+        nodeEnv: "production",
+        allowedOrigins: [],
+      });
+      await expect(resolveOrigin(opts, undefined)).resolves.toBe(true);
+    });
+
+    it("blocks all origins when allowedOrigins is empty and no vercel project", async () => {
+      const opts = buildCorsOptions({
+        nodeEnv: "production",
+        allowedOrigins: [],
+      });
+      await expect(
+        resolveOrigin(opts, "https://example.com"),
+      ).rejects.toThrow("Origin not allowed");
+    });
+  });
+
+  describe("production — whitespace-only entries filtered", () => {
+    it("filters out whitespace-only entries from allowed origins", async () => {
+      const opts = buildCorsOptions({
+        nodeEnv: "production",
+        allowedOrigins: ["  ", "", "  ", "https://real.origin.com"],
+      });
+      await expect(
+        resolveOrigin(opts, "https://real.origin.com"),
+      ).resolves.toBe(true);
+    });
+
+    it("blocks origins that only match whitespace entries", async () => {
+      const opts = buildCorsOptions({
+        nodeEnv: "production",
+        allowedOrigins: ["  ", "", "  "],
+      });
+      await expect(
+        resolveOrigin(opts, "https://example.com"),
+      ).rejects.toThrow("Origin not allowed");
+    });
+  });
+
+  describe("production — empty string origin", () => {
+    it("allows empty string origin (no Origin header)", async () => {
+      const opts = buildCorsOptions({
+        nodeEnv: "production",
+        allowedOrigins: ["https://example.com"],
+      });
+      await expect(resolveOrigin(opts, undefined)).resolves.toBe(true);
     });
   });
 
