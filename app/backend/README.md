@@ -130,6 +130,18 @@ Stellar
 Claude
 ```
 
+### Contract Event Ingestion
+
+The backend ingests real-time events from the Folder contract via Horizon API. All events follow standardized schemas with:
+
+- **Stable event type IDs** (`event_type_id`) for routing
+- **Domain-based topic namespaces** (`TOPIC_ADMIN`, `TOPIC_ESCROW`, etc.) for filtering
+- **Mandatory replay fields** (`ledger_sequence`, `timestamp`, `schema_version`) for deduplication
+
+For complete event schemas, stable IDs, and indexer integration guides, see:
+- [Contract Event Reference](docs/CONTRACT_EVENTS.md) — Comprehensive event catalog
+- [Contract README](../contract/README.md#events) — Event overview
+
 ---
 
 ## Environment Variables

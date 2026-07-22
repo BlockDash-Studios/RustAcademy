@@ -261,15 +261,21 @@ UpgradeCompleted {
 
 ### UpgradeStarted
 
+**Event Type ID:** `ETID_UPGRADE_STARTED = 53`  
+**Topic Namespace:** `EVENT_TOPIC_ADMIN = "TOPIC_ADMIN"`
+
 ```rust
 #[contractevent(topics = ["TOPIC_ADMIN", "UpgradeStarted"])]
 pub struct UpgradeStartedEvent {
     #[topic]
     pub admin: Address,
 
-    pub schema_version: u32,           // = 2
+    pub event_type_id: u32,             // = 53 (ETID_UPGRADE_STARTED)
+    pub schema_version: u32,            // = 2
+    pub ledger_sequence: u32,           // Ledger sequence number
     pub old_version: u32,               // Current contract version
     pub new_version: u32,               // Target version
+    pub new_wasm_hash: BytesN<32>,      // Target WASM hash
     pub window_start: u64,              // Ledger timestamp (start of window)
     pub window_end: u64,                // Ledger timestamp (end, 0 = unbounded)
     pub timestamp: u64,                 // Ledger timestamp (now)
@@ -278,18 +284,25 @@ pub struct UpgradeStartedEvent {
 
 ### UpgradeCompleted
 
+**Event Type ID:** `ETID_UPGRADE_COMPLETED = 54`  
+**Topic Namespace:** `EVENT_TOPIC_ADMIN = "TOPIC_ADMIN"`
+
 ```rust
 #[contractevent(topics = ["TOPIC_ADMIN", "UpgradeCompleted"])]
 pub struct UpgradeCompletedEvent {
     #[topic]
     pub admin: Address,
 
-    pub schema_version: u32,           // = 2
+    pub event_type_id: u32,             // = 54 (ETID_UPGRADE_COMPLETED)
+    pub schema_version: u32,            // = 2
+    pub ledger_sequence: u32,           // Ledger sequence number
     pub old_version: u32,               // Version before migration
     pub new_version: u32,               // Version after migration
     pub timestamp: u64,                 // Ledger timestamp (now)
 }
 ```
+
+**Note:** All upgrade events use the `TOPIC_ADMIN` namespace and include mandatory replay fields (`event_type_id`, `schema_version`, `ledger_sequence`, `timestamp`) for indexer compatibility. See the [contract README](../README.md#events) for complete event schema documentation.
 
 ---
 
