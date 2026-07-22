@@ -217,6 +217,8 @@ The `Folder` contract exposes a stable, read-only metadata surface for tooling, 
 | `check_schema_compatibility(contract_version, event_schema_version)` | Whether a caller-supplied version pair is compatible. |
 | `validate_event_schemas()` | Validate all static `EVENT_SCHEMAS` definitions against canonical schema rules. |
 | `get_pause_flags()` | Granular pause bitmask. |
+| `get_dispute_timeout()` | Current global dispute resolution timeout in seconds (default: 7 days / 604800). |
+| `get_dispute_expiry_action()` | Current default action for expired disputes (default: `RefundOwner`). |
 
 Tooling should call `check_schema_compatibility` before sending writes to avoid version mismatches.
 
