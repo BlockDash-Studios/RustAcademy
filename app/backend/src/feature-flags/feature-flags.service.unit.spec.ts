@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 
-import { AppConfigService } from '../config';
+import { AppConfigService } from '../config/app-config.service';
 import { AuditService } from '../audit/audit.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { FeatureFlagsService } from './feature-flags.service';

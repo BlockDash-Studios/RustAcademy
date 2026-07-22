@@ -109,6 +109,30 @@ exports.envSchema = Joi.object({
     FEATURE_FLAGS_BOOTSTRAP_JSON: Joi.string()
         .empty("")
         .optional()
+        .custom(function (value, helpers) {
+            if (!value) return value;
+            try {
+                var parsed = JSON.parse(value);
+                if (!Array.isArray(parsed)) {
+                    return helpers.error("any.custom", {
+                        message: "FEATURE_FLAGS_BOOTSTRAP_JSON must be a valid JSON array of feature flag objects",
+                    });
+                }
+                for (var _i = 0, parsed_1 = parsed; _i < parsed_1.length; _i++) {
+                    var item = parsed_1[_i];
+                    if (typeof item !== "object" || item === null || typeof item.key !== "string" || !item.key.trim()) {
+                        return helpers.error("any.custom", {
+                            message: "FEATURE_FLAGS_BOOTSTRAP_JSON array items must be objects with a non-empty string 'key' property",
+                        });
+                    }
+                }
+            } catch (err) {
+                return helpers.error("any.custom", {
+                    message: "FEATURE_FLAGS_BOOTSTRAP_JSON contains invalid JSON: " + err.message,
+                });
+            }
+            return value;
+        })
         .description("Optional JSON array of bootstrap feature flags used when the store is unavailable"),
     // Stellar ingestion (optional; omit to disable)
     RustAcademy_CONTRACT_ID: Joi.string()

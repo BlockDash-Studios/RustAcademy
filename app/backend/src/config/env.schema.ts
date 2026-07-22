@@ -148,6 +148,36 @@ export const envSchema = Joi.object({
   FEATURE_FLAGS_BOOTSTRAP_JSON: Joi.string()
     .empty("")
     .optional()
+    .custom((value, helpers) => {
+      if (!value) return value;
+      try {
+        const parsed = JSON.parse(value);
+        if (!Array.isArray(parsed)) {
+          return helpers.error("any.custom", {
+            message:
+              "FEATURE_FLAGS_BOOTSTRAP_JSON must be a valid JSON array of feature flag objects",
+          });
+        }
+        for (const item of parsed) {
+          if (
+            typeof item !== "object" ||
+            item === null ||
+            typeof item.key !== "string" ||
+            !item.key.trim()
+          ) {
+            return helpers.error("any.custom", {
+              message:
+                "FEATURE_FLAGS_BOOTSTRAP_JSON array items must be objects with a non-empty string 'key' property",
+            });
+          }
+        }
+      } catch (err) {
+        return helpers.error("any.custom", {
+          message: `FEATURE_FLAGS_BOOTSTRAP_JSON contains invalid JSON: ${(err as Error).message}`,
+        });
+      }
+      return value;
+    })
     .description(
       "Optional JSON array of bootstrap feature flags used when the store is unavailable",
     ),
