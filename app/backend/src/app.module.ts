@@ -26,7 +26,6 @@ import { CorrelationIdMiddleware } from "./common/middleware/correlation-id.midd
 import { OrganizationContextMiddleware } from "./common/middleware/organization-context.middleware";
 import { ShadowTrafficMiddleware } from "./environment-parity/shadow-traffic.middleware";
 import { IngestionModule } from "./ingestion/ingestion.module";
-import { IngestionBootstrapService } from "./ingestion/ingestion-bootstrap.service";
 import { ApiKeysModule } from "./api-keys/api-keys.module";
 import { MarketplaceModule } from "./marketplace/marketplace.module";
 import { SentryModule } from "./sentry";
@@ -45,7 +44,7 @@ import { throttlerModuleProfiles } from "./config/rate-limit.config";
 import { EnvironmentParityModule } from "./environment-parity/environment-parity.module";
 import { IndexerLagModule } from "./indexer-lag";
 import { SupportBundleModule } from "./support-bundle/support-bundle.module";
-import { getDynamicModules } from "./module-factory";
+import { EnvironmentModuleLoader } from "./module-factory";
 import { ChatModule } from "./chat/chat.module";
 
 // Validate environment variables for module composition.
@@ -54,6 +53,9 @@ const validatedEnv = envSchema.validate(process.env, {
   allowUnknown: true,
   abortEarly: false,
 }).value as EnvConfig;
+
+// Initialize the typed environment module loader
+const moduleLoader = new EnvironmentModuleLoader(validatedEnv);
 
 @Module({
   imports: [
@@ -93,10 +95,10 @@ const validatedEnv = envSchema.validate(process.env, {
     IndexerLagModule,
     SupportBundleModule,
     ChatModule,
-    ...getDynamicModules(validatedEnv),
+    ...moduleLoader.getModules(),
   ],
   providers: [
-    ...(validatedEnv.INGESTION_ENABLED ? [IngestionBootstrapService] : []),
+    ...moduleLoader.getProviders(),
     {
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,
