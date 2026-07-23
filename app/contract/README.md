@@ -343,4 +343,18 @@ All contracts must maintain:
 
 before deployment to production.
 
+### Storage TTL is not a coverage substitute
+
+Persistent-entry TTL (storage rent/expiry) is tracked in **ledger sequence
+numbers**, not timestamps — advancing `env.ledger().set_timestamp(..)` in a
+test has no effect on it. Use `env.ledger().set_sequence_number(..)` (or the
+`storage::ttl_test_utils` helpers in the Folder contract) instead.
+
+The local Soroban test sandbox also does not evict expired persistent
+entries the way a live network would: reading an entry after its TTL has
+lapsed silently auto-restores it to a minimum floor rather than erroring or
+removing it. A test asserting a record `is_some()` after "aging" the ledger
+proves nothing about TTL either way — it passes whether or not the TTL logic
+works. Assert on the actual TTL value (`get_ttl()`) instead.
+
 ---

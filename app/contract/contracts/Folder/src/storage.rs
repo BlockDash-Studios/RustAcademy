@@ -643,6 +643,48 @@ pub fn set_or_extend_ttl(env: &Env, key: &DataKey, record_type: RecordType) {
         .extend_ttl(key, policy.threshold, policy.ttl);
 }
 
+// -----------------------------------------------------------------------------
+// TTL test utilities (deterministic expiry simulation)
+// -----------------------------------------------------------------------------
+//
+// Persistent-entry TTL is counted in **ledger sequence numbers**, not
+// timestamps — `env.ledger().set_timestamp(..)` has no effect on it. Advance
+// time for TTL purposes with [`advance_ledger_sequence`] instead.
+//
+// The local Soroban test sandbox (`Env::default()`, recording footprint mode)
+// also does not evict persistent entries the way a live network would: once
+// an entry's TTL lapses, the *first read* after that point silently
+// "auto-restores" it to `min_persistent_entry_ttl` rather than erroring or
+// removing it (see `Storage::handle_maybe_expired_entry` in
+// `soroban-env-host`). That means an entry's mere presence after its TTL has
+// lapsed proves nothing — [`ttl_of`] must be used to observe the actual TTL
+// value instead.
+#[cfg(test)]
+pub(crate) mod ttl_test_utils {
+    use super::*;
+    use soroban_sdk::testutils::{storage::Persistent as _, Ledger};
+
+    /// Advances the ledger sequence number by `ledgers`, without touching any
+    /// storage entry, to deterministically simulate the passage of time with
+    /// no contract activity.
+    pub(crate) fn advance_ledger_sequence(env: &Env, ledgers: u32) {
+        env.ledger().with_mut(|li| {
+            li.sequence_number = li.sequence_number.saturating_add(ledgers);
+        });
+    }
+
+    /// Returns the remaining TTL (in ledgers) for `key`, via Soroban's actual
+    /// TTL API — not a stand-in based on presence/absence.
+    ///
+    /// Note: reading the TTL of a lapsed persistent entry triggers the local
+    /// sandbox's auto-restore (see module docs), so the returned value for a
+    /// lapsed entry is the healed floor (`min_persistent_entry_ttl - 1`), not
+    /// an error or a negative/underflowed count.
+    pub(crate) fn ttl_of(env: &Env, key: &DataKey) -> u32 {
+        env.storage().persistent().get_ttl(key)
+    }
+}
+
 /// Set paused state.
 #[allow(dead_code)]
 pub fn set_paused(env: &Env, paused: bool) {
