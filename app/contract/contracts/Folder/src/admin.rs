@@ -639,6 +639,20 @@ pub fn set_pause_flags(
 }
 
 /// Set fee configuration (**Admin or Operator only**).
+///
+/// Sets the global fee applied to all tokens unless overridden by per-asset configuration.
+/// Fee is expressed in basis points: 1 = 0.01%, 100 = 1%, 10000 = 100%.
+///
+/// This is a fallback; per-asset overrides (via [`set_per_asset_fee`]) take precedence.
+///
+/// # Arguments
+/// * `env` - Contract environment
+/// * `caller` - Address requesting the change (must have Admin or Operator role)
+/// * `config` - New fee configuration
+///
+/// # Errors
+/// - `InsufficientRole` if caller lacks required role
+/// - `ContractPaused` if admin pause flag is enabled
 pub fn set_fee_config(
     env: &Env,
     caller: &Address,
@@ -651,7 +665,47 @@ pub fn set_fee_config(
     Ok(())
 }
 
-/// Set per-asset fee configuration (**Admin or Operator only**).
+/// Set per-asset fee configuration for a specific token (**Admin or Operator only**).
+///
+/// Overrides the global fee for a specific token. Highest priority in fee resolution:
+/// 1. Per-asset override (this) — if set
+/// 2. Oracle dynamic pricing — if configured and fresh
+/// 3. Global static fee — fallback
+///
+/// Setting `fee_bps = 0` explicitly disables fees for that token.
+///
+/// # Fee Splits
+///
+/// **Legacy (arbiter_bps)**: Simple percentage split
+/// - `arbiter_bps > 0` → that % of fee goes to arbiter (if arbiter present in payout)
+/// - Remainder to collector
+///
+/// **Explicit (FeeRatio)**: Fine-grained control
+/// - Set `arbiter_fee`, `platform_fee`, or `collector_fee` with FeeRatio
+/// - When any explicit ratio is set, legacy `arbiter_bps` is ignored
+/// - Sum of ratios must not exceed 1.0
+///
+/// # Arguments
+/// * `env` - Contract environment
+/// * `caller` - Address requesting the change (must have Admin or Operator role)
+/// * `token` - Token address to configure
+/// * `config` - Per-asset fee configuration
+///
+/// # Errors
+/// - `InsufficientRole` if caller lacks required role
+/// - `InvalidAmount` if fee_bps or arbiter_bps > 10000
+/// - `FeeSplitExceedsTotal` if explicit ratios sum to > 1.0
+/// - Other validation errors from `PerAssetFeeConfig::validate()`
+///
+/// # Examples
+/// Set 1.5% fee for USDC with no arbiter split:
+/// ```ignore
+/// set_per_asset_fee(env, caller, &usdc_token, &PerAssetFeeConfig {
+///     fee_bps: 150,
+///     arbiter_bps: 0,
+///     ..Default::default()
+/// })?;
+/// ```
 pub fn set_per_asset_fee(
     env: &Env,
     caller: &Address,

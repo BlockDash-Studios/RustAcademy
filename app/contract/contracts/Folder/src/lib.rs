@@ -1000,7 +1000,24 @@ impl RustAcademyContract {
         hook::get_registered_hooks(&env)
     }
 
-    /// Set the fee configuration (**Admin only**).
+    /// Set the global fee configuration (**Admin or Operator only**).
+    ///
+    /// This is the fallback fee applied to all tokens that don't have a per-asset override.
+    /// The fee is expressed in basis points (1 = 0.01%, 100 = 1%, 10000 = 100%).
+    ///
+    /// # Priority Order
+    /// Fees are resolved in this order:
+    /// 1. Per-asset override (via [`set_per_asset_fee`]) if configured for the token
+    /// 2. Oracle dynamic pricing (if configured and price is fresh)
+    /// 3. Global static config (this method)
+    ///
+    /// # Examples
+    /// ```ignore
+    /// client.set_fee_config(&admin, &FeeConfig {
+    ///     fee_bps: 200,  // 2%
+    ///     schema_version: FEE_CONFIG_SCHEMA_VERSION,
+    /// })?;
+    /// ```
     pub fn set_fee_config(
         env: Env,
         caller: Address,
@@ -1010,7 +1027,61 @@ impl RustAcademyContract {
         admin::set_fee_config(&env, &caller, config)
     }
 
-    /// Set per-asset fee configuration (**Admin or Operator only**).
+    /// Set per-asset fee configuration for a specific token (**Admin or Operator only**).
+    ///
+    /// Per-asset overrides take precedence over global fees and oracle pricing for the
+    /// specified token only. This allows fine-grained control (e.g., lower fees for stablecoins,
+    /// higher for volatile assets, or zero fees for specific tokens).
+    ///
+    /// A `fee_bps` of 0 explicitly disables fees for that token, even if global config is non-zero.
+    ///
+    /// # Fee Distribution
+    ///
+    /// When a per-asset config is set, fees can be split into three portions:
+    /// - **Arbiter portion**: `arbiter_bps` or `arbiter_fee` (when arbiter is present in payout)
+    /// - **Platform portion**: `platform_fee` (to platform wallet)
+    /// - **Collector portion**: `collector_fee` (to active fee collector)
+    ///
+    /// **Legacy arbiter_bps** (simpler):
+    /// - `arbiter_bps` = percentage of total fee for arbiter (0-10000)
+    /// - Remainder goes to collector
+    ///
+    /// **Explicit ratios** (more flexible):
+    /// - `arbiter_fee`, `platform_fee`, `collector_fee` = FeeRatio with numerator/denominator
+    /// - When any explicit ratio is set, the legacy `arbiter_bps` is ignored
+    /// - Ratios must sum to ≤ 1.0 or the function returns `FeeSplitExceedsTotal`
+    ///
+    /// # Examples
+    ///
+    /// Simple per-asset override (2% fee for XLM):
+    /// ```ignore
+    /// client.set_per_asset_fee(&admin, &xlm_token, &PerAssetFeeConfig {
+    ///     fee_bps: 200,
+    ///     arbiter_bps: 0,
+    ///     ..Default::default()
+    /// })?;
+    /// ```
+    ///
+    /// With arbiter split (1% fee, 25% to arbiter):
+    /// ```ignore
+    /// client.set_per_asset_fee(&admin, &token, &PerAssetFeeConfig {
+    ///     fee_bps: 100,
+    ///     arbiter_bps: 2500,  // 25% of fee
+    ///     ..Default::default()
+    /// })?;
+    /// ```
+    ///
+    /// With explicit splits (0.5% fee: 40% arbiter, 30% platform, 30% collector):
+    /// ```ignore
+    /// client.set_per_asset_fee(&admin, &token, &PerAssetFeeConfig {
+    ///     fee_bps: 50,
+    ///     arbiter_bps: 0,  // Ignored when explicit ratios are set
+    ///     arbiter_fee: FeeRatio { numerator: 2, denominator: 5 },
+    ///     platform_fee: FeeRatio { numerator: 3, denominator: 10 },
+    ///     collector_fee: FeeRatio { numerator: 3, denominator: 10 },
+    ///     schema_version: PER_ASSET_FEE_SCHEMA_VERSION,
+    /// })?;
+    /// ```
     pub fn set_per_asset_fee(
         env: Env,
         caller: Address,
@@ -1021,7 +1092,19 @@ impl RustAcademyContract {
         admin::set_per_asset_fee(&env, &caller, token, config)
     }
 
-    /// Get per-asset fee configuration for a token.
+    /// Get per-asset fee configuration for a token (read-only).
+    ///
+    /// Returns `Some(config)` if a per-asset override has been set for this token,
+    /// or `None` if this token uses the global fee config or oracle pricing.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// if let Some(per_asset_config) = client.get_per_asset_fee(&token) {
+    ///     println!("XLM fee: {}%", per_asset_config.fee_bps / 100);
+    /// } else {
+    ///     println!("XLM uses global fee or oracle pricing");
+    /// }
+    /// ```
     pub fn get_per_asset_fee(env: Env, token: Address) -> Option<PerAssetFeeConfig> {
         storage::get_per_asset_fee(&env, &token)
     }
