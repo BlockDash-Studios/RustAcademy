@@ -84,6 +84,10 @@ pub struct EscrowEntry {
     pub created_at: u64,
     /// Ledger timestamp after which withdrawal is blocked and refund is enabled.
     /// A value of `0` means the escrow never expires (no timeout).
+    ///
+    /// This is a business-level timeout, unrelated to the storage-layer TTL
+    /// (see [`crate::storage::get_ttl_policy`]) that governs when the ledger
+    /// entry itself becomes eligible for archival.
     pub expires_at: u64,
     /// Optional single arbiter address for dispute resolution (legacy).
     pub arbiter: Option<Address>,

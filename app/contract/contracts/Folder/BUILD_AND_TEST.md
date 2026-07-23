@@ -277,3 +277,43 @@ cargo test upgrade_harness_ -- --nocapture
 ### Results
 
 206 tests passed; 0 failed.
+
+## Issue: TTL Expiration Test Correctness
+
+`storage_test.rs` had two tests (`test_ttl_auto_extend_on_activity`,
+`test_ttl_expiry_of_inactive_record`) that named/commented themselves as TTL
+coverage but asserted nothing about TTL — they advanced
+`env.ledger().set_timestamp(..)`, which has no effect on storage TTL (that's
+tracked in **ledger sequence numbers**), and then asserted the record
+`is_some()`, which passes regardless of whether TTL logic works.
+
+### What changed
+
+- Added `storage::ttl_test_utils` (`#[cfg(test)]`): `advance_ledger_sequence`
+  advances the ledger sequence number deterministically; `ttl_of` reads the
+  real TTL via `env.storage().persistent().get_ttl(&key)`.
+- Rewrote the two tests to assert on actual TTL values:
+  - `test_ttl_extends_only_when_within_threshold` — proves TTL decays
+    linearly with no activity, and a read within the renewal threshold
+    (`LEDGER_THRESHOLD`) renews it back to the full policy TTL.
+  - `test_ttl_lapses_without_activity_and_sandbox_autorestores_on_read` —
+    proves an entry's TTL actually lapses (its raw `get_ttl()` value, not its
+    presence, is the only reliable signal), and documents/exercises a real
+    Soroban sandbox behavior: reading a lapsed **persistent** entry in the
+    local test environment (recording footprint mode) silently auto-restores
+    it to a minimum floor instead of evicting it or erroring, unlike a live
+    network which requires an explicit restore. A subsequent contract-level
+    read (`get_escrow`) then renews it straight back to the full policy TTL.
+- Added the same real `get_ttl()` assertions to the two privacy TTL tests
+  (`test_privacy_level_ttl_extended_on_write_and_read`,
+  `test_privacy_history_ttl_extended_on_write_and_read`), which previously
+  only checked the round-tripped value.
+
+### Running the fixed tests
+
+```bash
+cargo test -p rust_academy --lib storage_test:: -- --nocapture
+```
+
+17 tests in `storage_test` pass, all asserting real TTL values instead of
+record presence.
