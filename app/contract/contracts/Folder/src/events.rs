@@ -79,15 +79,60 @@ pub const ETID_UPGRADE_STARTED: u32 = 53;
 pub const ETID_UPGRADE_COMPLETED: u32 = 54;
 pub const ETID_UPGRADE_WINDOW_SET: u32 = 55;
 
-/// Testnet event topic namespace used as topic[0] for every  RustAcademy event.
+/// Event topic namespace for administrative operations.
+///
+/// Used in `topics[0]` for all admin-related events including:
+/// - Upgrades (`UpgradeStarted`, `UpgradeCompleted`, `UpgradeWindowSet`)
+/// - Configuration (`FeeConfigChanged`, `PauseFlagsChanged`, `DisputeExpiryActionSet`)
+/// - Access control (`AdminChanged`)
+/// - Initialization and migration (`ContractInitialized`, `ContractMigrated`)
+/// - Emergency controls (`EmergencyModeActivated`, `ContractPaused`)
+///
+/// Indexers can filter by this topic to track all administrative changes.
 #[allow(dead_code)]
 pub const EVENT_TOPIC_ADMIN: &str = "TOPIC_ADMIN";
+
+/// Event topic namespace for dispute resolution.
+///
+/// Used in `topics[0]` for all dispute-related events including:
+/// - Arbitration (`ArbiterVoteCast`, `DisputeResolved`)
+/// - Timeout handling (`DisputeTimeoutSet`, `DisputeAutoResolved`)
+/// - Configuration (`DisputeExpiryActionSet`, `DisputeTimeoutConfigSet`)
+///
+/// Indexers can filter by this topic to track dispute lifecycle.
 #[allow(dead_code)]
 pub const EVENT_TOPIC_DISPUTE: &str = "TOPIC_DISPUTE";
+
+/// Event topic namespace for escrow operations.
+///
+/// Used in `topics[0]` for all escrow lifecycle events including:
+/// - Deposits (`EscrowDeposited`, `PartialPayment`)
+/// - Withdrawals (`EscrowWithdrawn`, `EscrowRefunded`)
+/// - Finalization (`EscrowFinalized`)
+/// - Disputes (`EscrowDisputed`)
+/// - Cleanup (`EscrowCleanup`, `AuxIndicesCleaned`)
+///
+/// Indexers can filter by this topic to track escrow state changes.
 #[allow(dead_code)]
 pub const EVENT_TOPIC_ESCROW: &str = "TOPIC_ESCROW";
+
+/// Event topic namespace for privacy controls.
+///
+/// Used in `topics[0]` for privacy-related events:
+/// - `PrivacyToggled` — privacy mode enabled/disabled per user
+///
+/// Indexers can filter by this topic to track privacy settings.
 #[allow(dead_code)]
 pub const EVENT_TOPIC_PRIVACY: &str = "TOPIC_PRIVACY";
+
+/// Event topic namespace for stealth address operations.
+///
+/// Used in `topics[0]` for stealth-related events including:
+/// - Registration (`EphemeralKeyRegistered`)
+/// - Withdrawals (`StealthWithdrawn`)
+/// - Cleanup (`StealthEscrowCleaned`)
+///
+/// Indexers can filter by this topic to track stealth address lifecycle.
 #[allow(dead_code)]
 pub const EVENT_TOPIC_STEALTH: &str = "TOPIC_STEALTH";
 
