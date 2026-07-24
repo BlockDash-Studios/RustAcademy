@@ -759,6 +759,8 @@ fn test_commitment_cycle() {
 #[test]
 fn test_create_escrow() {
     let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
     let from = Address::generate(&env);
     let to = Address::generate(&env);
     let amount = 1_000;
