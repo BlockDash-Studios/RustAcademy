@@ -11,6 +11,12 @@
 //! [`resolve_expired_dispute`] once the timeout has elapsed to move the escrow
 //! to a terminal state and release the locked funds.
 //!
+//! The default timeout is **7 days** ([`DEFAULT_DISPUTE_TIMEOUT_SECS`]) and is
+//! used when no explicit value has been configured via [`set_timeout`]. The
+//! admin or an operator may override this at any time; the new value applies
+//! only to disputes opened after the change (each dispute snapshots the current
+//! global timeout at open time).
+//!
 //! # Expiry actions
 //!
 //! - [`DisputeExpiryAction::RefundOwner`] – return funds to the original owner.

@@ -5,8 +5,8 @@ use crate::{
         EVENT_TOPIC_DISPUTE, EVENT_TOPIC_ESCROW, EVENT_TOPIC_PRIVACY,
     },
     storage::{
-        put_escrow, DataKey, PauseFlag, CURRENT_CONTRACT_VERSION, LEGACY_CONTRACT_VERSION,
-        PRIVACY_ENABLED_KEY,
+        put_escrow, DataKey, PauseFlag, CURRENT_CONTRACT_VERSION, DEFAULT_DISPUTE_TIMEOUT_SECS,
+        LEGACY_CONTRACT_VERSION, PRIVACY_ENABLED_KEY,
     },
     types::{DisputeExpiryAction},
     EscrowEntry, EscrowStatus,  RustAcademyContract,  RustAcademyContractClient,
@@ -2473,6 +2473,51 @@ fn test_refund_fails_during_dispute() {
 // ============================================================================
 // Dispute timeout / auto-resolution tests (Issue #49)
 // ============================================================================
+
+#[test]
+fn test_default_dispute_timeout_used_when_not_explicitly_set() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let token = create_test_token(&env);
+    let owner = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let amount: i128 = 5000;
+    let salt = Bytes::from_slice(&env, b"default_timeout_salt");
+
+    client.initialize(&admin);
+
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&owner, &amount);
+    let commitment = client.deposit(
+        &token,
+        &amount,
+        &owner,
+        &salt,
+        &1000,
+        &Some(arbiter.clone()),
+    );
+
+    let now = env.ledger().timestamp();
+    client.dispute(&commitment);
+
+    let expiry = client.get_dispute_expiry(&commitment).unwrap();
+    assert_eq!(
+        expiry.expires_at,
+        now + DEFAULT_DISPUTE_TIMEOUT_SECS,
+        "default dispute timeout must be {} seconds when no explicit timeout is set",
+        DEFAULT_DISPUTE_TIMEOUT_SECS
+    );
+    assert_eq!(
+        expiry.action,
+        DisputeExpiryAction::RefundOwner,
+        "default dispute expiry action must be RefundOwner"
+    );
+    assert_eq!(
+        client.get_dispute_timeout(),
+        DEFAULT_DISPUTE_TIMEOUT_SECS,
+        "get_dispute_timeout must return DEFAULT_DISPUTE_TIMEOUT_SECS when no explicit value is set"
+    );
+}
 
 #[test]
 fn test_dispute_records_expiry_metadata() {
