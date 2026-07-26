@@ -412,14 +412,15 @@ export class NotificationService implements OnModuleInit {
     const jobPayload: WebhookDeliveryPayload = {
       recipientPublicKey: publicKey,
       webhookUrl,
-      eventType,
-      eventId,
+      eventType: eventType || 'unknown',
+      eventId: eventId || `evt_${Date.now()}`,
       payload: {
-        title: payload.title,
-        body: payload.body,
-        occurredAt: payload.occurredAt,
-        amountStroops: payload.amountStroops?.toString(),
-        metadata: payload.metadata,
+        title: payload.title || 'Notification',
+        body: payload.body || '',
+        occurredAt: payload.occurredAt || new Date().toISOString(),
+        amountStroops: payload.amountStroops?.toString() || '0',
+        metadata: payload.metadata || {},
+        ...(payload as Record<string, unknown>),
       },
     };
 

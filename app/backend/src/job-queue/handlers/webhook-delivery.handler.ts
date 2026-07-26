@@ -13,6 +13,20 @@ import { WebhookDeliveryPayload } from "../types/job-payloads.types";
 import { NotificationLogRepository } from "../../notifications/notification-log.repository";
 import { NotificationEventType } from "../../notifications/types/notification.types";
 
+function safeEventType(eventType: string): NotificationEventType {
+  const knownEvents: string[] = [
+    "EscrowDeposited", "EscrowWithdrawn", "EscrowRefunded",
+    "payment.received", "username.claimed",
+    "recurring.payment.completed", "recurring.payment.failed",
+    "recurring.link.expired", "recurring.link.cancelled",
+    "export.ready", "auto_reconciliation.succeeded",
+  ];
+  if (knownEvents.includes(eventType)) {
+    return eventType as NotificationEventType;
+  }
+  return "payment.received" as NotificationEventType;
+}
+
 /**
  * Error thrown for permanent job failures (no retry)
  * Used for 4xx errors (except 408, 429) and validation failures
@@ -112,13 +126,15 @@ export class WebhookDeliveryHandler implements JobHandler<WebhookDeliveryPayload
 
       // Check response status
       if (response.status >= 200 && response.status < 300) {
-        // Success - log to notification_logs
+        // Normalize eventType for logging - fallback for unknown event types
+        const safeType = safeEventType(eventType);
+
         await this.notificationLogRepo.markSent(
           recipientPublicKey,
           "webhook",
-          eventType as NotificationEventType, // eventType from payload may not match NotificationEventType enum
+          safeType,
           eventId,
-          undefined, // no provider message ID for webhooks
+          undefined,
           response.status,
           responseBody,
         );
@@ -259,9 +275,9 @@ export class WebhookDeliveryHandler implements JobHandler<WebhookDeliveryPayload
       await this.notificationLogRepo.markFailed(
         recipientPublicKey,
         "webhook",
-        eventType as NotificationEventType, // eventType from payload may not match NotificationEventType enum
-        eventId,
-        error.message,
+        safeEventType(eventType),
+        eventId || `unknown_${Date.now()}`,
+        error.message || 'Unknown error',
       );
     } catch (logError) {
       this.logger.error(
