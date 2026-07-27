@@ -25,6 +25,14 @@ import * as Joi from 'joi';
         ASSETS_MAX_SIZE_MB: Joi.number().optional(),
         ASSETS_BASE_URL: Joi.string().optional(),
         ASSETS_STATIC_DIR: Joi.string().optional(),
+
+        // Grading retry backoff configuration (Issue #360)
+        GRADING_MAX_RETRIES: Joi.number().default(5),
+        GRADING_RETRY_BASE_DELAY_MS: Joi.number().default(2000),
+        GRADING_RETRY_MAX_DELAY_MS: Joi.number().default(120_000),
+
+        // Leaderboard cache configuration (Issue #361)
+        LEADERBOARD_CACHE_TTL_MS: Joi.number().default(30_000),
       }),
     }),
   ],

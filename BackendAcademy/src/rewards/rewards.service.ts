@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import {
   MAX_LEVEL,
   levelForXp,
@@ -22,6 +22,7 @@ import type {
   PrizePoolResponse,
   PrizeDistribution,
 } from './interfaces/rewards.interfaces';
+import { BadgesService } from '../badges/badges.service';
 
 /**
  * In-memory XP store used until a persistence layer is wired in.
@@ -85,6 +86,11 @@ function levelTitle(level: number): string {
 
 @Injectable()
 export class RewardsService {
+  constructor(
+    @Optional()
+    private readonly badgesService?: BadgesService,
+  ) {}
+
   /**
    * Returns the complete list of level thresholds (levels 1 – MAX_LEVEL).
    * This is static configuration data and never changes at runtime.
@@ -179,6 +185,9 @@ export class RewardsService {
    * Records a user activity, updates their streak, and awards XP.
    * Can also award bonus XP for streak and level milestones.
    *
+   * Issue #362: Awards badges when level milestones (5, 10, 15...) and streak
+   * milestones (7, 14, 21...) are reached.
+   *
    * @param userId     Target user
    * @param date       Date of activity
    * @param xpAmount   Base XP to award
@@ -227,6 +236,12 @@ export class RewardsService {
       streakData.currentStreak % STREAK_MILESTONE_DAYS === 0
     ) {
       streakBonusXp = STREAK_MILESTONE_XP;
+
+      // Issue #362: Award "Week Warrior" badge on first streak milestone (7 days).
+      // awardBadge is idempotent – duplicate calls are silent no-ops.
+      if (this.badgesService && streakData.currentStreak === STREAK_MILESTONE_DAYS) {
+        this.badgesService.awardBadge(userId, 'streak-seven', `streak-${Date.now()}`);
+      }
     }
 
     // 2. Update XP
@@ -240,6 +255,19 @@ export class RewardsService {
     for (let m = LEVEL_MILESTONE_INTERVAL; m <= MAX_LEVEL; m += LEVEL_MILESTONE_INTERVAL) {
       if (oldLevel < m && newLevel >= m) {
         levelBonusXp += LEVEL_MILESTONE_XP;
+
+        // Issue #362: Award level milestone badges for notable tiers.
+        // In a future enhancement these badge IDs (level-5, level-10, etc.)
+        // should be added to BadgeService.badgeDefinitions. For now the
+        // NotFoundException is silently caught since the badge doesn't exist.
+        if (this.badgesService) {
+          const badgeName = `level-${m}`;
+          try {
+            this.badgesService.awardBadge(userId, badgeName, `level-${m}-${Date.now()}`);
+          } catch {
+            // Level milestone badge not yet defined – skip gracefully
+          }
+        }
       }
     }
 

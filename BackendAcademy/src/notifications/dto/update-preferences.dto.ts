@@ -12,4 +12,14 @@ export class UpdateNotificationPreferencesDto {
   @IsOptional()
   @IsBoolean()
   marketing_updates?: boolean;
+
+  /** Issue #360: Receive alerts on permanent grading failures */
+  @IsOptional()
+  @IsBoolean()
+  grading_failure_alerts?: boolean;
+
+  /** Issue #362: Receive alerts on new badge earnings */
+  @IsOptional()
+  @IsBoolean()
+  badge_earned_alerts?: boolean;
 }

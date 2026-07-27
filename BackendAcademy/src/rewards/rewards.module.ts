@@ -5,6 +5,7 @@ import { StreakController } from './streak.controller';
 import { StreakService } from './streak.service';
 import { ReferralController } from './referral.controller';
 import { ReferralService } from './referral.service';
+import { BadgesModule } from '../badges/badges.module';
 
 /**
  * RewardsModule
@@ -14,8 +15,12 @@ import { ReferralService } from './referral.service';
  *
  * Includes the referral-based XLM bonus placeholder under
  * /rewards/referrals/* (ReferralController + ReferralService).
+ *
+ * Issue #362: Imports BadgesModule to trigger badge awards on
+ * level and streak milestones.
  */
 @Module({
+  imports: [BadgesModule],
   controllers: [RewardsController, StreakController, ReferralController],
   providers: [RewardsService, StreakService, ReferralService],
   exports: [RewardsService, StreakService, ReferralService],

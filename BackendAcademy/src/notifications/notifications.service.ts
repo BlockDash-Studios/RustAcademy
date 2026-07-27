@@ -28,12 +28,69 @@ export class NotificationsService {
     return this.notifications.filter(n => n.userId === userId);
   }
 
+  // -------------------------------------------------------------------------
+  // Issue #360: Grading failure notification
+  // -------------------------------------------------------------------------
+
+  /**
+   * Sends a grading failure notification to the submission owner when a
+   * grading job has permanently failed after exhausting all retry attempts.
+   *
+   * Respects the user's `grading_failure_alerts` preference.
+   *
+   * @param userId   Owner of the submission
+   * @param jobId    The failed grading job identifier
+   * @param error    Last error message from the grader
+   */
+  sendGradingFailureAlert(userId: string, jobId: string, error: string): void {
+    const prefs = this.getPreferences(userId);
+    if (!prefs.grading_failure_alerts) return;
+
+    this.create({
+      userId,
+      type: 'in-app',
+      title: 'Grading Failed',
+      message: `Your submission grading has permanently failed after multiple retries. Job: ${jobId}. Error: ${error}`,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Issue #362: Badge earned notification
+  // -------------------------------------------------------------------------
+
+  /**
+   * Sends a badge-earned notification to the user when a new badge is awarded.
+   *
+   * Respects the user's `badge_earned_alerts` preference.
+   *
+   * @param userId    The user who earned the badge
+   * @param badgeName Human-readable badge name
+   * @param badgeId   Badge identifier
+   */
+  sendBadgeEarnedAlert(userId: string, badgeName: string, badgeId: string): void {
+    const prefs = this.getPreferences(userId);
+    if (!prefs.badge_earned_alerts) return;
+
+    this.create({
+      userId,
+      type: 'in-app',
+      title: 'Badge Earned! 🏆',
+      message: `Congratulations! You have earned the "${badgeName}" badge (${badgeId}).`,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Preferences management
+  // -------------------------------------------------------------------------
+
   upsertPreferences(userId: string, updateDto: UpdateNotificationPreferencesDto): NotificationPreferences {
     const existing = this.preferences.get(userId) || {
       userId,
       email_alerts: false,
       push_notifications: false,
       marketing_updates: false,
+      grading_failure_alerts: true,
+      badge_earned_alerts: true,
     };
 
     const updated = { ...existing, ...updateDto };
@@ -47,6 +104,8 @@ export class NotificationsService {
       email_alerts: false,
       push_notifications: false,
       marketing_updates: false,
+      grading_failure_alerts: true,
+      badge_earned_alerts: true,
     };
   }
 }

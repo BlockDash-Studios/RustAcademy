@@ -31,6 +31,8 @@ import { SearchModule } from './search/search.module';
 import { PaymentsModule } from './payments/payments.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { ReportsModule } from './reports/reports.module';
+import { BadgesModule } from './badges/badges.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -69,6 +71,8 @@ import { ReportsModule } from './reports/reports.module';
     PaymentsModule,
     SessionsModule,
     ReportsModule,
+    BadgesModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
