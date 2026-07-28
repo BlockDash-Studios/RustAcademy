@@ -7,16 +7,31 @@ import {
   Param,
   Query,
   ParseIntPipe,
+  UsePipes,
 } from '@nestjs/common';
 import { AnalyticsService, EventType } from './analytics.service';
 import { AnalyticsEvent } from './analytics.entity';
 import { CreateEventDto } from './dto/create-event.dto';
+import { ValidationPipe, ValidationSchema } from '../common/validation.middleware';
+
+const analyticsEventSchema: ValidationSchema = {
+  required: ['eventType'],
+  properties: {
+    eventType: { type: 'string', enum: Object.values(EventType) },
+    userId: { type: 'string' },
+    sessionId: { type: 'string' },
+    properties: { type: 'object' },
+    ipAddress: { type: 'string' },
+    userAgent: { type: 'string' },
+  },
+};
 
 @Controller('analytics')
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Post('track')
+  @UsePipes(new ValidationPipe(analyticsEventSchema))
   async trackEvent(@Body() dto: CreateEventDto): Promise<AnalyticsEvent> {
     return this.analyticsService.trackEvent(dto);
   }

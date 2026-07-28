@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { ChallengesService } from '../challenges/challenges.service';
+import { MonitoringService } from '../monitoring/monitoring.service';
 import { SubmissionEntity } from './submission.entity';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import { UpdateSubmissionDto } from './dto/update-submission.dto';
@@ -9,12 +11,25 @@ import { SubmissionStatus } from './interfaces/submission-status.enum';
 export class SubmissionService {
   private readonly submissions: Map<string, SubmissionEntity> = new Map();
 
+  constructor(
+    private readonly challengesService: ChallengesService,
+    private readonly monitoringService: MonitoringService,
+  ) {}
+
   async create(dto: CreateSubmissionDto): Promise<SubmissionEntity> {
+    // Check whether the target task is a challenge and enforce the attempt
+    // limit before accepting the submission.
+    this.verifyChallengeAttemptLimit(dto.taskId, dto.userId);
+
     const submission = new SubmissionEntity({
       id: crypto.randomUUID(),
       ...dto,
     });
     this.submissions.set(submission.id, submission);
+
+    // Record the attempt when the submission targets a challenge.
+    this.recordChallengeAttempt(dto.taskId, dto.userId);
+
     return submission;
   }
 
@@ -154,11 +169,77 @@ export class SubmissionService {
       );
     }
 
+    // Enforce the attempt limit before allowing the draft to be published
+    // as a submission. The learner is effectively submitting when they
+    // publish their draft.
+    this.verifyChallengeAttemptLimit(submission.taskId, submission.userId);
+
     submission.isDraft = false;
     submission.draftSavedAt = undefined;
     submission.status = SubmissionStatus.PENDING;
     submission.submittedAt = new Date();
     submission.updatedAt = new Date();
+
+    // Record the attempt when the submission targets a challenge.
+    this.recordChallengeAttempt(submission.taskId, submission.userId);
+
     return submission;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Attempt limit helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check whether the given task is a known challenge. If so, verify that
+   * the learner has not exhausted their allowed attempts.
+   *
+   * This method treats any taskId that starts with "challenge-" as a challenge
+   * task, which aligns with the convention used in the `ChallengesService`.
+   *
+   * @throws BadRequestException when the attempt limit has been exceeded.
+   */
+  private verifyChallengeAttemptLimit(taskId: string, learnerId: string): void {
+    if (!this.isChallengeTask(taskId)) return;
+
+    const info = this.challengesService.checkAttemptLimit(taskId, learnerId);
+    if (!info.allowed) {
+      this.monitoringService.recordDomainEvent(
+        'attempt_limit_exceeded',
+        'submissions',
+      );
+      throw new BadRequestException({
+        error: 'ATTEMPT_LIMIT_EXCEEDED',
+        message: `Maximum attempts (${info.max}) exhausted for challenge "${info.challengeId}"`,
+        ...info,
+      });
+    }
+  }
+
+  /**
+   * Record an attempt for the learner on the challenge task, if applicable.
+   *
+   * This is called after `verifyChallengeAttemptLimit` has already confirmed
+   * the user is within their allowed limit, so `recordAttempt` is guaranteed
+   * to succeed. No try/catch is needed.
+   */
+  private recordChallengeAttempt(taskId: string, learnerId: string): void {
+    if (!this.isChallengeTask(taskId)) return;
+
+    this.challengesService.recordAttempt(taskId, learnerId);
+    this.monitoringService.recordDomainEvent('challenge_attempt_recorded', 'submissions');
+  }
+
+  /**
+   * Decide whether a taskId references a challenge.
+   *
+   * This heuristic checks for the `challenge-` prefix convention.
+   *
+   * @todo Replace this heuristic with a proper challenge to task lookup when a
+   *       challenge entity or registry is available (e.g. a database table
+   *       that maps challenge IDs to task IDs).
+   */
+  private isChallengeTask(taskId: string): boolean {
+    return taskId?.toLowerCase().startsWith('challenge-');
   }
 }

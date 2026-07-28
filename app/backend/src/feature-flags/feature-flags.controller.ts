@@ -12,6 +12,7 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
   EvaluateFeatureFlagResponseDto,
   FeatureFlagQueryDto,
+  FeatureFlagsOperationalStateDto,
   UpdateFeatureFlagDto,
 } from './feature-flags.dto';
 import { FeatureFlagsService } from './feature-flags.service';
@@ -25,6 +26,13 @@ export class FeatureFlagsController {
   @ApiOperation({ summary: 'List feature flags and flag store status' })
   async listFlags() {
     return this.featureFlagsService.listFlags();
+  }
+
+  @Get('admin/feature-flags/operational-state')
+  @ApiOperation({ summary: 'Get feature flags operational state and bootstrap status' })
+  @ApiResponse({ status: 200, type: FeatureFlagsOperationalStateDto })
+  async getOperationalState() {
+    return this.featureFlagsService.getOperationalState();
   }
 
   @Get('admin/feature-flags/:key')

@@ -107,4 +107,11 @@ export class BadgesService {
   resetUserBadges(userId: string): void {
     userBadgesStore.delete(userId);
   }
+
+  /**
+   * Clears all in-memory badge data (useful for testing isolation).
+   */
+  clearAll(): void {
+    userBadgesStore.clear();
+  }
 }

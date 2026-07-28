@@ -9,6 +9,7 @@ import {
   AiChatResponse,
   AiChatRecord,
   AiHintResponse,
+  AiRecommendationResponse,
   ChatMessage,
   Hint,
   VoiceInteractionResponse,
@@ -17,6 +18,9 @@ import {
 import { PreScoreResult } from './interfaces/pre-score.interface';
 import { AiProvider } from './interfaces/ai-provider.interface';
 import { v4 as uuidv4 } from 'uuid';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { RedisService } from '../redis/redis.service';
+import { MonitoringService } from '../monitoring/monitoring.service';
 
 export const AI_PROVIDER = 'AI_PROVIDER';
 
@@ -25,12 +29,69 @@ export class AiService {
   private chatHistory: Map<string, ChatMessage[]> = new Map();
   private chatRecords: Map<string, AiChatRecord> = new Map();
   private hints: Map<string, Hint[]> = new Map();
+  private readonly defaultTimeoutMs: number;
 
   constructor(
     @Optional() @Inject(AI_PROVIDER) private aiProvider?: AiProvider,
     private configService?: ConfigService,
+    private readonly analyticsService?: AnalyticsService,
+    private readonly redisService?: RedisService,
+    private readonly monitoringService?: MonitoringService,
   ) {
+    this.defaultTimeoutMs = this.configService?.get<number>('DEFAULT_REQUEST_TIMEOUT_MS') ?? 30_000;
     this.initializeSampleHints();
+  }
+
+  async getRecommendation(userId: string): Promise<AiRecommendationResponse> {
+    const snapshot = this.redisService
+      ? await this.redisService.getUserSnapshot(userId)
+      : null;
+
+    if (!snapshot) {
+      return {
+        userId,
+        recommendations: [],
+        explainability: {
+          factors: ['insufficient_data'],
+          confidence: 0.1,
+          userSignalAge: 0,
+          signalsUsed: [],
+          modelVersion: 'rustacademy-recommender-v2',
+        },
+        generatedAt: new Date(),
+      };
+    }
+
+    const explainability = this.redisService
+      ? await this.redisService.getRecommendationExplainability(userId)
+      : null;
+
+    const recommendedCourses = snapshot.recentCourses.length > 0
+      ? snapshot.recentCourses.slice(0, 3)
+      : ['rust-fundamentals', 'smart-contracts-101', 'stellar-basics'];
+
+    const recommendations = recommendedCourses.map((courseId, index) => ({
+      courseId,
+      score: Math.max(0, 1 - index * 0.2 - (snapshot.interactionCount > 0 ? 0 : 0.3)),
+      reason: explainability?.factors[index] || 'course_popularity',
+    }));
+
+    if (this.monitoringService) {
+      this.monitoringService.recordDomainEvent('recommendation_generated', 'ai');
+    }
+
+    return {
+      userId,
+      recommendations,
+      explainability: explainability || {
+        factors: [],
+        confidence: 0.1,
+        userSignalAge: 0,
+        signalsUsed: [],
+        modelVersion: 'rustacademy-recommender-v2',
+      },
+      generatedAt: new Date(),
+    };
   }
 
   async processChatRequest(
@@ -60,6 +121,14 @@ export class AiService {
       this.chatHistory.set(userId, []);
     }
     this.chatHistory.get(userId)!.push(chatMessage);
+
+    if (this.redisService) {
+      await this.redisService.refreshUserSnapshot(userId, {
+        lastInteractionAt: new Date(),
+        interactionCount: 1,
+        eventTypes: ['chat_message'],
+      });
+    }
 
     return {
       response: chatMessage.response,
@@ -136,6 +205,14 @@ export class AiService {
 
     score = Math.min(100, Math.max(0, score));
 
+    if (this.analyticsService) {
+      await this.analyticsService.trackEvent({
+        id: uuidv4(),
+        eventType: 'submission_prescore',
+        properties: { taskId, score, lines },
+      });
+    }
+
     return {
       taskId,
       predictedScore: score,
@@ -182,10 +259,6 @@ export class AiService {
     return response;
   }
 
-  private generateAiResponse(
-    userMessage: string,
-    context?: Record<string, any>,
-  ): string {
   private fallbackResponse(userMessage: string): string {
     const responses = [
       "That's a great question! Let me help you work through that. Based on what you've shared, I think the first thing you should understand is the core concept behind the problem.",
@@ -220,5 +293,19 @@ export class AiService {
     ];
 
     this.hints.set('sample-challenge-001', sampleHints);
+  }
+
+  /**
+   * Executes an outbound AI provider call with a global request timeout — Issue #408.
+   */
+  async fetchWithTimeout(url: string, init?: RequestInit, timeoutMs?: number): Promise<Response> {
+    const timeout = timeoutMs ?? this.defaultTimeoutMs;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }

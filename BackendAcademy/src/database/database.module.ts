@@ -1,6 +1,9 @@
 import { Module, Global } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { MigrationService } from './migration.service';
+import { MigrationController } from './migration.controller';
+import { DatabaseService } from './database.service';
 
 @Global()
 @Module({
@@ -17,6 +20,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
       inject: [ConfigService],
     }),
   ],
-  exports: [TypeOrmModule],
+  controllers: [MigrationController],
+  providers: [DatabaseService, MigrationService],
+  exports: [TypeOrmModule, DatabaseService, MigrationService],
 })
 export class DatabaseModule {}

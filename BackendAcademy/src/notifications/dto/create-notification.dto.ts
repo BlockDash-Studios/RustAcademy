@@ -4,8 +4,8 @@ export class CreateNotificationDto {
   @IsString()
   userId: string;
 
-  @IsIn(['push', 'in-app'])
-  type: 'push' | 'in-app';
+  @IsString()
+  type: string;
 
   @IsString()
   title: string;

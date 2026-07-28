@@ -99,6 +99,8 @@ describe('RewardsService', () => {
     }).compile();
 
     service = module.get<RewardsService>(RewardsService);
+    // Ensure clean state for every test (#451)
+    service.clearAll();
   });
 
   // ---- getAllThresholds ----
@@ -425,6 +427,9 @@ describe('RewardsService', () => {
       const second = service.distributePrizes();
       expect(second.id).toBe(first.id);
       expect(second.distributedAt).toEqual(first.distributedAt);
+    });
+  });
+
   // ---- recordActivity ----
 
   describe('recordActivity(userId, date, xpAmount)', () => {
@@ -517,9 +522,8 @@ describe('RewardsService', () => {
       expect(prog.xp).toBe(hugeXp + 2 * LEVEL_MILESTONE_XP);
     });
   });
-});
 
-// ---- resetXp ----
+  // ---- resetXp ----
 
   describe('resetXp(userId)', () => {
     const USER = 'reset-user';
@@ -536,5 +540,4 @@ describe('RewardsService', () => {
       expect(prog.streak.lastActivityDate).toBeNull();
     });
   });
-});
 });

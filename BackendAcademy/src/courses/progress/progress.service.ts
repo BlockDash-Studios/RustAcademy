@@ -22,7 +22,7 @@ import {
 const LESSON_COMPLETION_WEIGHT = 0.7;
 const TASK_COMPLETION_WEIGHT = 0.3;
 
-interface CourseProgressRecord {
+export interface CourseProgressRecord {
   courseId: string;
   totalLessons: number;
   totalTasks: number;

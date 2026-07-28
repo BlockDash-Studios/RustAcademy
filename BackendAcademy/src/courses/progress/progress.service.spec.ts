@@ -6,6 +6,7 @@ import {
   RecordLessonCompletionDto,
   RecordTaskCompletionDto,
 } from './dto/record-completion.dto';
+import { RewardsService } from '../../rewards/rewards.service';
 import {
   CourseProgressStatus,
 } from './interfaces/progress-snapshot.interface';
@@ -17,7 +18,11 @@ import { ProgressService } from './progress.service';
  * courseService.create() because CreateCourseDto doesn't accept an id.
  */
 async function buildServices() {
-  const courseService = new CourseService();
+  const courseService = new CourseService(
+    null as any,
+    null as any,
+    { recordActivity: jest.fn() } as unknown as RewardsService,
+  );
   const service = new ProgressService(courseService);
   const x = await courseService.create({
     title: 'Rust Basics',

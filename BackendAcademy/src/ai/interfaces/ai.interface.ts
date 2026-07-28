@@ -48,3 +48,24 @@ export interface TtsResponse {
   format: string;
   durationMs: number;
 }
+
+export interface RecommendationItem {
+  courseId: string;
+  score: number;
+  reason: string;
+}
+
+export interface ExplainabilityMetadata {
+  factors: string[];
+  confidence: number;
+  userSignalAge: number;
+  signalsUsed: string[];
+  modelVersion: string;
+}
+
+export interface AiRecommendationResponse {
+  userId: string;
+  recommendations: RecommendationItem[];
+  explainability: ExplainabilityMetadata;
+  generatedAt: Date;
+}

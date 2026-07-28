@@ -48,8 +48,8 @@ class InMemoryRepository<T extends { id?: string | number }> {
     const matches = Object.values(this.matchRows(options.where ?? {}));
     if (options.order?.createdAt) {
       matches.sort((a, b) => {
-        const aTime = (a as { createdAt: Date }).createdAt?.getTime() ?? 0;
-        const bTime = (b as { createdAt: Date }).createdAt?.getTime() ?? 0;
+        const aTime = (a as unknown as { createdAt: Date }).createdAt?.getTime() ?? 0;
+        const bTime = (b as unknown as { createdAt: Date }).createdAt?.getTime() ?? 0;
         return options.order!.createdAt === 'DESC' ? bTime - aTime : aTime - bTime;
       });
     }
@@ -74,8 +74,8 @@ class InMemoryRepository<T extends { id?: string | number }> {
 
     if (options.order?.createdAt) {
       all.sort((a, b) => {
-        const aTime = (a as { createdAt: Date }).createdAt?.getTime() ?? 0;
-        const bTime = (b as { createdAt: Date }).createdAt?.getTime() ?? 0;
+        const aTime = (a as unknown as { createdAt: Date }).createdAt?.getTime() ?? 0;
+        const bTime = (b as unknown as { createdAt: Date }).createdAt?.getTime() ?? 0;
         return options.order!.createdAt === 'DESC' ? bTime - aTime : aTime - bTime;
       });
     }
@@ -249,7 +249,7 @@ describe('CourseRatingService', () => {
     // Verify no overlap
     const page1Ids = page1.data.map((r) => r.id);
     const page2Ids = page2.data.map((r) => r.id);
-    expect(new Set([...page1Ids, ...page2Ids])).toHaveSize(25);
+    expect(new Set([...page1Ids, ...page2Ids]).size).toBe(25);
   });
 
   it('should default pagination parameters correctly', async () => {

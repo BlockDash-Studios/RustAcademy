@@ -95,7 +95,10 @@ export const envSchema = Joi.object({
     .empty("")
     .optional()
     .custom((value, helpers) => {
-      if (process.env.NODE_ENV === "production" && (!value || value.trim() === "")) {
+      if (
+        process.env.NODE_ENV === "production" &&
+        (!value || value.trim() === "")
+      ) {
         return helpers.error("any.invalid", {
           message:
             "CORS_ALLOWED_ORIGINS is empty — in production, all cross-origin requests will be blocked unless a Vercel preview project is configured via CORS_VERCEL_PROJECT.",
@@ -145,6 +148,36 @@ export const envSchema = Joi.object({
   FEATURE_FLAGS_BOOTSTRAP_JSON: Joi.string()
     .empty("")
     .optional()
+    .custom((value, helpers) => {
+      if (!value) return value;
+      try {
+        const parsed = JSON.parse(value);
+        if (!Array.isArray(parsed)) {
+          return helpers.error("any.custom", {
+            message:
+              "FEATURE_FLAGS_BOOTSTRAP_JSON must be a valid JSON array of feature flag objects",
+          });
+        }
+        for (const item of parsed) {
+          if (
+            typeof item !== "object" ||
+            item === null ||
+            typeof item.key !== "string" ||
+            !item.key.trim()
+          ) {
+            return helpers.error("any.custom", {
+              message:
+                "FEATURE_FLAGS_BOOTSTRAP_JSON array items must be objects with a non-empty string 'key' property",
+            });
+          }
+        }
+      } catch (err) {
+        return helpers.error("any.custom", {
+          message: `FEATURE_FLAGS_BOOTSTRAP_JSON contains invalid JSON: ${(err as Error).message}`,
+        });
+      }
+      return value;
+    })
     .description(
       "Optional JSON array of bootstrap feature flags used when the store is unavailable",
     ),
@@ -205,7 +238,9 @@ export const envSchema = Joi.object({
     .optional()
     .description(
       "Comma-separated list of bcrypt-hashed API keys for trusted clients. " +
-        "Valid keys receive higher rate limits (120 req/min vs 20 req/min).",
+        "Used for API key authentication only — it has no effect on rate limits. " +
+        "Rate limits are applied per resolved group (public/authenticated/webhooks); " +
+        "see RATE_LIMIT_* variables and rate-limit.config.ts.",
     ),
 
   // Global HTTP rate-limiting profiles (all optional; defaults applied)
@@ -409,9 +444,7 @@ export const envSchema = Joi.object({
     .integer()
     .min(1_000)
     .default(30_000)
-    .description(
-      "HTTP timeout for webhook export delivery in milliseconds",
-    ),
+    .description("HTTP timeout for webhook export delivery in milliseconds"),
 
   APP_BASE_URL: Joi.string()
     .uri({ scheme: ["http", "https"] })

@@ -1,12 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import {
   ReputationRecord,
   CertificateNft,
   BadgeNft,
   EscrowPayout,
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+  Proposal,
+  Vote,
+} from './interfaces/contracts.interface';
 import { InvokeContractDto, DeployContractDto } from './dto/invoke-contract.dto';
 import {
   ContractDeployment,
@@ -21,6 +22,10 @@ export class ContractsService {
   private readonly certificates = new Map<string, CertificateNft>();
   private readonly badges = new Map<string, BadgeNft>();
   private readonly payouts = new Map<string, EscrowPayout>();
+  private readonly proposals = new Map<string, Proposal>();
+  private readonly deployments = new Map<string, ContractDeployment>();
+  private readonly invocationCounts = new Map<string, number>();
+  private readonly invocationHistory = new Map<string, ContractInvocationResult[]>();
 
   getReputation(userId: string) {
     return this.reputations.get(userId) ?? { userId, score: 0, level: 1, lastUpdated: new Date() };
@@ -92,9 +97,39 @@ export class ContractsService {
     if (!payout) throw new NotFoundException('Payout not found');
     payout.status = 'completed';
     return { success: true, data: payout };
-  private readonly deployments = new Map<string, ContractDeployment>();
-  private readonly invocationHistory = new Map<string, ContractInvocationResult[]>();
-  private readonly invocationCounts = new Map<string, number>();
+  }
+
+  createProposal(title: string, description: string, proposer: string) {
+    const proposal: Proposal = {
+      id: `proposal_${uuidv4()}`,
+      title,
+      description,
+      proposer,
+      votes: [],
+      createdAt: new Date(),
+    };
+    this.proposals.set(proposal.id, proposal);
+    return { success: true, message: 'Proposal created', data: proposal };
+  }
+
+  listProposals() {
+    return Array.from(this.proposals.values());
+  }
+
+  getProposal(id: string) {
+    const proposal = this.proposals.get(id);
+    if (!proposal) throw new NotFoundException('Proposal not found');
+    return proposal;
+  }
+
+  castVote(id: string, userId: string, vote: 'yes' | 'no') {
+    const proposal = this.proposals.get(id);
+    if (!proposal) throw new NotFoundException('Proposal not found');
+
+    const newVote: Vote = { userId, vote, votedAt: new Date() };
+    proposal.votes.push(newVote);
+    return { success: true, message: 'Vote cast', data: proposal };
+  }
 
   async invokeContract(dto: InvokeContractDto): Promise<ContractInvocationResult> {
     this.validateContractId(dto.contractId);
@@ -167,8 +202,6 @@ export class ContractsService {
       deployedAt: deployment.deployedAt,
       methods: ['transfer', 'balance', 'approve', 'burn', 'mint', 'allowance'],
     };
-    this.proposals.set(proposal.id, proposal);
-    return { success: true, message: 'Proposal created', data: proposal };
   }
 
   async getContractHealth(contractId: string): Promise<ContractHealth> {
@@ -295,24 +328,5 @@ export class ContractsService {
     }
     this.invocationHistory.get(contractId)!.push(result);
     this.invocationCounts.set(contractId, (this.invocationCounts.get(contractId) ?? 0) + 1);
-  getProposal(id: string) {
-    const proposal = this.proposals.get(id);
-    if (!proposal) throw new NotFoundException('Proposal not found');
-    return proposal;
-  }
-
-  listProposals() {
-    return Array.from(this.proposals.values());
-  }
-
-  castVote(proposalId: string, userId: string, vote: 'yes' | 'no') {
-    const proposal = this.proposals.get(proposalId);
-    if (!proposal) throw new NotFoundException('Proposal not found');
-    if (proposal.status !== 'active') {
-      return { success: false, message: 'Proposal is no longer active' };
-    }
-    if (vote === 'yes') proposal.yesVotes++;
-    else proposal.noVotes++;
-    return { success: true, message: `Vote cast as ${vote}`, data: proposal };
   }
 }

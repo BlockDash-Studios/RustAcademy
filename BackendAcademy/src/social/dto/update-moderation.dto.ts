@@ -1,8 +1,8 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
-import { ModerationStatus } from '../interfaces/social-post.interface';
+import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { ModerationStatus, MODERATION_STATUSES } from '../interfaces/social-post.interface';
 
 export class UpdateModerationDto {
-  @IsEnum(['pending', 'approved', 'rejected', 'flagged'] as const)
+  @IsIn(MODERATION_STATUSES as unknown as string[])
   @IsNotEmpty()
   status: ModerationStatus;
 

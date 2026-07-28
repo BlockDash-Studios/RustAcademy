@@ -52,6 +52,20 @@ export interface FeatureFlagsListResponse {
   storeAvailable: boolean;
 }
 
+export interface FeatureFlagBootstrapStatus {
+  valid: boolean;
+  parsedCount: number;
+  hasCustomBootstrap: boolean;
+  error?: string;
+}
+
+export interface FeatureFlagsOperationalState {
+  source: 'store' | 'bootstrap' | 'cache';
+  storeAvailable: boolean;
+  cacheExpiresAt: number | null;
+  bootstrapStatus: FeatureFlagBootstrapStatus;
+}
+
 export class UpdateFeatureFlagDto {
   @ApiPropertyOptional({ description: 'Human-readable display name' })
   @IsOptional()
@@ -124,4 +138,32 @@ export class EvaluateFeatureFlagResponseDto {
 
   @ApiProperty()
   source!: string;
+}
+
+export class FeatureFlagBootstrapStatusDto {
+  @ApiProperty()
+  valid!: boolean;
+
+  @ApiProperty()
+  parsedCount!: number;
+
+  @ApiProperty()
+  hasCustomBootstrap!: boolean;
+
+  @ApiPropertyOptional()
+  error?: string;
+}
+
+export class FeatureFlagsOperationalStateDto {
+  @ApiProperty()
+  source!: string;
+
+  @ApiProperty()
+  storeAvailable!: boolean;
+
+  @ApiPropertyOptional({ nullable: true })
+  cacheExpiresAt!: number | null;
+
+  @ApiProperty({ type: FeatureFlagBootstrapStatusDto })
+  bootstrapStatus!: FeatureFlagBootstrapStatusDto;
 }

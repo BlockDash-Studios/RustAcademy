@@ -14,30 +14,31 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AuthTokensResponse, Session } from './interfaces/session.interface';
 import { UserRole } from './enums/user-role.enum';
+import { AntiCheatService } from '../security/anti-cheat.service';
 
 /**
- * AuthSessionController — Issue #220
+ * AuthSessionController — Issue #220, #410
  *
- * Exposes session-management endpoints under /auth/session:
+ * Exposes session-management and API key workflow endpoints:
  *
  *  POST   /auth/session/login         — issue access + refresh token pair
  *  POST   /auth/session/refresh       — rotate refresh token, return new pair
  *  POST   /auth/session/logout        — revoke single session
  *  POST   /auth/session/logout-all    — revoke all sessions for a user
- *  GET    /auth/session/:userId       — list active sessions (no refresh token)
+ *  GET    /auth/session/:userId       — list active sessions
+ *
+ *  POST   /auth/api-keys              — issue a new API key
+ *  GET    /auth/api-keys/:userId      — list a user's API keys
+ *  POST   /auth/api-keys/:keyId/revoke — revoke an API key
+ *  POST   /auth/api-keys/:keyId/rotate — rotate an API key
  */
 @Controller('auth/session')
 export class AuthSessionController {
-  constructor(private readonly authSessionService: AuthSessionService) {}
+  constructor(
+    private readonly authSessionService: AuthSessionService,
+    private readonly antiCheatService: AntiCheatService,
+  ) {}
 
-  /**
-   * Login — creates a new session for the user.
-   *
-   * In a production setup you would validate userId/password against the
-   * user store here. For this implementation we trust the caller and issue
-   * tokens directly so the session layer can be integrated without coupling
-   * to a specific auth strategy.
-   */
   @Post('login')
   @HttpCode(HttpStatus.CREATED)
   async login(@Body() dto: LoginDto): Promise<AuthTokensResponse> {
@@ -47,45 +48,72 @@ export class AuthSessionController {
     );
   }
 
-  /**
-   * Refresh — rotates the refresh token and returns a new token pair.
-   * The old refresh token is revoked after a successful rotation.
-   */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(@Body() dto: RefreshTokenDto): Promise<AuthTokensResponse> {
     return this.authSessionService.refreshTokens(dto.refreshToken);
   }
 
-  /**
-   * Logout — revokes a single session identified by sessionId.
-   * The sessionId is embedded in the refresh token payload but can also
-   * be supplied directly by the client.
-   */
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   logout(@Query('sessionId') sessionId: string): void {
     this.authSessionService.revokeSession(sessionId);
   }
 
-  /**
-   * Logout-all — revokes all active sessions for the given user.
-   */
   @Post('logout-all')
   @HttpCode(HttpStatus.NO_CONTENT)
   logoutAll(@Query('userId') userId: string): void {
     this.authSessionService.revokeAllUserSessions(userId);
   }
 
-  /**
-   * Active sessions — returns a list of active (non-revoked, non-expired)
-   * sessions for a user. Refresh tokens are omitted from the response.
-   */
   @Get(':userId')
   @HttpCode(HttpStatus.OK)
   getActiveSessions(
     @Param('userId') userId: string,
   ): Omit<Session, 'refreshToken'>[] {
     return this.authSessionService.getActiveSessions(userId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // API Key Issuance & Revocation — Issue #410
+  // ---------------------------------------------------------------------------
+
+  @Post('api-keys')
+  @HttpCode(HttpStatus.CREATED)
+  createApiKey(
+    @Body() body: { userId: string; label: string; scopes?: string[]; expiresInDays?: number },
+  ): { id: string; rawKey: string } {
+    return this.antiCheatService.createApiKey(
+      body.userId,
+      body.label,
+      body.scopes,
+      body.expiresInDays,
+    );
+  }
+
+  @Get('api-keys/:userId')
+  @HttpCode(HttpStatus.OK)
+  listApiKeys(@Param('userId') userId: string) {
+    return this.antiCheatService.getUserApiKeys(userId);
+  }
+
+  @Post('api-keys/:keyId/revoke')
+  @HttpCode(HttpStatus.OK)
+  revokeApiKey(@Param('keyId') keyId: string) {
+    const revoked = this.antiCheatService.revokeApiKey(keyId);
+    if (!revoked) {
+      return { success: false, message: 'Key not found' };
+    }
+    return { success: true, message: 'API key revoked' };
+  }
+
+  @Post('api-keys/:keyId/rotate')
+  @HttpCode(HttpStatus.CREATED)
+  rotateApiKey(@Param('keyId') keyId: string) {
+    const newKey = this.antiCheatService.rotateApiKey(keyId);
+    if (!newKey) {
+      return { success: false, message: 'Key not found' };
+    }
+    return { success: true, ...newKey };
   }
 }

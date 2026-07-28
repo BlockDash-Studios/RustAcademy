@@ -9,6 +9,7 @@ export class LessonEntity {
   duration: number;
   xpReward: number;
   prerequisites: string[];
+  version: number;
   isPublished: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -22,5 +23,6 @@ export class LessonEntity {
     this.prerequisites = this.prerequisites || [];
     this.xpReward = this.xpReward || 0;
     this.duration = this.duration || 0;
+    this.version = this.version && this.version >= 1 ? this.version : 1;
   }
 }

@@ -1,5 +1,5 @@
 export default {
-  moduleFileExtensions: ["js", "json", "ts"],
+  moduleFileExtensions: ["ts", "js", "json"],
   rootDir: ".",
   testRegex: ".*\\.unit\\.spec\\.ts$",
   transform: {

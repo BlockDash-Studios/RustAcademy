@@ -27,13 +27,25 @@ export interface EscrowPayout {
   amount: number;
   currency: string;
   status: 'pending' | 'completed' | 'failed';
-export interface ContractInvocation {
-  contractId: string;
-  method: string;
-  args: string[];
-  sourceAccount: string;
-  fee?: number;
+  createdAt: Date;
+  txHash?: string;
 }
+
+export interface Vote {
+  userId: string;
+  vote: 'yes' | 'no';
+  votedAt: Date;
+}
+
+export interface Proposal {
+  id: string;
+  title: string;
+  description: string;
+  proposer: string;
+  votes: Vote[];
+  createdAt: Date;
+}
+
 
 export interface ContractInvocationResult {
   invocationId: string;
@@ -69,13 +81,4 @@ export interface ContractInfo {
   deployedBy: string;
   deployedAt: Date;
   methods: string[];
-export interface GovernanceProposal {
-  id: string;
-  title: string;
-  description: string;
-  proposer: string;
-  yesVotes: number;
-  noVotes: number;
-  status: 'active' | 'passed' | 'rejected';
-  createdAt: Date;
 }

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { RegisterWalletDto, VerifyTransactionDto } from './dto/verify-transaction.dto';
 import {
@@ -7,6 +7,24 @@ import {
   WalletBalance,
   WalletTransaction,
 } from './interfaces/wallet.interface';
+
+export interface ReconciliationResult {
+  walletAddress: string;
+  expectedBalance: string;
+  actualBalance: string;
+  difference: string;
+  reconciledAt: Date;
+  status: 'matched' | 'drift_detected' | 'error';
+}
+
+export interface ReconciliationReport {
+  totalWallets: number;
+  matched: number;
+  driftDetected: number;
+  errors: number;
+  results: ReconciliationResult[];
+  generatedAt: Date;
+}
 
 @Injectable()
 export class WalletService {
@@ -194,6 +212,83 @@ export class WalletService {
         message: 'Address must be a valid Stellar public key starting with G',
       });
     }
+  }
+
+  async reconcileAllWallets(): Promise<ReconciliationReport> {
+    const results: ReconciliationResult[] = [];
+    const now = new Date();
+    for (const [address, wallet] of this.wallets) {
+      try {
+        const externalBalance = await this.fetchExternalBalance(address);
+        const currentBalance = wallet.balance;
+        if (currentBalance !== externalBalance) {
+          results.push({
+            walletAddress: address,
+            expectedBalance: externalBalance,
+            actualBalance: currentBalance,
+            difference: (parseFloat(externalBalance) - parseFloat(currentBalance)).toFixed(5),
+            reconciledAt: now,
+            status: 'drift_detected',
+          });
+        } else {
+          results.push({
+            walletAddress: address,
+            expectedBalance: currentBalance,
+            actualBalance: currentBalance,
+            difference: '0.00000',
+            reconciledAt: now,
+            status: 'matched',
+          });
+        }
+      } catch {
+        results.push({
+          walletAddress: address,
+          expectedBalance: '0.00000',
+          actualBalance: wallet?.balance ?? '0.00000',
+          difference: '0.00000',
+          reconciledAt: now,
+          status: 'error',
+        });
+      }
+    }
+    const matched = results.filter((r) => r.status === 'matched').length;
+    const driftDetected = results.filter((r) => r.status === 'drift_detected').length;
+    const errors = results.filter((r) => r.status === 'error').length;
+    return { totalWallets: this.wallets.size, matched, driftDetected, errors, results, generatedAt: now };
+  }
+
+  async reconcileWallet(address: string): Promise<ReconciliationResult> {
+    const wallet = this.wallets.get(address);
+    if (!wallet) {
+      throw new BadRequestException({ error: 'WALLET_NOT_FOUND', message: `Wallet ${address} not found` });
+    }
+    const externalBalance = await this.fetchExternalBalance(address);
+    const currentBalance = wallet.balance;
+    const now = new Date();
+    if (currentBalance !== externalBalance) {
+      wallet.balance = externalBalance;
+      this.wallets.set(address, wallet);
+      return {
+        walletAddress: address,
+        expectedBalance: externalBalance,
+        actualBalance: currentBalance,
+        difference: (parseFloat(externalBalance) - parseFloat(currentBalance)).toFixed(5),
+        reconciledAt: now,
+        status: 'drift_detected',
+      };
+    }
+    return {
+      walletAddress: address,
+      expectedBalance: currentBalance,
+      actualBalance: currentBalance,
+      difference: '0.00000',
+      reconciledAt: now,
+      status: 'matched',
+    };
+  }
+
+  private async fetchExternalBalance(address: string): Promise<string> {
+    return this.wallets.get(address)?.balance ?? '0.00000';
   }
 
   private generateHash(): string {

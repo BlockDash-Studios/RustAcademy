@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Counter } from 'prom-client';
+import { Counter, Gauge } from 'prom-client';
 import { InjectMetric } from '@willsoto/nestjs-prometheus';
 import {
   DOMAIN_EVENTS_METRIC,
@@ -14,6 +14,12 @@ import {
  */
 @Injectable()
 export class MonitoringService {
+  /** Internal counters for session & API key events (not Prom-registered). */
+  private sessionRevocations = 0;
+  private apiKeyCreations = 0;
+  private apiKeyRevocations = 0;
+  private apiKeyAnomalies = 0;
+
   constructor(
     @InjectMetric(HTTP_REQUESTS_METRIC)
     private readonly httpRequests: Counter<string>,
@@ -49,6 +55,62 @@ export class MonitoringService {
    */
   recordError(source: string, reason: string): void {
     this.errorEvents.inc({ source, reason });
+  }
+
+  /**
+   * Record a session revocation event.
+   */
+  recordSessionRevocation(userId: string, reason: string): void {
+    this.sessionRevocations++;
+    this.domainEvents.inc({
+      event_type: 'session_revoked',
+      source: 'auth',
+    });
+  }
+
+  /**
+   * Record an API key creation event.
+   */
+  recordApiKeyCreation(userId: string): void {
+    this.apiKeyCreations++;
+    this.domainEvents.inc({
+      event_type: 'api_key_created',
+      source: 'security',
+    });
+  }
+
+  /**
+   * Record an API key revocation event.
+   */
+  recordApiKeyRevocation(userId: string, reason: string): void {
+    this.apiKeyRevocations++;
+    this.domainEvents.inc({
+      event_type: 'api_key_revoked',
+      source: 'security',
+    });
+  }
+
+  /**
+   * Record an API key anomaly detection event.
+   */
+  recordApiKeyAnomaly(apiKeyId: string): void {
+    this.apiKeyAnomalies++;
+    this.domainEvents.inc({
+      event_type: 'api_key_anomaly',
+      source: 'security',
+    });
+  }
+
+  /**
+   * Get snapshot of internal counters for health / debug endpoints.
+   */
+  getStats(): Record<string, number> {
+    return {
+      sessionRevocations: this.sessionRevocations,
+      apiKeyCreations: this.apiKeyCreations,
+      apiKeyRevocations: this.apiKeyRevocations,
+      apiKeyAnomalies: this.apiKeyAnomalies,
+    };
   }
 }
 

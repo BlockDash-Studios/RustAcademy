@@ -1,5 +1,4 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
 import { StreakService } from './streak.service';
 
 describe('StreakService', () => {
@@ -18,6 +17,11 @@ describe('StreakService', () => {
     service.clearAll();
   });
 
+  // Restore real timers after each test to prevent cross-test pollution
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   // -------------------------------------------------------------------------
   // getStreak() tests
   // -------------------------------------------------------------------------
@@ -25,11 +29,7 @@ describe('StreakService', () => {
   describe('getStreak()', () => {
     const USER = 'test-user-abc';
 
-    it('throws NotFoundException for unknown user', () => {
-      expect(() => service.getStreak(USER)).toThrow(NotFoundException);
-    });
-
-    it('returns zero streak for new user', () => {
+    it('returns zero streak for new user who has never checked in', () => {
       const streak = service.getStreak(USER);
       expect(streak).toMatchObject({
         userId: USER,
@@ -72,34 +72,35 @@ describe('StreakService', () => {
       // Day 1
       service.checkIn(USER);
       
-      // Simulate next day by mocking Date.now
-      const now = new Date();
-      const tomorrow = new Date(now.getTime() + 86400000); // +24 hours
-      jest.spyOn(global.Date, 'now').mockImplementation(() => now.getTime());
+      // Simulate next day by advancing system time +24h
+      const now = Date.now();
+      const tomorrow = now + 86400000;
+      jest.useFakeTimers({ now: tomorrow });
       
       const result = service.checkIn(USER);
       expect(result.newStreak).toBe(2);
-      expect(result.streakBonus).toBe(5);
+      // Bonus thresholds start at 3-day streak, so 2-day streak has 0 bonus
+      expect(result.streakBonus).toBe(0);
       
-      // Restore Date.now
-      jest.restoreAllMocks();
+      // Restore real timers
+      jest.useRealTimers();
     });
 
     it('resets streak after missing a day', () => {
       // Day 1
       service.checkIn(USER);
       
-      // Simulate 2 days later (missed a day)
-      const now = new Date();
-      const twoDaysLater = new Date(now.getTime() + 2 * 86400000); // +48 hours
-      jest.spyOn(global.Date, 'now').mockImplementation(() => twoDaysLater.getTime());
+      // Simulate 2 days later (missed a day) by advancing system time +48h
+      const now = Date.now();
+      const twoDaysLater = now + 2 * 86400000; // +48 hours
+      jest.useFakeTimers({ now: twoDaysLater });
       
       const result = service.checkIn(USER);
       expect(result.newStreak).toBe(1); // Reset to 1
       expect(result.message).toContain('Streak reset');
       
-      // Restore Date.now
-      jest.restoreAllMocks();
+      // Restore real timers
+      jest.useRealTimers();
     });
   });
 

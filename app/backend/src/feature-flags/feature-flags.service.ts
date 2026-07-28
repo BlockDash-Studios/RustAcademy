@@ -6,14 +6,16 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 
-import { AppConfigService } from '../config';
+import { AppConfigService } from '../config/app-config.service';
 import { AuditService } from '../audit/audit.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import {
+  FeatureFlagBootstrapStatus,
   FeatureFlagEvaluationContext,
   FeatureFlagEvaluationResult,
   FeatureFlagRecord,
   FeatureFlagsListResponse,
+  FeatureFlagsOperationalState,
   UpdateFeatureFlagDto,
 } from './feature-flags.dto';
 
@@ -112,6 +114,7 @@ const DEFAULT_FLAGS: FeatureFlagRecord[] = [
 export class FeatureFlagsService {
   private readonly logger = new Logger(FeatureFlagsService.name);
   private cache: CacheState | null = null;
+  private lastBootstrapStatus: FeatureFlagBootstrapStatus | null = null;
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -311,13 +314,94 @@ export class FeatureFlagsService {
     }
   }
 
-  async getOperationalState(): Promise<{ source: string; storeAvailable: boolean; cacheExpiresAt: number | null }> {
+  async getOperationalState(): Promise<FeatureFlagsOperationalState> {
     const snapshot = await this.loadFlags();
     return {
       source: snapshot.source,
       storeAvailable: snapshot.storeAvailable,
       cacheExpiresAt: this.cache?.expiresAt ?? null,
+      bootstrapStatus: this.getBootstrapStatus(),
     };
+  }
+
+  getBootstrapStatus(): FeatureFlagBootstrapStatus {
+    if (this.lastBootstrapStatus) {
+      return this.lastBootstrapStatus;
+    }
+    const result = this.parseBootstrapFlags(this.configService.featureFlagsBootstrapJson);
+    this.lastBootstrapStatus = result.status;
+    return result.status;
+  }
+
+  parseBootstrapFlags(raw?: string): { flags: FeatureFlagRecord[]; status: FeatureFlagBootstrapStatus } {
+    if (!raw || !raw.trim()) {
+      return {
+        flags: DEFAULT_FLAGS.map((flag) => ({ ...flag })),
+        status: {
+          valid: true,
+          parsedCount: DEFAULT_FLAGS.length,
+          hasCustomBootstrap: false,
+        },
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        throw new Error('FEATURE_FLAGS_BOOTSTRAP_JSON must be a valid JSON array');
+      }
+
+      const parsedOverrides: FeatureFlagRecord[] = [];
+      for (const entry of parsed) {
+        if (!entry || typeof entry !== 'object' || typeof entry.key !== 'string' || !entry.key.trim()) {
+          throw new Error(
+            "FEATURE_FLAGS_BOOTSTRAP_JSON array items must be objects with a non-empty string 'key' property",
+          );
+        }
+        parsedOverrides.push({
+          key: entry.key.trim(),
+          name: typeof entry.name === 'string' ? entry.name : entry.key.trim(),
+          description: typeof entry.description === 'string' ? entry.description : '',
+          enabled: Boolean(entry.enabled),
+          killSwitch: Boolean(entry.killSwitch),
+          rolloutPercentage: this.normalizeRollout(entry.rolloutPercentage),
+          allowedUsers: Array.isArray(entry.allowedUsers)
+            ? entry.allowedUsers.map((u: unknown) => String(u).trim()).filter(Boolean)
+            : [],
+          environments: Array.isArray(entry.environments)
+            ? entry.environments.map((e: unknown) => String(e).trim()).filter(Boolean)
+            : [],
+          metadata:
+            entry.metadata && typeof entry.metadata === 'object'
+              ? (entry.metadata as Record<string, unknown>)
+              : {},
+          updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : new Date(0).toISOString(),
+          updatedBy: typeof entry.updatedBy === 'string' ? entry.updatedBy : 'bootstrap',
+        });
+      }
+
+      const merged = this.mergeFlags(DEFAULT_FLAGS, parsedOverrides);
+      return {
+        flags: merged,
+        status: {
+          valid: true,
+          parsedCount: merged.length,
+          hasCustomBootstrap: true,
+        },
+      };
+    } catch (error) {
+      const errorMessage = (error as Error).message;
+      this.logger.warn(`Invalid FEATURE_FLAGS_BOOTSTRAP_JSON; using defaults: ${errorMessage}`);
+      return {
+        flags: DEFAULT_FLAGS.map((flag) => ({ ...flag })),
+        status: {
+          valid: false,
+          parsedCount: DEFAULT_FLAGS.length,
+          hasCustomBootstrap: true,
+          error: errorMessage,
+        },
+      };
+    }
   }
 
   private async loadFlags(forceRefresh = false): Promise<CacheState> {
@@ -358,35 +442,9 @@ export class FeatureFlagsService {
   }
 
   private getBootstrapFlags(): FeatureFlagRecord[] {
-    const raw = this.configService.featureFlagsBootstrapJson;
-    if (!raw) {
-      return DEFAULT_FLAGS.map((flag) => ({ ...flag }));
-    }
-
-    try {
-      const parsed = JSON.parse(raw) as Array<Partial<FeatureFlagRecord> & { key: string }>;
-      return this.mergeFlags(
-        DEFAULT_FLAGS,
-        parsed.map((entry) => ({
-          key: entry.key,
-          name: entry.name ?? entry.key,
-          description: entry.description ?? '',
-          enabled: entry.enabled ?? false,
-          killSwitch: entry.killSwitch ?? false,
-          rolloutPercentage: this.normalizeRollout(entry.rolloutPercentage),
-          allowedUsers: entry.allowedUsers ?? [],
-          environments: entry.environments ?? [],
-          metadata: entry.metadata ?? {},
-          updatedAt: entry.updatedAt ?? new Date(0).toISOString(),
-          updatedBy: entry.updatedBy ?? 'bootstrap',
-        })),
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Invalid FEATURE_FLAGS_BOOTSTRAP_JSON; using defaults: ${(error as Error).message}`,
-      );
-      return DEFAULT_FLAGS.map((flag) => ({ ...flag }));
-    }
+    const result = this.parseBootstrapFlags(this.configService.featureFlagsBootstrapJson);
+    this.lastBootstrapStatus = result.status;
+    return result.flags;
   }
 
   private mergeFlags(
