@@ -1,11 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { CorrelationLoggerService } from '../logging/logger.service';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { TransactionHistoryQueryDto } from './dto/transaction-history-query.dto';
 import {
   StellarTransaction,
   TransactionHistoryResponse,
 } from './interfaces/transaction.interface';
+import { IContractAdapter } from '../contracts';
+
+/**
+ * Payments service.
+ *
+ * #396: On-chain payment recording is isolated behind the
+ * {@link IContractAdapter} interface. When the adapter is available,
+ * payment events are recorded on-chain for auditability. When it is
+ * not available (e.g., test environments), the service operates
+ * in off-chain-only mode.
+ */
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { DatabaseService, PaymentStatus } from '../database/database.service';
+import { TransactionHistoryQueryDto } from './dto/transaction-history-query.dto';
+import { StellarTransaction, TransactionHistoryResponse } from './interfaces/transaction.interface';
 
 export interface WebhookPayload {
   id: string;
@@ -16,9 +34,36 @@ export interface WebhookPayload {
   maxRetries: number;
 }
 
+/**
+ * Shape of the JSON body sent by the payment provider for a payment status
+ * callback. `eventId` is the provider's identifier for *this specific*
+ * event delivery — it is expected to differ across retries in some
+ * provider implementations, which is exactly why state validation cannot
+ * rely on idempotency-key replay detection alone (see
+ * DatabaseService.updatePaymentStatus) — Issue #412 follow-up.
+ */
+export interface PaymentWebhookEvent {
+  eventId: string;
+  paymentId: string;
+  orderId: string;
+  userId: string;
+  status: PaymentStatus;
+  amount: number;
+  assetCode: string;
+  provider: string;
+  couponCode?: string;
+}
+
+export type WebhookProcessingOutcome =
+  | { outcome: 'applied'; paymentId: string; status: PaymentStatus }
+  | { outcome: 'duplicate'; paymentId: string; reason: string }
+  | { outcome: 'noop'; paymentId: string; reason: string }
+  | { outcome: 'rejected'; paymentId: string; reason: string };
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
+
   private readonly stubLedger: StellarTransaction[] = [
     {
       id: 'tx-stub-0001',
@@ -73,13 +118,11 @@ export class PaymentsService {
   private static readonly MAX_LIMIT = 100;
   private static readonly DEFAULT_LIMIT = 20;
 
-  private readonly defaultTimeoutMs: number;
-  private readonly webhookMaxRetries: number;
-  private readonly webhookBaseBackoffMs: number;
-  private readonly webhookMaxBackoffMs: number;
-
   constructor(
     private readonly databaseService: DatabaseService,
+    @Optional()
+    private readonly contractAdapter?: IContractAdapter,
+  ) {}
     private readonly configService?: ConfigService,
   ) {
     this.defaultTimeoutMs = this.configService?.get<number>('DEFAULT_REQUEST_TIMEOUT_MS') ?? 30_000;
@@ -112,11 +155,16 @@ export class PaymentsService {
     let lastError: string | undefined;
     for (let attempt = 1; attempt <= webhook.maxRetries; attempt++) {
       try {
-        const statusCode = await deliverFn(webhook.url, webhook.body, {
+        const headers: Record<string, string> = {
           'X-Webhook-Signature': webhook.signature,
           'X-Idempotency-Key': webhook.idempotencyKey,
           'X-Webhook-Attempt': String(attempt),
-        });
+        };
+        const correlationId = CorrelationLoggerService.getCorrelationId();
+        if (correlationId) {
+          headers['x-correlation-id'] = correlationId;
+        }
+        const statusCode = await deliverFn(webhook.url, webhook.body, headers);
         if (statusCode >= 200 && statusCode < 300) {
           this.logger.log(`Webhook ${webhook.id} delivered on attempt ${attempt}`);
           return { success: true, attempts: attempt };
@@ -134,7 +182,9 @@ export class PaymentsService {
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
-    this.logger.error(`Webhook ${webhook.id} failed after ${webhook.maxRetries} attempts: ${lastError}`);
+    this.logger.error(
+      `Webhook ${webhook.id} failed after ${webhook.maxRetries} attempts: ${lastError}`,
+    );
     return { success: false, attempts: webhook.maxRetries, lastError };
   }
 
@@ -182,7 +232,26 @@ export class PaymentsService {
   }
 
   async applyCoupon(code: string, userId: string, amount: number, orderId: string) {
-    return this.databaseService.applyCoupon(code, userId, amount, orderId);
+    const result = await this.databaseService.applyCoupon(code, userId, amount, orderId);
+
+    // ── #396: Record payment on-chain via contract adapter ──────────
+    if (this.contractAdapter) {
+      try {
+        await this.contractAdapter.recordPayment(
+          userId,
+          'platform',
+          amount,
+          'XLM',
+          `Coupon redemption: ${code} for order ${orderId}`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[PaymentsService] Contract adapter payment recording failed (non-blocking): ${err}`,
+        );
+      }
+    }
+
+    return result;
   }
 
   async getRedemptionHistory(userId: string) {
@@ -191,5 +260,104 @@ export class PaymentsService {
 
   async getAllCoupons() {
     return this.databaseService.getAllCoupons();
+  }
+} async getRedemptionHistory(userId: string) {
+    return this.databaseService.getRedemptionsByUser(userId);
+  }
+
+  async getAllCoupons() {
+    return this.databaseService.getAllCoupons();
+  }
+}
+
+  /**
+   * Processes a validated, signature-checked payment webhook event.
+   *
+   * Issue #412 follow-up: this is the single choke point where a provider
+   * callback is allowed to mutate payment state. It never applies the
+   * caller's claimed status directly — it always defers to
+   * DatabaseService.updatePaymentStatus, which re-checks the payment's
+   * *current* stored status against the legal-transition graph. Duplicate
+   * callbacks (same event id, or a callback that would just repeat the
+   * current status) are recognized and short-circuited before any side
+   * effect (like granting a coupon redemption) runs, and illegal
+   * transitions (e.g. `succeeded` -> `pending`, or mutating a payment that
+   * already resolved to `failed`/`refunded`) are rejected outright.
+   */
+  async processPaymentWebhookEvent(event: PaymentWebhookEvent): Promise<WebhookProcessingOutcome> {
+    // Ensure the payment row exists (first callback for a payment creates it
+    // in `pending`; this is a no-op for payments we already know about).
+    const existing = await this.databaseService.getPaymentById(event.paymentId);
+    if (!existing) {
+      await this.databaseService.createPayment({
+        id: event.paymentId,
+        orderId: event.orderId,
+        userId: event.userId,
+        status: 'pending',
+        amount: event.amount,
+        assetCode: event.assetCode,
+        provider: event.provider,
+      });
+    }
+
+    const result = await this.databaseService.updatePaymentStatus(
+      event.paymentId,
+      event.status,
+      event.eventId,
+    );
+
+    if (!result.success) {
+      this.logger.warn(
+        `Rejected webhook event ${event.eventId} for payment ${event.paymentId}: ${result.reason}`,
+      );
+      return {
+        outcome: 'rejected',
+        paymentId: event.paymentId,
+        reason: result.reason ?? 'invalid transition',
+      };
+    }
+
+    if (result.duplicateEvent) {
+      this.logger.log(
+        `Ignoring duplicate webhook event ${event.eventId} for payment ${event.paymentId}`,
+      );
+      return {
+        outcome: 'duplicate',
+        paymentId: event.paymentId,
+        reason: result.reason ?? 'duplicate event',
+      };
+    }
+
+    if (!result.transitioned) {
+      // Legal but a no-op (payment already in the requested status under a
+      // different event id) — do not re-run side effects.
+      return {
+        outcome: 'noop',
+        paymentId: event.paymentId,
+        reason: result.reason ?? 'no state change',
+      };
+    }
+
+    // Only a genuine, first-time transition into `succeeded` grants a
+    // coupon redemption, so a duplicated success callback can never apply
+    // the discount twice.
+    if (event.status === 'succeeded' && event.couponCode) {
+      const applied = await this.applyCoupon(
+        event.couponCode,
+        event.userId,
+        event.amount,
+        event.orderId,
+      );
+      if (!applied.success) {
+        this.logger.warn(
+          `Payment ${event.paymentId} succeeded but coupon ${event.couponCode} could not be applied: ${applied.reason}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Applied webhook event ${event.eventId}: payment ${event.paymentId} -> ${event.status}`,
+    );
+    return { outcome: 'applied', paymentId: event.paymentId, status: event.status };
   }
 }

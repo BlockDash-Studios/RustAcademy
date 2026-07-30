@@ -153,9 +153,12 @@ export class RewardsController {
   createPrizePool(
     @Body() body: CreatePrizePoolRequest,
   ): PrizePoolResponse {
+    // #363: Support optional expiresAt for redemption expiration checks
+    const expiresAt = body.expiresAt ? new Date(body.expiresAt) : undefined;
     return this.rewardsService.createPrizePool(
       body.totalAmount,
       body.currency,
+      expiresAt,
     );
   }
 

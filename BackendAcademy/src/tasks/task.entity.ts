@@ -12,6 +12,8 @@ export class TaskEntity {
   xpReward: number;
   passingScore: number;
   templateCode: string;
+  /** Maximum retries for orchestrated task execution — #364 */
+  maxRetries?: number;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;

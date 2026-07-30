@@ -1,7 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { CorrelationLoggerService } from '../logging/logger.service';
-import { ErrorCode } from '../common/error-codes.constants';
+import { isFeatureEnabled } from '../config/env.schema';
 
 interface MetricEntry {
   name: string;
@@ -21,6 +20,12 @@ interface CronHealthStatus {
   error?: string;
 }
 
+/**
+ * Metrics service tracking application-level metrics including
+ * contract registry (#393), event replay (#394), feature flag
+ * state (#395), streaming disconnects (#373), and reward
+ * redemptions (#363).
+ */
 @Injectable()
 export class MetricsService implements OnModuleInit {
   private readonly logger = new Logger(MetricsService.name);
@@ -33,35 +38,31 @@ export class MetricsService implements OnModuleInit {
 
   onModuleInit(): void {
     this.registerCronHealthFromConfig();
+    this.recordFeatureFlagMetrics();
     this.logger.log('MetricsService initialized');
   }
 
-  /**
-   * Increments a counter metric by the given value (default 1).
-   */
+  // ──────────────────────────────────────────────────────────────────
+  // Counter & gauge operations
+  // ──────────────────────────────────────────────────────────────────
+
   incrementCounter(name: string, value = 1, labels: Record<string, string> = {}): void {
-    const correlationId = CorrelationLoggerService.getCorrelationId();
     const existing = this.metrics.get(name);
     if (existing) {
       existing.value += value;
       existing.timestamp = new Date();
       existing.labels = { ...existing.labels, ...labels };
-      if (correlationId) existing.correlationId = correlationId;
     } else {
       this.metrics.set(name, {
         name,
         value,
         timestamp: new Date(),
         labels,
-        correlationId,
       });
     }
     this.logger.debug(`Metric "${name}" incremented to ${this.metrics.get(name)?.value}`);
   }
 
-  /**
-   * Records a gauge metric (sets to an absolute value).
-   */
   setGauge(name: string, value: number, labels: Record<string, string> = {}): void {
     this.metrics.set(name, {
       name,
@@ -71,14 +72,10 @@ export class MetricsService implements OnModuleInit {
     });
   }
 
-  /**
-   * Records request latency in milliseconds.
-   */
   recordLatency(endpoint: string, latencyMs: number): void {
     const key = `latency:${endpoint}`;
     const existing = this.metrics.get(key);
     if (existing) {
-      // Exponential moving average
       existing.value = existing.value * 0.9 + latencyMs * 0.1;
       existing.timestamp = new Date();
     } else {
@@ -91,25 +88,24 @@ export class MetricsService implements OnModuleInit {
     }
   }
 
-  /**
-   * Returns all recorded metrics.
-   */
+  recordDomainEvent(eventType: string, source: string): void {
+    this.incrementCounter('domain_events_total', 1, { event_type: eventType, source });
+  }
+
+  recordErrorEvent(source: string, reason: string): void {
+    this.incrementCounter('error_events_total', 1, { source, reason });
+  }
+
   getAllMetrics(): MetricEntry[] {
     return Array.from(this.metrics.values());
   }
 
-  /**
-   * Tracks a request to an endpoint.
-   */
   trackRequest(endpoint: string): void {
     const count = this.requestCounts.get(endpoint) || 0;
     this.requestCounts.set(endpoint, count + 1);
     this.incrementCounter('requests_total', 1, { endpoint });
   }
 
-  /**
-   * Returns request count statistics.
-   */
   getRequestStats(): Array<{ endpoint: string; count: number }> {
     return Array.from(this.requestCounts.entries()).map(([endpoint, count]) => ({
       endpoint,
@@ -117,14 +113,17 @@ export class MetricsService implements OnModuleInit {
     }));
   }
 
-  /**
-   * Registers cron job health status from config.
-   */
+  // ──────────────────────────────────────────────────────────────────
+  // Cron health
+  // ──────────────────────────────────────────────────────────────────
+
   private registerCronHealthFromConfig(): void {
     const entries: Array<{ name: string; key: string }> = [
       { name: 'cleanup', key: 'CRON_CLEANUP_SCHEDULE' },
       { name: 'analytics', key: 'CRON_ANALYTICS_SCHEDULE' },
       { name: 'notifications', key: 'CRON_NOTIFICATIONS_SCHEDULE' },
+      // #394: Replay cron health tracking
+      { name: 'contract_replay', key: 'CRON_CONTRACT_REPLAY_SCHEDULE' },
     ];
 
     for (const entry of entries) {
@@ -138,16 +137,10 @@ export class MetricsService implements OnModuleInit {
     }
   }
 
-  /**
-   * Returns cron health status for all registered jobs.
-   */
   getCronHealth(): CronHealthStatus[] {
     return Array.from(this.cronHealth.values());
   }
 
-  /**
-   * Updates a cron job's last run timestamp.
-   */
   recordCronRun(name: string): void {
     const entry = this.cronHealth.get(name);
     if (entry) {
@@ -156,30 +149,6 @@ export class MetricsService implements OnModuleInit {
     }
   }
 
-  private reconciliationCount = 0;
-  private reconciliationDrifts = 0;
-
-  recordReconciliation(count: number, drifts: number): void {
-    this.reconciliationCount += count;
-    this.reconciliationDrifts += drifts;
-    this.setGauge('reconciliation_total', this.reconciliationCount);
-    this.setGauge('reconciliation_drifts', this.reconciliationDrifts);
-  private cacheWarmCount = 0;
-  private cacheWarmErrors = 0;
-
-  recordCacheWarm(count: number): void {
-    this.cacheWarmCount += count;
-    this.setGauge('cache_warm_total', this.cacheWarmCount);
-  }
-
-  recordCacheWarmError(): void {
-    this.cacheWarmErrors++;
-    this.setGauge('cache_warm_errors', this.cacheWarmErrors);
-  }
-
-  /**
-   * Marks a cron job as having errored.
-   */
   recordCronError(name: string, error: string): void {
     const entry = this.cronHealth.get(name);
     if (entry) {
@@ -189,86 +158,29 @@ export class MetricsService implements OnModuleInit {
     this.incrementCounter('cron_errors_total', 1, { job: name });
   }
 
-  /**
-   * Records an error by its structured error code.
-   */
-  recordErrorByCode(errorCode: ErrorCode, endpoint?: string): void {
-    const count = this.errorCounts.get(errorCode) || 0;
-    this.errorCounts.set(errorCode, count + 1);
-    this.incrementCounter('errors_total', 1, {
-      error_code: errorCode,
-      ...(endpoint ? { endpoint } : {}),
-    });
-    this.logger.debug(`Error "${errorCode}" recorded (total: ${count + 1})`);
-  }
+  // ──────────────────────────────────────────────────────────────────
+  // #395: Feature flag state tracking
+  // ──────────────────────────────────────────────────────────────────
 
-  /**
-   * Returns error counts grouped by error code.
-   */
-  getErrorCounts(): Array<{ errorCode: string; count: number }> {
-    return Array.from(this.errorCounts.entries()).map(([errorCode, count]) => ({
-      errorCode,
-      count,
-    }));
-  }
+  private recordFeatureFlagMetrics(): void {
+    const flags: Array<{ name: string; key: string }> = [
+      { name: 'contract_ingestion_enabled', key: 'CONTRACT_INGESTION_ENABLED' },
+      { name: 'contract_registry_require_schema', key: 'CONTRACT_REGISTRY_REQUIRE_SCHEMA' },
+      { name: 'contract_event_replay_enabled', key: 'CONTRACT_EVENT_REPLAY_ENABLED' },
+    ];
 
-  /**
-   * Returns error count for a specific error code.
-   */
-  getErrorCountByCode(errorCode: string): number {
-    return this.errorCounts.get(errorCode) || 0;
-  }
-
-  /**
-   * Clears all error counts.
-   */
-  clearErrorCounts(): void {
-    this.errorCounts.clear();
-  // ---------------------------------------------------------------------------
-  // Pagination Metrics — Issue #415
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Records a pagination request metric for monitoring feed ordering stability.
-   */
-  recordPaginationRequest(feed: string, cursorUsed: boolean, resultCount: number): void {
-    this.incrementCounter('pagination_requests_total', 1, {
-      feed,
-      cursor_used: String(cursorUsed),
-    });
-    this.setGauge(`pagination_result_count:${feed}`, resultCount, { feed });
-    if (resultCount === 0) {
-      this.incrementCounter('pagination_empty_results_total', 1, { feed });
+    for (const flag of flags) {
+      const value = this.configService.get<string>(flag.key);
+      const enabled = isFeatureEnabled(value);
+      this.setGauge(`feature_flag:${flag.name}`, enabled ? 1 : 0, {
+        flag: flag.name,
+        rawValue: value ?? 'undefined',
+      });
+      this.logger.debug(
+        `Feature flag "${flag.name}" = ${enabled ? 'ENABLED' : 'DISABLED'} (raw: "${value ?? 'undefined'}")`,
+      );
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // API Key & Webhook Metrics — Issue #410, #412
-  // ---------------------------------------------------------------------------
-
-  recordApiKeyEvent(
-    event: 'created' | 'revoked' | 'rotated' | 'validated' | 'expired' | 'anomaly_detected',
-    labels: Record<string, string> = {},
-  ): void {
-    this.incrementCounter('api_key_events_total', 1, { event, ...labels });
-  }
-
-  recordWebhookDelivery(
-    status: 'success' | 'failed' | 'retry_scheduled',
-    attemptNumber: number,
-    labels: Record<string, string> = {},
-  ): void {
-    this.incrementCounter('webhook_deliveries_total', 1, {
-      status,
-      attempt: String(attemptNumber),
-      ...labels,
-    });
-    if (status === 'failed') {
-      this.incrementCounter('webhook_failures_total', 1, labels);
-    }
-  }
-
-  recordRequestTimeout(service: string, endpoint: string): void {
-    this.incrementCounter('request_timeouts_total', 1, { service, endpoint });
+    this.incrementCounter('contracts_metrics_initialized', 1, {});
   }
 }

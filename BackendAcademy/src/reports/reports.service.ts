@@ -3,9 +3,8 @@ import { AnalyticsEvent } from '../analytics/analytics.entity';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { DatabaseService } from '../database/database.service';
-import { SubmissionsService, ReviewQueueMetrics } from '../submissions/submissions.service';/rewards.service';
-import { DatabaseService } from '../database/database.service';
-import { WalletService } from '../wallet/wallet.service';
+import { ReplayResult, StateReconciliationResult } from '../contracts/interfaces/contracts.interface';
+import { CertificateService, CertificateIssuanceSummary } from '../courses/certificate.service';
 
 export interface DailyActivitySummary {
   date: string;
@@ -65,27 +64,33 @@ export interface CouponRedemptionReport {
   }>;
 }
 
-export type ReportStatus = 'submitted' | 'triage' | 'escalated' | 'resolved' | 'dismissed';
-
-export interface AuditEntry {
-  timestamp: Date;
-  actor: string;
-  fromStatus: ReportStatus | null;
-  toStatus: ReportStatus;
-  note: string;
+/**
+ * #394: Report summarizing event replay activity.
+ */
+export interface ReplayActivityReport {
+  totalReplays: number;
+  totalEventsProcessed: number;
+  successfulReplays: number;
+  failedReplays: number;
+  partialReplays: number;
+  replaysByContract: Record<string, number>;
+  recentReplays: ReplayResult[];
 }
 
-export interface ReportTriageEntry {
-  id: string;
-  reporterId: string;
-  targetType: 'user' | 'post' | 'comment';
-  targetId: string;
-  reason: string;
-  status: ReportStatus;
-  assignedTo: string | null;
-  auditTrail: AuditEntry[];
-  createdAt: Date;
-  updatedAt: Date;
+/**
+ * #394: Report summarizing state reconciliation activity.
+ */
+export interface ReconciliationReport {
+  totalReconciliations: number;
+  consistentStateCount: number;
+  inconsistentStateCount: number;
+  totalDiscrepancies: number;
+  discrepanciesBySeverity: {
+    critical: number;
+    warning: number;
+    info: number;
+  };
+  recentReconciliations: StateReconciliationResult[];
 }
 
 interface DailyBucket {
@@ -103,6 +108,7 @@ export class ReportsService {
     private readonly submissionsService: SubmissionsService,
     private readonly databaseService?: DatabaseService,
     private readonly walletService?: WalletService,
+    private readonly certificateService?: CertificateService,
   ) {}
 
   async getModerationReport(): Promise<{ totalFlagged: number; actionTaken: number; pendingReview: number }> {
@@ -182,76 +188,126 @@ export class ReportsService {
     };
   }
 
-  async getReviewQueueReport(): Promise<{
-    metrics: ReviewQueueMetrics;
-    flagsByReason: Record<string, number>;
-    averageResolutionTimeMs: number;
-  }> {
-    const metrics = this.submissionsService.getQueueMetrics();
-    const allFlags = this.submissionsService.getFlaggedSubmissions();
+  // ──────────────────────────────────────────────────────────────────
+  // #394: Event replay and reconciliation reports
+  // ──────────────────────────────────────────────────────────────────
 
-    const flagsByReason: Record<string, number> = {};
-    for (const flag of allFlags) {
-      flagsByReason[flag.flagReason] = (flagsByReason[flag.flagReason] || 0) + 1;
+  /**
+   * Generates a report on event replay activity.
+   */
+  getReplayActivityReport(replayHistory: ReplayResult[]): ReplayActivityReport {
+    const replaysByContract: Record<string, number> = {};
+    let totalProcessed = 0;
+    let successful = 0;
+    let failed = 0;
+    let partial = 0;
+
+    for (const replay of replayHistory) {
+      replaysByContract[replay.contractId] =
+        (replaysByContract[replay.contractId] ?? 0) + 1;
+      totalProcessed += replay.eventsProcessed;
+
+      switch (replay.status) {
+        case 'completed':
+          successful++;
+          break;
+        case 'failed':
+          failed++;
+          break;
+        case 'partial':
+          partial++;
+          break;
+      }
     }
 
-    const resolvedFlags = allFlags.filter(
-      (f) => f.resolvedAt && f.createdAt,
-    );
-    const totalResolutionTime = resolvedFlags.reduce((sum, f) => {
-      return sum + (f.resolvedAt!.getTime() - f.createdAt.getTime());
-    }, 0);
-    const averageResolutionTimeMs = resolvedFlags.length > 0
-      ? Math.round(totalResolutionTime / resolvedFlags.length)
-      : 0;
+    // Most recent replays, sorted by completion time
+    const recentReplays = [...replayHistory]
+      .sort((a, b) => b.completedAt.getTime() - a.completedAt.getTime())
+      .slice(0, 20);
 
-    return { metrics, flagsByReason, averageResolutionTimeMs };
-  }
-
-  private readonly reports = new Map<string, ReportTriageEntry>();
-
-  createReport(reporterId: string, targetType: ReportTriageEntry['targetType'], targetId: string, reason: string): ReportTriageEntry {
-    const id = crypto.randomUUID();
-    const now = new Date();
-    const entry: ReportTriageEntry = {
-      id, reporterId, targetType, targetId, reason,
-      status: 'submitted', assignedTo: null,
-      auditTrail: [{ timestamp: now, actor: reporterId, fromStatus: null, toStatus: 'submitted', note: 'Report submitted' }],
-      createdAt: now, updatedAt: now,
+    return {
+      totalReplays: replayHistory.length,
+      totalEventsProcessed: totalProcessed,
+      successfulReplays: successful,
+      failedReplays: failed,
+      partialReplays: partial,
+      replaysByContract,
+      recentReplays,
     };
-    this.reports.set(id, entry);
-    return entry;
   }
 
-  transitionReportStatus(id: string, actor: string, toStatus: ReportStatus, note: string): ReportTriageEntry {
-    const report = this.reports.get(id);
-    if (!report) throw new NotFoundException({ error: 'REPORT_NOT_FOUND', message: `Report ${id} not found` });
-    const fromStatus = report.status;
-    report.status = toStatus;
-    report.updatedAt = new Date();
-    report.auditTrail.push({ timestamp: new Date(), actor, fromStatus, toStatus, note });
-    this.reports.set(id, report);
-    return report;
+  /**
+   * Generates a report on state reconciliation activity.
+   */
+  getReconciliationReport(
+    reconciliationHistory: StateReconciliationResult[],
+  ): ReconciliationReport {
+    let consistent = 0;
+    let inconsistent = 0;
+    let totalDiscrepancies = 0;
+    const bySeverity = { critical: 0, warning: 0, info: 0 };
+
+    for (const result of reconciliationHistory) {
+      if (result.isConsistent) {
+        consistent++;
+      } else {
+        inconsistent++;
+      }
+
+      for (const d of result.discrepancies) {
+        totalDiscrepancies++;
+        switch (d.severity) {
+          case 'critical':
+            bySeverity.critical++;
+            break;
+          case 'warning':
+            bySeverity.warning++;
+            break;
+          case 'info':
+            bySeverity.info++;
+            break;
+        }
+      }
+    }
+
+    const recentReconciliations = [...reconciliationHistory]
+      .sort((a, b) => b.reconciledAt.getTime() - a.reconciledAt.getTime())
+      .slice(0, 20);
+
+    return {
+      totalReconciliations: reconciliationHistory.length,
+      consistentStateCount: consistent,
+      inconsistentStateCount: inconsistent,
+      totalDiscrepancies,
+      discrepanciesBySeverity: bySeverity,
+      recentReconciliations,
+    };
   }
 
-  getReport(id: string): ReportTriageEntry {
-    const report = this.reports.get(id);
-    if (!report) throw new NotFoundException({ error: 'REPORT_NOT_FOUND', message: `Report ${id} not found` });
-    return report;
+  // ──────────────────────────────────────────────────────────────────
+  // #357: Certificate issuance reports
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Generates a report summarizing certificate issuance activity.
+   * Returns a zeroed report when no certificate service is available.
+   */
+  getCertificateIssuanceReport(): CertificateIssuanceSummary {
+    if (!this.certificateService) {
+      return {
+        totalIssued: 0,
+        totalActive: 0,
+        totalRevoked: 0,
+        issuedByCourse: [],
+        recentIssuances: [],
+      };
+    }
+    return this.certificateService.getIssuanceSummary();
   }
 
-  getAllReports(status?: ReportStatus): ReportTriageEntry[] {
-    const all = Array.from(this.reports.values());
-    return status ? all.filter((r) => r.status === status) : all;
-  }
-
-  getReportsByAssignee(assignee: string): ReportTriageEntry[] {
-    return Array.from(this.reports.values()).filter((r) => r.assignedTo === assignee);
-  }
-
-  getAuditTrail(id: string): AuditEntry[] {
-    return this.getReport(id).auditTrail;
-  }
+  // ──────────────────────────────────────────────────────────────────
+  // Private helpers
+  // ──────────────────────────────────────────────────────────────────
 
   private buildDailySummaries(
     events: AnalyticsEvent[],

@@ -43,6 +43,8 @@ interface PrizePoolData {
   currency: string;
   distributedAt: Date | null;
   createdAt: Date;
+  /** Expiration date after which the pool cannot be distributed (#363) */
+  expiresAt: Date | null;
   distribution: PrizeDistribution[];
 }
 
@@ -353,7 +355,11 @@ export class RewardsService {
     if (pools.length === 0) return null;
 
     const [id, pool] = pools[pools.length - 1];
-    return { id, ...pool };
+    return {
+      id,
+      ...pool,
+      expiresAt: pool.expiresAt ?? null,
+    };
   }
 
   /**
@@ -363,6 +369,7 @@ export class RewardsService {
   createPrizePool(
     totalAmount: number,
     currency: string = PRIZE_POOL_DEFAULT_CURRENCY,
+    expiresAt?: Date,
   ): PrizePoolResponse {
     if (totalAmount <= 0) {
       throw new Error('Prize pool totalAmount must be positive.');
@@ -374,10 +381,23 @@ export class RewardsService {
       currency,
       distributedAt: null,
       createdAt: new Date(),
+      expiresAt: expiresAt ?? null,
       distribution: [],
     };
     prizePoolStore.set(id, pool);
-    return { id, ...pool };
+    return {
+      id,
+      ...pool,
+      expiresAt: pool.expiresAt ?? null,
+    };
+  }
+
+  /**
+   * #363: Checks whether a prize pool has expired and cannot be redeemed.
+   */
+  private isPoolExpired(pool: PrizePoolData): boolean {
+    if (!pool.expiresAt) return false;
+    return new Date() > pool.expiresAt;
   }
 
   /**
@@ -408,8 +428,20 @@ export class RewardsService {
     } else {
       [id, pool] = pools[pools.length - 1];
       if (pool.distributedAt) {
-        return { id, ...pool };
+        return {
+          id,
+          ...pool,
+          expiresAt: pool.expiresAt ?? null,
+        };
       }
+    }
+
+    // #363: Prevent distribution of expired prize pools
+    if (this.isPoolExpired(pool)) {
+      throw new Error(
+        `Prize pool ${id} has expired (expired at ${pool.expiresAt?.toISOString()}). ` +
+          'Expired pools cannot be distributed. Create a new prize pool.',
+      );
     }
 
     const leaderboard = this.getLeaderboard(10);

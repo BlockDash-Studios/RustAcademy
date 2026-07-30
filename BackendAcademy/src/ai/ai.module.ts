@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiController } from './ai.controller';
 import { AiService, AI_PROVIDER } from './ai.service';
+import { PromptTemplateService } from './prompt-template.service';
 import { ClaudeProvider } from './providers/claude.provider';
 import { OpenaiProvider } from './providers/openai.provider';
 
@@ -18,7 +19,7 @@ const aiProviderFactory = {
 
 @Module({
   controllers: [AiController],
-  providers: [AiService, aiProviderFactory],
-  exports: [AiService],
+  providers: [AiService, PromptTemplateService, aiProviderFactory],
+  exports: [AiService, PromptTemplateService],
 })
 export class AiModule {}

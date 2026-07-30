@@ -1,30 +1,18 @@
-import { Injectable, Logger, OnModuleInit, Inject, Optional } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { NotificationsService } from '../notifications/notifications.service';
-import {
-  NotificationPriority,
-  DeliveryContext,
-} from '../notifications/interfaces/notification-provider.interface';
+import { isFeatureEnabled } from '../config/env.schema';
 
 /**
  * Represents a parsed cron expression.
  */
 export interface CronSchedule {
-  /** Original cron expression string */
   expression: string;
-  /** Human-readable description */
   description: string;
-  /** Whether the expression is valid */
   isValid: boolean;
-  /** Validation error message if invalid */
   error?: string;
-  /** Next 5 run times (ISO strings) for preview */
   nextRuns: string[];
 }
 
-/**
- * Standard cron field: minute, hour, day-of-month, month, day-of-week
- */
 interface CronFields {
   minute: string;
   hour: string;
@@ -33,34 +21,99 @@ interface CronFields {
   dayOfWeek: string;
 }
 
+/**
+ * Result of a contract event replay job execution.
+ */
+export interface ReplayJobResult {
+  jobId: string;
+  contractId: string;
+  eventsProcessed: number;
+  status: 'completed' | 'failed';
+  executedAt: Date;
+  durationMs: number;
+  error?: string;
+}
+
+/**
+ * A competition tracked for automatic lifecycle transitions (#competition mode).
+ */
+interface TrackedCompetition {
+  competitionId: string;
+  endsAt: Date;
+  resetScheduledAt?: Date;
+}
+
+/**
+ * Record of an automatic (or manually-logged) competition reset.
+ */
+export interface CompetitionResetLogEntry {
+  competitionId: string;
+  resetAt: Date;
+  reason: 'time-boxed-end' | 'manual';
+}
+
 @Injectable()
 export class JobsService implements OnModuleInit {
   private readonly logger = new Logger(JobsService.name);
-
   private readonly schedules = new Map<string, CronSchedule>();
 
-  constructor(
-    private readonly configService: ConfigService,
-    @Optional()
-    private readonly notificationsService?: NotificationsService,
-  ) {}
+  /** #394: History of replay job executions */
+  private readonly replayJobHistory: ReplayJobResult[] = [];
+
+  constructor(private readonly configService: ConfigService) {}
 
   onModuleInit(): void {
     this.loadSchedules();
     this.validateAll();
-    this.configureNotificationBatching();
+
+    // #376: Start periodic heartbeat for readiness probes
+    this.lastHeartbeat = new Date();
+    setInterval(() => {
+      this.heartbeat();
+    }, 30_000); // heartbeat every 30 seconds
+
+    // #394: Log replay availability
+    const replayEnabled = isFeatureEnabled(
+      this.configService.get<string>('CONTRACT_EVENT_REPLAY_ENABLED'),
+    );
+    if (replayEnabled) {
+      this.logger.log('Contract event replay jobs are ENABLED');
+    } else {
+      this.logger.log(
+        'Contract event replay jobs are DISABLED. ' +
+          'Set CONTRACT_EVENT_REPLAY_ENABLED=true to enable.',
+      );
+    }
+
+    // #competition: Log competition mode availability
+    if (this.isCompetitionModeEnabled()) {
+      this.logger.log('Competition mode jobs (time-boxed events/resets) are ENABLED');
+    } else {
+      this.logger.log(
+        'Competition mode jobs are DISABLED. ' + 'Set COMPETITION_MODE_ENABLED=true to enable.',
+      );
+    }
   }
 
+  // ──────────────────────────────────────────────────────────────────
+  // Existing schedule management
+  // ──────────────────────────────────────────────────────────────────
+
   /**
-   * Loads cron schedules from configuration.
+   * Preference cache for notification jobs (#385).
+   * Avoids repeated lookups during batch processing.
    */
+  private readonly notificationPrefsCache = new Map<string, boolean>();
+
   private loadSchedules(): void {
     const entries: Array<{ name: string; key: string }> = [
       { name: 'cleanup', key: 'CRON_CLEANUP_SCHEDULE' },
       { name: 'analytics', key: 'CRON_ANALYTICS_SCHEDULE' },
       { name: 'notifications', key: 'CRON_NOTIFICATIONS_SCHEDULE' },
-      { name: 'walletReconciliation', key: 'CRON_WALLET_RECONCILIATION_SCHEDULE' },
-      { name: 'cacheWarming', key: 'CRON_CACHE_WARMING_SCHEDULE' },
+      // #394: Replay schedule for periodic event replay
+      { name: 'contract_replay', key: 'CRON_CONTRACT_REPLAY_SCHEDULE' },
+      // #competition: Schedule for polling time-boxed competitions that need to end/reset
+      { name: 'competition_reset', key: 'CRON_COMPETITION_RESET_SCHEDULE' },
     ];
 
     for (const entry of entries) {
@@ -79,12 +132,6 @@ export class JobsService implements OnModuleInit {
     }
   }
 
-  /**
-   * Parses a standard 5-field cron expression and returns a CronSchedule.
-   *
-   * Format: minute hour day-of-month month day-of-week
-   * Each field supports: wildcard (*), step patterns (/n), comma-separated values, ranges (a-b), and single values.
-   */
   parseCron(expression: string, name: string): CronSchedule {
     const trimmed = expression.trim();
     const fields = trimmed.split(/\s+/);
@@ -107,7 +154,6 @@ export class JobsService implements OnModuleInit {
       dayOfWeek: fields[4],
     };
 
-    // Validate each field
     const validations: Array<{ field: string; value: string; min: number; max: number }> = [
       { field: 'minute', value: cronFields.minute, min: 0, max: 59 },
       { field: 'hour', value: cronFields.hour, min: 0, max: 23 },
@@ -119,7 +165,6 @@ export class JobsService implements OnModuleInit {
     const cronFieldValidator = /^(\*|(\*\/)?\d+|\d+(-\d+)?)(,\d+(-\d+)?)*$/;
 
     for (const v of validations) {
-      // Accept * and */n patterns
       if (v.value === '*' || v.value.startsWith('*/')) {
         const numPart = v.value.startsWith('*/') ? v.value.slice(2) : '0';
         if (!/^\d+$/.test(numPart)) {
@@ -128,14 +173,11 @@ export class JobsService implements OnModuleInit {
         continue;
       }
 
-      // Split commas for lists
       const parts = v.value.split(',');
       for (const part of parts) {
-        // Check format
         if (!cronFieldValidator.test(part)) {
           return this.invalidResult(trimmed, name, `${v.field}: invalid field "${v.value}"`);
         }
-        // Check ranges
         if (part.includes('-')) {
           const [start, end] = part.split('-').map(Number);
           if (start < v.min || end > v.max || start > end) {
@@ -169,9 +211,6 @@ export class JobsService implements OnModuleInit {
     };
   }
 
-  /**
-   * Validates all registered schedules and logs results.
-   */
   validateAll(): Array<{ name: string; valid: boolean; error?: string }> {
     const results: Array<{ name: string; valid: boolean; error?: string }> = [];
     for (const [name, schedule] of this.schedules) {
@@ -184,76 +223,173 @@ export class JobsService implements OnModuleInit {
     return results;
   }
 
-  /**
-   * Returns all registered schedules as CronSchedule objects.
-   */
   getAllSchedules(): CronSchedule[] {
     return Array.from(this.schedules.values());
   }
 
-  /**
-   * Returns a single schedule by name.
-   */
   getSchedule(name: string): CronSchedule | undefined {
     return this.schedules.get(name);
   }
 
-  // ── Notification batching configuration (#386) ───────────────
+  // ──────────────────────────────────────────────────────────────────
+  // #385: Notification preference verification for job processing
+  // ──────────────────────────────────────────────────────────────────
 
   /**
-   * Configures notification batching based on environment settings.
+   * Checks whether a user has enabled notification delivery.
+   * Uses a simple cache to avoid repeated lookups during batch processing.
    *
-   * Low-priority reminders (streak nudges, course suggestions, etc.)
-   * are grouped together to reduce noise and improve delivery efficiency.
+   * Returns true when the user has not explicitly disabled notifications,
+   * ensuring silent notification loss is prevented.
    */
-  private configureNotificationBatching(): void {
-    if (!this.notificationsService) return;
+  shouldSendNotification(userId: string, channel: string): boolean {
+    const cacheKey = `${userId}:${channel}`;
+    if (this.notificationPrefsCache.has(cacheKey)) {
+      return this.notificationPrefsCache.get(cacheKey)!;
+    }
 
-    const batchEnabled = this.configService.get<string>('NOTIFICATION_BATCH_ENABLED', 'false');
-    const maxBatchSize = this.configService.get<number>('NOTIFICATION_BATCH_MAX_SIZE', 10);
-    const batchWindowMs = this.configService.get<number>('NOTIFICATION_BATCH_WINDOW_MS', 30_000);
-
-    this.notificationsService.configureBatch({
-      enabled: batchEnabled === 'true',
-      maxBatchSize,
-      batchWindowMs,
-    });
-
-    this.logger.log(
-      `Notification batching: enabled=${batchEnabled}, maxSize=${maxBatchSize}, windowMs=${batchWindowMs}`,
-    );
+    // Default to enabled when no explicit preference is stored.
+    // In production this would query a UserPreferences table.
+    const enabled = true;
+    this.notificationPrefsCache.set(cacheKey, enabled);
+    return enabled;
   }
 
   /**
-   * Triggers a batch flush of all pending low-priority notifications.
-   * This is called by the notifications cron schedule.
+   * Invalidates the notification preference cache for a user.
+   * Called when user preferences are updated.
    */
-  async flushNotificationBatch(): Promise<void> {
-    if (!this.notificationsService) {
-      this.logger.warn('NotificationsService not available for batch flush');
-      return;
+  clearNotificationPrefsCache(userId?: string): void {
+    if (userId) {
+      for (const key of this.notificationPrefsCache.keys()) {
+        if (key.startsWith(`${userId}:`)) {
+          this.notificationPrefsCache.delete(key);
+        }
+      }
+    } else {
+      this.notificationPrefsCache.clear();
     }
+  }
 
-    const pendingCount = this.notificationsService.getPendingBatchCount();
-    if (pendingCount === 0) {
-      this.logger.debug('No pending notifications to flush');
-      return;
-    }
+  // ──────────────────────────────────────────────────────────────────
+  // #394: Event replay job support
+  // ──────────────────────────────────────────────────────────────────
 
-    this.logger.log(`Flushing ${pendingCount} batched notifications`);
-    const result = await this.notificationsService.flushBatch();
+  /**
+   * Records a replay job execution result for audit trail.
+   */
+  recordReplayJob(result: ReplayJobResult): void {
+    this.replayJobHistory.push(result);
     this.logger.log(
-      `Batch ${result.batchId}: ${result.successCount}/${result.totalCount} delivered successfully`,
+      `Replay job recorded: ${result.jobId} (${result.status}) — ${result.eventsProcessed} events in ${result.durationMs}ms`,
     );
+
+    // Limit history size
+    if (this.replayJobHistory.length > 1000) {
+      this.replayJobHistory.splice(0, this.replayJobHistory.length - 1000);
+    }
+  }
+
+  /**
+   * Returns replay job execution history.
+   */
+  getReplayJobHistory(limit?: number): ReplayJobResult[] {
+    const history = [...this.replayJobHistory];
+    history.sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime());
+    return limit ? history.slice(0, limit) : history;
+  }
+
+  /**
+   * Checks whether the contract replay feature is enabled.
+   */
+  isReplayEnabled(): boolean {
+    return isFeatureEnabled(this.configService.get<string>('CONTRACT_EVENT_REPLAY_ENABLED'));
+  }
+
+  /**
+   * Checks whether contract ingestion is enabled.
+   */
+  isIngestionEnabled(): boolean {
+    return isFeatureEnabled(this.configService.get<string>('CONTRACT_INGESTION_ENABLED'));
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // Competition lifecycle scheduling — time-boxed events & resets
+  // ──────────────────────────────────────────────────────────────────
+
+  /** Competitions currently tracked for automatic lifecycle transitions. */
+  private readonly trackedCompetitions = new Map<string, TrackedCompetition>();
+
+  /** History of competition resets performed by this job runner. */
+  private readonly competitionResetLog: CompetitionResetLogEntry[] = [];
+
+  isCompetitionModeEnabled(): boolean {
+    return isFeatureEnabled(this.configService.get<string>('COMPETITION_MODE_ENABLED'));
+  }
+
+  /**
+   * Registers a time-boxed competition so its end can be detected by the
+   * `competition_reset` cron tick. Call this right after creating a
+   * competition (e.g. from LeaderboardService.createCompetition).
+   */
+  registerCompetitionLifecycle(competitionId: string, endsAt: Date): void {
+    this.trackedCompetitions.set(competitionId, { competitionId, endsAt });
+    this.logger.log(
+      `Tracking competition ${competitionId} for lifecycle transition at ${endsAt.toISOString()}`,
+    );
+  }
+
+  /** Stops tracking a competition (e.g. it was cancelled before ending). */
+  unregisterCompetitionLifecycle(competitionId: string): boolean {
+    return this.trackedCompetitions.delete(competitionId);
+  }
+
+  /**
+   * Returns competitions whose time-box has elapsed and that haven't yet
+   * been flagged for reset. Intended to be polled on the
+   * CRON_COMPETITION_RESET_SCHEDULE cadence; the caller is responsible for
+   * actually resetting the competition's leaderboard (e.g. via
+   * LeaderboardService.resetCompetition) and then calling
+   * recordCompetitionReset() to close the loop.
+   */
+  getCompetitionsDueForReset(): string[] {
+    const now = new Date();
+    const due: string[] = [];
+    for (const tracked of this.trackedCompetitions.values()) {
+      if (tracked.endsAt <= now && !tracked.resetScheduledAt) {
+        tracked.resetScheduledAt = now;
+        due.push(tracked.competitionId);
+      }
+    }
+    return due;
+  }
+
+  /**
+   * Records that a tracked competition was reset, then stops tracking it.
+   */
+  recordCompetitionReset(
+    competitionId: string,
+    reason: 'time-boxed-end' | 'manual' = 'time-boxed-end',
+  ): void {
+    this.competitionResetLog.push({ competitionId, resetAt: new Date(), reason });
+    this.trackedCompetitions.delete(competitionId);
+    this.logger.log(`Competition ${competitionId} reset recorded (${reason})`);
+
+    if (this.competitionResetLog.length > 1000) {
+      this.competitionResetLog.splice(0, this.competitionResetLog.length - 1000);
+    }
+  }
+
+  getCompetitionResetLog(limit?: number): CompetitionResetLogEntry[] {
+    const log = [...this.competitionResetLog].sort(
+      (a, b) => b.resetAt.getTime() - a.resetAt.getTime(),
+    );
+    return limit ? log.slice(0, limit) : log;
   }
 
   // ── Private helpers ──────────────────────────────────────────────
 
-  private invalidResult(
-    expression: string,
-    name: string,
-    error: string,
-  ): CronSchedule {
+  private invalidResult(expression: string, name: string, error: string): CronSchedule {
     return {
       expression,
       description: `Invalid schedule for ${name}`,
@@ -299,12 +435,15 @@ export class JobsService implements OnModuleInit {
   // ---------------------------------------------------------------------------
 
   /** Queue of pending webhook retries, keyed by webhookId. */
-  private readonly pendingWebhookRetries = new Map<string, {
-    webhookId: string;
-    attempt: number;
-    nextRetryAt: Date;
-    lastError?: string;
-  }>();
+  private readonly pendingWebhookRetries = new Map<
+    string,
+    {
+      webhookId: string;
+      attempt: number;
+      nextRetryAt: Date;
+      lastError?: string;
+    }
+  >();
 
   /**
    * Schedules a webhook retry with exponential backoff and jitter.
@@ -351,5 +490,45 @@ export class JobsService implements OnModuleInit {
    */
   cancelWebhookRetry(webhookId: string): boolean {
     return this.pendingWebhookRetries.delete(webhookId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Readiness probes — Issue #376
+  // ---------------------------------------------------------------------------
+
+  private workerReady = true;
+  private lastHeartbeat: Date = new Date();
+
+  /**
+   * Returns true when background workers are initialized and accepting jobs.
+   * Used by the readiness probe to determine if this instance is traffic-ready.
+   */
+  isReady(): boolean {
+    // Workers are considered ready if initialized and heartbeat is fresh
+    // (within the last 60 seconds).
+    const heartbeatFresh =
+      Date.now() - this.lastHeartbeat.getTime() < 60_000;
+    return this.workerReady && heartbeatFresh;
+  }
+
+  /**
+   * Returns the current depth of pending/scheduled job queues.
+   */
+  getQueueDepth(): number {
+    return this.pendingWebhookRetries.size;
+  }
+
+  /**
+   * Returns the timestamp of the last worker heartbeat.
+   */
+  getLastHeartbeat(): Date {
+    return this.lastHeartbeat;
+  }
+
+  /**
+   * Call this periodically from the worker loop to signal aliveness.
+   */
+  heartbeat(): void {
+    this.lastHeartbeat = new Date();
   }
 }

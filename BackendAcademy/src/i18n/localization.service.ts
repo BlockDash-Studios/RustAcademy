@@ -36,6 +36,14 @@ export interface LocalizationStrings {
   'notification.milestone': string;
   'notification.submissionGraded': string;
   'notification.courseCompleted': string;
+  'notification.certificateGenerated': string;
+  'notification.certificateRevoked': string;
+  'notification.submissionFlagged': string;
+  'notification.reviewAssigned': string;
+  'notification.reviewResolved': string;
+  'notification.reportTriaged': string;
+  'notification.reportEscalated': string;
+  'notification.reportResolved': string;
   'notification.contentFlagged': string;
   'notification.contentApproved': string;
   'notification.contentRejected': string;
@@ -81,6 +89,14 @@ const STRINGS: Record<string, LocalizationStrings> = {
     'notification.milestone': 'Congratulations on reaching a new milestone!',
     'notification.submissionGraded': 'Your submission has been graded.',
     'notification.courseCompleted': 'You have completed the course!',
+    'notification.certificateGenerated': 'Your course completion certificate has been generated.',
+    'notification.certificateRevoked': 'A course completion certificate has been revoked.',
+    'notification.submissionFlagged': 'Your submission has been flagged for review.',
+    'notification.reviewAssigned': 'A review has been assigned to you.',
+    'notification.reviewResolved': 'Your review has been resolved.',
+    'notification.reportTriaged': 'Your report has been triaged.',
+    'notification.reportEscalated': 'Your report has been escalated.',
+    'notification.reportResolved': 'Your report has been resolved.',
     'notification.contentFlagged': 'Your content has been flagged for moderation review.',
     'notification.contentApproved': 'Your content has been approved by moderation.',
     'notification.contentRejected': 'Your content has been rejected by moderation.',

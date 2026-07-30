@@ -274,6 +274,16 @@ export class SocialService {
     );
   }
 
+  /**
+   * #354: Returns all posts authored by a given user.
+   */
+  getPostsByUserId(userId: string): SocialPost[] {
+    const normalizedUserId = this.normalizeUserId(userId);
+    return Array.from(this.posts.values()).filter(
+      (post) => post.userId === normalizedUserId,
+    );
+  }
+
   likePost(postId: string): SocialPost {
     const post = this.getPostById(postId);
     post.likes++;

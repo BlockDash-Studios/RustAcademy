@@ -1,7 +1,12 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { AnalyticsEvent } from './analytics.entity';
 import { RedisService } from '../redis/redis.service';
 import { v4 as uuidv4 } from 'uuid';
+import { StateReconciliationResult } from '../contracts/interfaces/contracts.interface';
+import {
+  TransactionManagerService,
+  TransactionSnapshot,
+} from '../common/transaction-manager.service';
 import { CorrelationLoggerService } from '../logging/logger.service';
 
 export enum EventType {
@@ -26,23 +31,36 @@ export enum EventType {
   SESSION_REVOKED = 'session_revoked',
   DEVICE_BOUND = 'device_bound',
   PRIVILEGE_CHANGED = 'privilege_changed',
-  /** Emitted when a batch of low-priority notifications is flushed */
-  NOTIFICATION_BATCH_FLUSHED = 'notification_batch_flushed',
-  /** Emitted when a single notification is delivered */
-  NOTIFICATION_DELIVERED = 'notification_delivered',
+  // #394: Reconciliation events
+  CONTRACT_RECONCILIATION_STARTED = 'contract_reconciliation_started',
+  CONTRACT_RECONCILIATION_COMPLETED = 'contract_reconciliation_completed',
+  CONTRACT_REPLAY_STARTED = 'contract_replay_started',
+  CONTRACT_REPLAY_COMPLETED = 'contract_replay_completed',
+}
+
+/**
+ * Summary of reconciliation activity for analytics.
+ */
+export interface ReconciliationSummary {
+  totalReconciliations: number;
+  consistentStateCount: number;
+  inconsistentStateCount: number;
+  lastReconciliationAt: Date | null;
+  totalDiscrepanciesFound: number;
 }
 
 @Injectable()
 export class AnalyticsService {
+  private readonly logger = new Logger(AnalyticsService.name);
   private readonly events: AnalyticsEvent[] = [];
+
+  /** #394: History of reconciliation results for analytics */
+  private readonly reconciliationHistory: StateReconciliationResult[] = [];
 
   constructor(
     private readonly redisService?: RedisService,
-    private readonly logger?: CorrelationLoggerService,
+    private readonly transactionManager?: TransactionManagerService,
   ) {}
-  private static readonly VALID_EVENT_TYPES = new Set(Object.values(EventType));
-
-  constructor(private readonly redisService?: RedisService) {}
 
   validateEventPayload(event: Partial<AnalyticsEvent>): void {
     if (!event.eventType) {
@@ -70,7 +88,103 @@ export class AnalyticsService {
     }
   }
 
+  /**
+   * Track an analytics event atomically. The event is first pushed to the
+   * in-memory store, then the Redis snapshot is refreshed. If the Redis
+   * refresh fails, the event is removed from the store so callers never
+   * observe a partial side-effect.
+   *
+   * When a {@link TransactionManagerService} is available the two
+   * mutations are wrapped in a transactional atomic operation with
+   * automatic rollback semantics.
+   */
   async trackEvent(event: Partial<AnalyticsEvent>): Promise<AnalyticsEvent> {
+    if (this.transactionManager) {
+      return this.trackEventAtomically(event);
+    }
+    return this.trackEventLegacy(event);
+  }
+
+  /**
+   * Atomic variant of trackEvent (#358). Uses the transaction manager
+   * to guarantee that the event store and Redis snapshot are always
+   * in a consistent state.
+   */
+  private async trackEventAtomically(event: Partial<AnalyticsEvent>): Promise<AnalyticsEvent> {
+    const correlationId = event.properties?.correlationId
+      || CorrelationLoggerService.getCorrelationId();
+
+    const analyticsEvent = new AnalyticsEvent({
+      ...event,
+      id: event.id || uuidv4(),
+      timestamp: event.timestamp || new Date(),
+      properties: {
+        ...event.properties,
+        correlationId,
+      },
+    });
+
+    const txResult = await this.transactionManager!.runAtomic(async (tx) => {
+      // Step 1: Push event to in-memory store
+      this.events.push(analyticsEvent);
+
+      await tx.addOperation(async (): Promise<TransactionSnapshot> => ({
+        restore: () => {
+          const idx = this.events.indexOf(analyticsEvent);
+          if (idx !== -1) this.events.splice(idx, 1);
+        },
+        data: { eventId: analyticsEvent.id },
+      }));
+
+      this.logger?.log(`Event tracked: ${analyticsEvent.eventType}`, 'AnalyticsService');
+
+      // Step 2: Refresh Redis snapshot (if applicable)
+      if (this.redisService && analyticsEvent.userId) {
+        const eventTypes = [analyticsEvent.eventType];
+        const interactionData: Record<string, any> = {
+          lastInteractionAt: new Date(),
+          interactionCount: 1,
+          eventTypes,
+          correlationId,
+        };
+
+        if (analyticsEvent.eventType === EventType.COURSE_ENROLLED) {
+          interactionData.recentCourses = analyticsEvent.properties?.courseId
+            ? [analyticsEvent.properties.courseId]
+            : [];
+        }
+        if (analyticsEvent.eventType === EventType.CHALLENGE_COMPLETED) {
+          interactionData.recentChallenges = analyticsEvent.properties?.challengeId
+            ? [analyticsEvent.properties.challengeId]
+            : [];
+        }
+        if (
+          analyticsEvent.eventType === EventType.CONTRACT_RECONCILIATION_COMPLETED
+        ) {
+          interactionData.lastReconciliationAt = new Date();
+        }
+
+        await this.redisService.refreshUserSnapshot(analyticsEvent.userId, interactionData);
+      }
+
+      return analyticsEvent;
+    });
+
+    if (!txResult.success) {
+      this.logger.error(
+        `Failed to track event ${analyticsEvent.eventType}: ${txResult.error?.message}`,
+      );
+      throw txResult.error;
+    }
+
+    return txResult.result!;
+  }
+
+  /**
+   * Legacy (non-transactional) variant of trackEvent. Used as fallback
+   * when no TransactionManagerService is injected.
+   */
+  private async trackEventLegacy(event: Partial<AnalyticsEvent>): Promise<AnalyticsEvent> {
     const correlationId = event.properties?.correlationId
       || CorrelationLoggerService.getCorrelationId();
 
@@ -106,6 +220,12 @@ export class AnalyticsService {
           ? [analyticsEvent.properties.challengeId]
           : [];
       }
+      // #394: Track reconciliation interactions
+      if (
+        analyticsEvent.eventType === EventType.CONTRACT_RECONCILIATION_COMPLETED
+      ) {
+        interactionData.lastReconciliationAt = new Date();
+      }
 
       await this.redisService.refreshUserSnapshot(analyticsEvent.userId, interactionData);
     }
@@ -114,17 +234,30 @@ export class AnalyticsService {
   }
 
   async getEventsByUserId(userId: string): Promise<AnalyticsEvent[]> {
-    return this.events.filter(event => event.userId === userId);
+    return this.events.filter((event) => event.userId === userId);
   }
 
   async getEventsByType(eventType: string): Promise<AnalyticsEvent[]> {
-    return this.events.filter(event => event.eventType === eventType);
+    return this.events.filter((event) => event.eventType === eventType);
   }
 
   async getEventsByDateRange(startDate: Date, endDate: Date): Promise<AnalyticsEvent[]> {
     return this.events.filter(
-      event => event.timestamp >= startDate && event.timestamp <= endDate,
+      (event) => event.timestamp >= startDate && event.timestamp <= endDate,
     );
+  }
+
+  /**
+   * #354: Removes all analytics events for a given user.
+   */
+  async removeEventsByUserId(userId: string): Promise<number> {
+    const before = this.events.length;
+    this.events.splice(
+      0,
+      this.events.length,
+      ...this.events.filter((e) => e.userId !== userId),
+    );
+    return before - this.events.length;
   }
 
   async getEventStatistics(): Promise<{
@@ -191,7 +324,7 @@ export class AnalyticsService {
   }
 
   async deleteEvent(id: string): Promise<boolean> {
-    const index = this.events.findIndex(event => event.id === id);
+    const index = this.events.findIndex((event) => event.id === id);
     if (index === -1) return false;
     this.events.splice(index, 1);
     return true;
@@ -202,11 +335,74 @@ export class AnalyticsService {
     cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
     const initialLength = this.events.length;
-    const filtered = this.events.filter(event => event.timestamp >= cutoffDate);
+    const filtered = this.events.filter((event) => event.timestamp >= cutoffDate);
     this.events.length = 0;
     this.events.push(...filtered);
 
     return initialLength - this.events.length;
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // #394: Contract reconciliation tracking
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Records a state reconciliation result for analytics tracking.
+   */
+  recordReconciliation(result: StateReconciliationResult): void {
+    this.reconciliationHistory.push(result);
+    this.logger.log(
+      `Reconciliation recorded for ${result.contractId}: consistent=${result.isConsistent}, discrepancies=${result.discrepancies.length}`,
+    );
+
+    // Limit history size
+    if (this.reconciliationHistory.length > 1000) {
+      this.reconciliationHistory.splice(0, this.reconciliationHistory.length - 1000);
+    }
+  }
+
+  /**
+   * Returns reconciliation history, optionally filtered by contract.
+   */
+  getReconciliationHistory(contractId?: string): StateReconciliationResult[] {
+    const history = [...this.reconciliationHistory];
+    history.sort(
+      (a, b) => b.reconciledAt.getTime() - a.reconciledAt.getTime(),
+    );
+    return contractId
+      ? history.filter((r) => r.contractId === contractId)
+      : history;
+  }
+
+  /**
+   * Returns a summary of all reconciliation activity.
+   */
+  getReconciliationSummary(): ReconciliationSummary {
+    let consistent = 0;
+    let inconsistent = 0;
+    let totalDiscrepancies = 0;
+    let lastAt: Date | null = null;
+
+    for (const result of this.reconciliationHistory) {
+      if (result.isConsistent) {
+        consistent++;
+      } else {
+        inconsistent++;
+      }
+      totalDiscrepancies += result.discrepancies.length;
+
+      if (!lastAt || result.reconciledAt > lastAt) {
+        lastAt = result.reconciledAt;
+      }
+    }
+
+    return {
+      totalReconciliations: this.reconciliationHistory.length,
+      consistentStateCount: consistent,
+      inconsistentStateCount: inconsistent,
+      lastReconciliationAt: lastAt,
+      totalDiscrepanciesFound: totalDiscrepancies,
+    };
   }
 }
 

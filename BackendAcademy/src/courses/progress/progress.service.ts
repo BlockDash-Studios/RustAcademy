@@ -1,6 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CourseEntity } from '../course.entity';
 import { CourseService } from '../course.service';
+import {
+  TransactionManagerService,
+  TransactionSnapshot,
+} from '../../common/transaction-manager.service';
 import { RegisterCourseProgressDto } from './dto/register-course-progress.dto';
 import {
   RecordLessonCompletionDto,
@@ -40,16 +44,41 @@ interface LearnerProgressRecord {
 }
 
 /**
+ * Snapshot used to roll back a single progress mutation. Captures the
+ * minimal state needed to undo a lesson/task completion record.
+ */
+interface ProgressSnapshot extends TransactionSnapshot {
+  data: {
+    userId: string;
+    courseId: string;
+    lessonIdsAdded: string[];
+    taskIdsAdded: string[];
+    xpAdded: number;
+    previousCompletedAt: Date | null;
+  };
+}
+
+/**
  * In-memory store for learner progress snapshots, scoped to the courses
  * module. Uses CourseService to hydrate course metadata (title, level,
  * learningPathId, xpReward) on the snapshot. The service is intentionally
  * self-contained so the courses feature remains easy to evolve in isolation.
+ *
+ * All progress mutations (recordLessonCompletion, recordTaskCompletion) are
+ * wrapped in transactional atomic operations via {@link TransactionManagerService}.
+ * If any part of the update fails, the progress snapshot is rolled back to
+ * the previous consistent state — no partial progress is ever visible to
+ * callers.
  */
 @Injectable()
 export class ProgressService {
+  private readonly logger = new Logger(ProgressService.name);
   private readonly learners: Map<string, LearnerProgressRecord> = new Map();
 
-  constructor(private readonly courseService: CourseService) {}
+  constructor(
+    private readonly courseService: CourseService,
+    private readonly transactionManager: TransactionManagerService,
+  ) {}
 
   /**
    * Register that a learner is enrolled in a course and (optionally) lock
@@ -100,42 +129,112 @@ export class ProgressService {
    * Record a lesson completion for (user, course). Repeating the same
    * lesson id is a no-op for counters/xp but always refreshes the
    * lastActivityAt timestamp.
+   *
+   * All state mutations are wrapped in a transactional atomic operation.
+   * If any step fails the progress snapshot is restored to its prior
+   * consistent state so callers never observe partially-applied progress.
    */
   async recordLessonCompletion(
     userId: string,
     courseId: string,
     dto: RecordLessonCompletionDto,
   ): Promise<CourseProgressRecord> {
-    const record = await this.ensureCourseRecord(userId, courseId);
+    const result = await this.transactionManager.runAtomic(async (tx) => {
+      const record = await this.ensureCourseRecord(userId, courseId);
 
-    const xp = dto.xpEarned ?? 0;
-    if (!record.completedLessonIds.has(dto.lessonId)) {
-      record.completedLessonIds.add(dto.lessonId);
-      record.xpEarned += xp;
+      // Capture pre-mutation state for potential rollback
+      const prevCompletedAt = record.completedAt;
+      const lessonIdsAdded: string[] = [];
+      let xpAdded = 0;
+
+      const xp = dto.xpEarned ?? 0;
+      if (!record.completedLessonIds.has(dto.lessonId)) {
+        record.completedLessonIds.add(dto.lessonId);
+        record.xpEarned += xp;
+        lessonIdsAdded.push(dto.lessonId);
+        xpAdded = xp;
+      }
+      record.lastActivityAt = new Date();
+      this.maybeMarkCompleted(record);
+
+      // Register rollback snapshot
+      await tx.addOperation(async (): Promise<ProgressSnapshot> => ({
+        restore: () => {
+          for (const id of lessonIdsAdded) {
+            record.completedLessonIds.delete(id);
+          }
+          record.xpEarned -= xpAdded;
+          record.completedAt = prevCompletedAt;
+        },
+        data: { userId, courseId, lessonIdsAdded, taskIdsAdded: [], xpAdded, previousCompletedAt: prevCompletedAt },
+      }));
+
+      return record;
+    });
+
+    if (!result.success) {
+      this.logger.error(
+        `Failed to record lesson completion for user=${userId}, course=${ courseId}, lesson=${dto.lessonId}: ${result.error?.message}`,
+      );
+      throw result.error;
     }
-    record.lastActivityAt = new Date();
-    this.maybeMarkCompleted(record);
-    return record;
+
+    return result.result!;
   }
 
   /**
    * Record a task completion for (user, course).
+   *
+   * All state mutations are wrapped in a transactional atomic operation.
+   * If any step fails the progress snapshot is restored to its prior
+   * consistent state so callers never observe partially-applied progress.
    */
   async recordTaskCompletion(
     userId: string,
     courseId: string,
     dto: RecordTaskCompletionDto,
   ): Promise<CourseProgressRecord> {
-    const record = await this.ensureCourseRecord(userId, courseId);
+    const result = await this.transactionManager.runAtomic(async (tx) => {
+      const record = await this.ensureCourseRecord(userId, courseId);
 
-    const xp = dto.xpEarned ?? 0;
-    if (!record.completedTaskIds.has(dto.taskId)) {
-      record.completedTaskIds.add(dto.taskId);
-      record.xpEarned += xp;
+      // Capture pre-mutation state for potential rollback
+      const prevCompletedAt = record.completedAt;
+      const taskIdsAdded: string[] = [];
+      let xpAdded = 0;
+
+      const xp = dto.xpEarned ?? 0;
+      if (!record.completedTaskIds.has(dto.taskId)) {
+        record.completedTaskIds.add(dto.taskId);
+        record.xpEarned += xp;
+        taskIdsAdded.push(dto.taskId);
+        xpAdded = xp;
+      }
+      record.lastActivityAt = new Date();
+      this.maybeMarkCompleted(record);
+
+      // Register rollback snapshot
+      await tx.addOperation(async (): Promise<ProgressSnapshot> => ({
+        restore: () => {
+          for (const id of taskIdsAdded) {
+            record.completedTaskIds.delete(id);
+          }
+          record.xpEarned -= xpAdded;
+          record.completedAt = prevCompletedAt;
+        },
+        data: { userId, courseId, lessonIdsAdded: [], taskIdsAdded, xpAdded, previousCompletedAt: prevCompletedAt },
+      }));
+
+      return record;
+    });
+
+    if (!result.success) {
+      this.logger.error(
+        `Failed to record task completion for user=${userId}, course=${courseId}, task=${dto.taskId}: ${result.error?.message}`,
+      );
+      throw result.error;
     }
-    record.lastActivityAt = new Date();
-    this.maybeMarkCompleted(record);
-    return record;
+
+    return result.result!;
   }
 
   /**

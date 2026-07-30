@@ -10,6 +10,7 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CreateSocialPostDto } from './dto/create-social-post.dto';
 import { GetSocialFeedDto } from './dto/get-social-feed.dto';
 import { UpdateModerationDto } from './dto/update-moderation.dto';
@@ -65,6 +66,7 @@ export class SocialController {
 
   @Post('posts/:postId/flag')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   flagPost(
     @Param('postId') postId: string,
     @Query('userId') userId: string,
@@ -74,12 +76,14 @@ export class SocialController {
 
   @Post('posts/:postId/like')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   likePost(@Param('postId') postId: string): SocialPost {
     return this.socialService.likePost(postId);
   }
 
   @Post('posts/:postId/comment')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   commentOnPost(@Param('postId') postId: string): SocialPost {
     return this.socialService.commentOnPost(postId);
   }
@@ -98,6 +102,7 @@ export class SocialController {
 
   @Post('users/:userId/follow/:targetUserId')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 15, ttl: 60_000 } })
   followUser(
     @Param('userId') userId: string,
     @Param('targetUserId') targetUserId: string,
@@ -107,6 +112,7 @@ export class SocialController {
 
   @Delete('users/:userId/follow/:targetUserId')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @Throttle({ default: { limit: 15, ttl: 60_000 } })
   unfollowUser(
     @Param('userId') userId: string,
     @Param('targetUserId') targetUserId: string,

@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { MigrationService } from './migration.service';
 import { MigrationController } from './migration.controller';
 import { DatabaseService } from './database.service';
+import { TransactionManagerService } from '../common/transaction-manager.service';
 
 @Global()
 @Module({
@@ -21,7 +22,7 @@ import { DatabaseService } from './database.service';
     }),
   ],
   controllers: [MigrationController],
-  providers: [DatabaseService, MigrationService],
-  exports: [TypeOrmModule, DatabaseService, MigrationService],
+  providers: [DatabaseService, MigrationService, TransactionManagerService],
+  exports: [TypeOrmModule, DatabaseService, MigrationService, TransactionManagerService],
 })
 export class DatabaseModule {}

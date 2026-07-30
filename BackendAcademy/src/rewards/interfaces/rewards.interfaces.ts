@@ -105,6 +105,8 @@ export interface PrizePoolResponse {
   currency: string;
   distributedAt: Date | null;
   createdAt: Date;
+  /** Expiration date for the prize pool; after this date it cannot be distributed (#363) */
+  expiresAt: Date | null;
   distribution: PrizeDistribution[];
 }
 
@@ -114,4 +116,6 @@ export interface PrizePoolResponse {
 export interface CreatePrizePoolRequest {
   totalAmount: number;
   currency?: string;
+  /** Optional expiration date for the prize pool (#363) */
+  expiresAt?: string;
 }

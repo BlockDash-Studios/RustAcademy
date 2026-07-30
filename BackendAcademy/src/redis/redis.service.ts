@@ -19,6 +19,11 @@ export interface RecommendationExplainability {
   modelVersion: string;
 }
 
+/**
+ * Recognised content resource types for cache invalidation (Issue #379).
+ */
+export type ContentResource = 'course' | 'lesson';
+
 @Injectable()
 export class RedisService {
   private readonly logger = new Logger(RedisService.name);
@@ -26,6 +31,15 @@ export class RedisService {
   private readonly cache = new Map<string, { value: unknown; expiresAt: number }>();
   private readonly DEFAULT_TTL_MS = 5 * 60 * 1000;
   private readonly SNAPSHOT_TTL_MS = 2 * 60 * 1000;
+
+  /**
+   * Content-key prefixes indexed by resource type. These are the cache-key
+   * namespaces we know can become stale when a course / lesson changes.
+   */
+  private static readonly CONTENT_KEY_PREFIXES: Record<ContentResource, string[]> = {
+    course: ['course:', 'courses:', 'course-summary:', 'course-rating:', 'course-progress:'],
+    lesson: ['lesson:', 'lessons:', 'lesson-progress:'],
+  };
 
   async getUserSnapshot(userId: string): Promise<UserSnapshot | null> {
     const snapshot = this.snapshots.get(userId);
@@ -170,6 +184,25 @@ export class RedisService {
     statusCode?: number;
   }>> {
     return this.webhookDeliveryLog.get(webhookId) || [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Health check — Issue #375
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns true when the Redis service reports healthy (cache is accessible).
+   * A no-op get is sufficient to validate connectivity and measure latency.
+   */
+  async isHealthy(): Promise<boolean> {
+    try {
+      await this.get('__health_check__');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async warmCache(keys: string[], fetchFn: (key: string) => Promise<unknown>, ttlMs?: number): Promise<number> {
     let warmed = 0;
     for (const key of keys) {
@@ -192,5 +225,43 @@ export class RedisService {
       if (Date.now() > entry.expiresAt) expiredKeys++;
     }
     return { totalKeys: this.cache.size, expiredKeys };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Content-edit cache invalidation — Issue #379
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Invalidates every cache entry that is derived from a given content
+   * resource (course or lesson). Solves the bug where editing a course or
+   * lesson left stale values in cache, causing clients to see inconsistent
+   * responses after content updates.
+   *
+   * Returns the number of keys removed — useful for diagnostics / tests.
+   */
+  async invalidateContentCache(resource: ContentResource, id: string): Promise<number> {
+    if (!id) return 0;
+    const prefixes = RedisService.CONTENT_KEY_PREFIXES[resource] ?? [];
+    let removed = 0;
+    for (const [key] of this.cache) {
+      if (this.matchesAnyPrefix(key, prefixes, id)) {
+        this.cache.delete(key);
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      this.logger.debug(
+        `[#379] invalidated ${removed} cache key(s) for ${resource}:${id}`,
+      );
+    }
+    return removed;
+  }
+
+  /**
+   * Predicate helper: does the given cache key start with one of the
+   * recognised prefixes AND embed the resource id?
+   */
+  private matchesAnyPrefix(key: string, prefixes: string[], id: string): boolean {
+    return prefixes.some((prefix) => key.startsWith(prefix) && key.includes(id));
   }
 }

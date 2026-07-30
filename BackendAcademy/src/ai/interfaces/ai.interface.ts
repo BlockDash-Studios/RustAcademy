@@ -5,6 +5,8 @@ export interface ChatMessage {
   response: string;
   timestamp: Date;
   context?: Record<string, any>;
+  /** Indicates whether the chat response was fully delivered (#373) */
+  isComplete: boolean;
 }
 
 export interface Hint {
@@ -19,6 +21,16 @@ export interface AiChatResponse {
   response: string;
   timestamp: Date;
   messageId: string;
+  /**
+   * Issue #371 — prompt sanitisation outcome. Present only when the
+   * SecurityService flagged the user input. Omitted for clean inputs to
+   * keep the common path zero-cost.
+   */
+  safety?: {
+    status: 'wrapped' | 'rejected';
+    reasons: string[];
+    originalLength: number;
+  };
 }
 
 export interface AiHintResponse {
@@ -35,6 +47,10 @@ export interface AiChatRecord {
   startedAt: Date;
   lastActivityAt: Date;
   metadata?: Record<string, unknown>;
+  /** Compact summary of conversation for long tutoring sessions (#372) */
+  summary?: string;
+  /** Timestamp of the last summary generation (#372) */
+  lastSummaryAt?: Date;
 }
 
 export interface VoiceInteractionResponse {

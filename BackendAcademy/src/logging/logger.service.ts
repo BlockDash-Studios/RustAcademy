@@ -5,6 +5,7 @@ export interface CorrelationContext {
   correlationId: string;
   userId?: string;
   requestId?: string;
+  tenantId?: string;
 }
 
 export interface LogEntry {
@@ -14,6 +15,7 @@ export interface LogEntry {
   correlationId?: string;
   userId?: string;
   requestId?: string;
+  tenantId?: string;
   timestamp: Date;
   metadata?: Record<string, unknown>;
 }
@@ -76,6 +78,7 @@ export class CorrelationLoggerService implements LoggerService {
       correlationId: store?.correlationId,
       userId: store?.userId,
       requestId: store?.requestId,
+      tenantId: store?.tenantId,
       timestamp: new Date(),
     };
     this.logs.push(entry);

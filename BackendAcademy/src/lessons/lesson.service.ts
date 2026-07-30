@@ -1,11 +1,19 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { LessonEntity } from './lesson.entity';
 import { CreateLessonDto } from './dto/create-lesson.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
+import { SearchIndexerService } from '../search/search-indexer.service';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class LessonService {
+  private readonly logger = new Logger(LessonService.name);
   private readonly lessons: Map<string, LessonEntity> = new Map();
+
+  constructor(
+    @Optional() private readonly searchIndexer?: SearchIndexerService,
+    @Optional() private readonly redisService?: RedisService,
+  ) {}
 
   async create(dto: CreateLessonDto): Promise<LessonEntity> {
     const lesson = new LessonEntity({
@@ -13,6 +21,8 @@ export class LessonService {
       ...dto,
     });
     this.lessons.set(lesson.id, lesson);
+    // #379: a freshly created lesson invalidates any cached lookups for it
+    await this.redisService?.invalidateContentCache('lesson', lesson.id);
     return lesson;
   }
 
@@ -76,11 +86,28 @@ export class LessonService {
     const lesson = this.lessons.get(id);
     if (!lesson) return null;
     Object.assign(lesson, dto, { updatedAt: new Date() });
+    // #379: edits to lesson content must invalidate any cached lookups for it
+    // and for the parent course. Search index updates for lessons flow through
+    // their owning course (see #369 — SearchIndexerService indexes courses,
+    // not lessons directly).
+    await this.redisService?.invalidateContentCache('lesson', id);
+    if (lesson.courseId) {
+      await this.redisService?.invalidateContentCache('course', lesson.courseId);
+    }
     return lesson;
   }
 
   async remove(id: string): Promise<boolean> {
-    return this.lessons.delete(id);
+    const lesson = this.lessons.get(id);
+    const deleted = this.lessons.delete(id);
+    if (deleted && lesson) {
+      // #369: lesson removal also invalidates the parent course's cache
+      await this.redisService?.invalidateContentCache('lesson', id);
+      if (lesson.courseId) {
+        await this.redisService?.invalidateContentCache('course', lesson.courseId);
+      }
+    }
+    return deleted;
   }
 
   /**

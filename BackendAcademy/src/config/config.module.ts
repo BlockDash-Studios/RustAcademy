@@ -2,11 +2,17 @@ import { Module } from '@nestjs/common';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
 import * as Joi from 'joi';
 
+/**
+ * Application config module with contract-specific environment
+ * variable validation (#395, #396).
+ */
 @Module({
   imports: [
     NestConfigModule.forRoot({
       isGlobal: true,
-      validationSchema: Joi.object({
+      validationSchema: contractEnvSchema.concat(
+        Joi.object({
+        // ── Base config ─────────────────────────────────────────────
         NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
         PORT: Joi.number().default(3000),
         DATABASE_URL: Joi.string().optional(),

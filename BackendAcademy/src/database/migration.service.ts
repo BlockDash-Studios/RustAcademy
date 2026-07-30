@@ -49,6 +49,15 @@ export interface RollbackResult {
 }
 
 /**
+ * Defines the dependency relationship between migrations.
+ * A migration listed in `dependsOn` must be applied before this migration.
+ */
+export interface MigrationDependency {
+  name: string;
+  dependsOn: string[];
+}
+
+/**
  * Service responsible for migration rollback awareness and preflight validation.
  *
  * Validates migration prerequisites (database connectivity, schema state,
@@ -59,6 +68,21 @@ export interface RollbackResult {
 export class MigrationService implements OnModuleInit {
   private readonly logger = new Logger(MigrationService.name);
   private migrations: MigrationRecord[] = [];
+
+  /**
+   * Ordered list of known migrations with their dependencies.
+   * Migrations are applied in the order defined here, and each
+   * migration's dependencies are validated before application.
+   */
+  private static readonly MIGRATION_ORDER: MigrationDependency[] = [
+    { name: 'InitialSchema', dependsOn: [] },
+    { name: 'AddUserProfiles', dependsOn: ['InitialSchema'] },
+    { name: 'AddCoursesTable', dependsOn: ['AddUserProfiles'] },
+    { name: 'AddSubmissionsTable', dependsOn: ['AddCoursesTable'] },
+    { name: 'AddNotificationsTable', dependsOn: ['AddUserProfiles'] },
+    { name: 'AddPaymentsTable', dependsOn: ['AddUserProfiles'] },
+    { name: 'AddReviewsTable', dependsOn: ['AddCoursesTable', 'AddUserProfiles'] },
+  ];
 
   constructor(
     private readonly configService: ConfigService,
@@ -139,7 +163,25 @@ export class MigrationService implements OnModuleInit {
       severity: envValid.passed ? 'info' : 'warning',
     });
 
-    // 5. Check for required backup before destructive migrations
+    // 5. Migration ordering validation
+    const orderIssues = this.validateMigrationOrder();
+    checks.push({
+      name: 'Migration Order',
+      passed: orderIssues.length === 0,
+      message:
+        orderIssues.length > 0
+          ? `Migration order violations found: ${orderIssues.join('; ')}`
+          : 'Migration ordering and dependencies are valid',
+      severity: orderIssues.length > 0 ? 'error' : 'info',
+    });
+
+    if (orderIssues.length > 0) {
+      recommendations.push(
+        'Re-order pending migrations to satisfy dependency requirements before applying',
+      );
+    }
+
+    // 6. Check for required backup before destructive migrations
     const hasDestructiveMigrations = this.checkDestructiveMigrations();
     checks.push({
       name: 'Destructive Migration Risk',
@@ -291,16 +333,58 @@ export class MigrationService implements OnModuleInit {
     }
   }
 
+  /**
+   * Validates that pending migrations are applied in the correct order
+   * and that all dependencies are satisfied.
+   *
+   * Returns a list of ordering violations. An empty array means the
+   * pending migrations are safe to apply in sequence.
+   */
+  validateMigrationOrder(): string[] {
+    const issues: string[] = [];
+    const appliedNames = new Set(
+      this.migrations.filter((m) => m.applied).map((m) => m.name),
+    );
+    const pending = this.getPendingMigrations();
+    const pendingSet = new Set(pending);
+
+    for (const migration of MigrationService.MIGRATION_ORDER) {
+      if (!pendingSet.has(migration.name) && !appliedNames.has(migration.name)) {
+        continue;
+      }
+
+      for (const dep of migration.dependsOn) {
+        if (!appliedNames.has(dep) && !pendingSet.has(dep)) {
+          issues.push(
+            `Migration "${migration.name}" depends on "${dep}" which is neither applied nor pending`,
+          );
+        }
+        if (pendingSet.has(migration.name) && pendingSet.has(dep)) {
+          const migIdx = pending.indexOf(migration.name);
+          const depIdx = pending.indexOf(dep);
+          if (migIdx < depIdx) {
+            issues.push(
+              `Migration "${migration.name}" must be applied after its dependency "${dep}"`,
+            );
+          }
+        }
+      }
+    }
+
+    return issues;
+  }
+
+  /**
+   * Returns migrations in the correct application order,
+   * respecting declared dependencies.
+   */
+  getMigrationsInOrder(): string[] {
+    return MigrationService.MIGRATION_ORDER.map((m) => m.name);
+  }
+
   private getPendingMigrations(): string[] {
-    // In production this would compare against migration files on disk.
-    // For now we seed a subset of knowns as pending.
-    const knownMigrations = [
-      'InitialSchema',
-      'AddUserProfiles',
-      'AddCoursesTable',
-      'AddSubmissionsTable',
-    ];
-    return knownMigrations.filter(
+    // Use the declared order to determine which migrations are pending.
+    return this.getMigrationsInOrder().filter(
       (name) => !this.migrations.some((m) => m.name === name && m.applied),
     );
   }
@@ -343,10 +427,13 @@ export class MigrationService implements OnModuleInit {
 
   private buildRollbackPlan(): RollbackStep[] {
     const applied = this.migrations
-      .filter((m) => m.applied)
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      .filter((m) => m.applied);
+    const orderedApplied = this.getMigrationsInOrder()
+      .filter((name) => applied.some((m) => m.name === name))
+      .reverse()
+      .map((name) => applied.find((m) => m.name === name)!);
 
-    return applied.map((migration, index) => ({
+    return orderedApplied.map((migration, index) => ({
       order: index + 1,
       action: `Roll back migration "${migration.name}" (applied ${migration.timestamp.toISOString()})`,
       reversible: !migration.name.toUpperCase().includes('DROP'),

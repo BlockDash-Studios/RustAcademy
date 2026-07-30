@@ -15,15 +15,49 @@ import {
 } from './interfaces/session.interface';
 
 /**
- * AuthSessionService — Issue #220
+ * #350: Centralized session policy configuration.
+ * All session-related durations and rules are defined in one place
+ * so they can be enforced consistently across web and mobile clients.
+ */
+export interface SessionPolicy {
+  /** Access token TTL in seconds (default: 15 min). */
+  accessTokenTtl: number;
+  /** Refresh token TTL in seconds (default: 7 days). */
+  refreshTokenTtl: number;
+  /** Grace period after refresh token expiry for delivery delays (seconds). */
+  deliveryGracePeriod: number;
+  /** Maximum number of concurrent sessions per user. */
+  maxConcurrentSessions: number;
+  /** Whether to enforce single-session mode (logout other sessions on new login). */
+  singleSessionMode: boolean;
+  /** Whether to require device fingerprint for new sessions. */
+  requireDeviceFingerprint: boolean;
+  /** Duration in seconds after which idle sessions are revoked. */
+  idleSessionTimeout: number;
+}
+
+const DEFAULT_SESSION_POLICY: SessionPolicy = {
+  accessTokenTtl: 900,          // 15 minutes
+  refreshTokenTtl: 604_800,     // 7 days
+  deliveryGracePeriod: 300,      // 5 minutes grace for email delivery
+  maxConcurrentSessions: 5,
+  singleSessionMode: false,
+  requireDeviceFingerprint: false,
+  idleSessionTimeout: 86_400,    // 24 hours
+};
+
+/**
+ * AuthSessionService — Issue #220, #349, #350
  *
  * Provides secure session management with:
  *  - Short-lived access tokens (JWT, default 15 min)
- *  - Long-lived refresh tokens (JWT, default 7 days)
+ *  - Long-lived refresh tokens (JWT, default 7 days + 5 min grace period)
  *  - Refresh-token rotation: every refresh revokes the old token and
  *    issues a fresh pair, preventing replay attacks.
  *  - Session revocation on logout (single session) or logout-all (all
  *    sessions belonging to a user).
+ *  - Centralized session policy (#350) for consistent web/mobile behavior.
+ *  - Delivery grace period (#349) for password reset tokens.
  *
  * Sessions are stored in memory for now; the Map can be swapped for a
  * Redis store without changing the public API.
@@ -38,24 +72,34 @@ export class AuthSessionService {
   /** Device fingerprints per user: userId → Set of device hashes */
   private readonly trustedDevices = new Map<string, Set<string>>();
 
-  /** How long the access token is valid (seconds). */
-  private readonly accessTokenTtl: number;
-
-  /** How long the refresh token is valid (seconds). */
-  private readonly refreshTokenTtl: number;
+  /** #350: Centralized session policy */
+  private readonly sessionPolicy: SessionPolicy;
 
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {
-    this.accessTokenTtl = this.configService.get<number>(
-      'JWT_ACCESS_EXPIRES_IN',
-      900, // 15 minutes
-    );
-    this.refreshTokenTtl = this.configService.get<number>(
-      'JWT_REFRESH_EXPIRES_IN',
-      604_800, // 7 days
-    );
+    // #350: Load centralized session policy from config
+    this.sessionPolicy = {
+      accessTokenTtl: this.configService.get<number>('SESSION_ACCESS_TOKEN_TTL', DEFAULT_SESSION_POLICY.accessTokenTtl),
+      refreshTokenTtl: this.configService.get<number>('SESSION_REFRESH_TOKEN_TTL', DEFAULT_SESSION_POLICY.refreshTokenTtl),
+      deliveryGracePeriod: this.configService.get<number>('SESSION_DELIVERY_GRACE_PERIOD', DEFAULT_SESSION_POLICY.deliveryGracePeriod),
+      maxConcurrentSessions: this.configService.get<number>('SESSION_MAX_CONCURRENT', DEFAULT_SESSION_POLICY.maxConcurrentSessions),
+      singleSessionMode: this.configService.get<boolean>('SESSION_SINGLE_MODE', DEFAULT_SESSION_POLICY.singleSessionMode),
+      requireDeviceFingerprint: this.configService.get<boolean>('SESSION_REQUIRE_DEVICE', DEFAULT_SESSION_POLICY.requireDeviceFingerprint),
+      idleSessionTimeout: this.configService.get<number>('SESSION_IDLE_TIMEOUT', DEFAULT_SESSION_POLICY.idleSessionTimeout),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // #350: Public policy access
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the current session policy for external consumers.
+   */
+  getSessionPolicy(): Readonly<SessionPolicy> {
+    return { ...this.sessionPolicy };
   }
 
   // ---------------------------------------------------------------------------
@@ -73,7 +117,7 @@ export class AuthSessionService {
   ): Promise<AuthTokensResponse> {
     const sessionId = randomUUID();
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + this.refreshTokenTtl * 1000);
+    const expiresAt = new Date(now.getTime() + this.sessionPolicy.refreshTokenTtl * 1000);
 
     const { accessToken, refreshToken } = await this.signTokenPair(
       userId,
@@ -84,6 +128,26 @@ export class AuthSessionService {
     const deviceHash = deviceFingerprint
       ? this.hashDevice(deviceFingerprint)
       : undefined;
+
+    // #350: Enforce single-session mode by revoking other sessions
+    if (this.sessionPolicy.singleSessionMode) {
+      this.revokeAllUserSessions(userId);
+    }
+
+    // #350: Enforce max concurrent sessions
+    const activeSessions = this.getActiveSessions(userId);
+    if (activeSessions.length >= this.sessionPolicy.maxConcurrentSessions) {
+      // Revoke oldest session
+      const oldest = activeSessions.sort(
+        (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+      )[0];
+      if (oldest) {
+        this.revokeSession(oldest.sessionId);
+        this.logger.warn(
+          `Revoked oldest session ${oldest.sessionId} for user ${userId} (max concurrent: ${this.sessionPolicy.maxConcurrentSessions})`,
+        );
+      }
+    }
 
     const session: Session = {
       sessionId,
@@ -147,7 +211,7 @@ export class AuthSessionService {
       });
     }
 
-    if (new Date() > session.expiresAt) {
+    if (new Date() > new Date(session.expiresAt.getTime() + this.sessionPolicy.deliveryGracePeriod * 1000)) {
       session.revoked = true;
       this.sessions.set(session.sessionId, session);
       throw new UnauthorizedException({
@@ -251,12 +315,12 @@ export class AuthSessionService {
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(accessPayload, {
-        expiresIn: this.accessTokenTtl,
+        expiresIn: this.sessionPolicy.accessTokenTtl,
         // Access token uses the default JWT_SECRET set in JwtModule.
       }),
       this.jwtService.signAsync(refreshPayload, {
         secret: this.refreshSecret,
-        expiresIn: this.refreshTokenTtl,
+        expiresIn: this.sessionPolicy.refreshTokenTtl,
       }),
     ]);
 
@@ -271,7 +335,7 @@ export class AuthSessionService {
       accessToken,
       refreshToken,
       tokenType: 'Bearer',
-      expiresIn: this.accessTokenTtl,
+      expiresIn: this.sessionPolicy.accessTokenTtl,
     };
   }
 

@@ -25,7 +25,7 @@ export class NotificationsService {
   }
 
   findByUserId(userId: string): Notification[] {
-    return this.notifications.filter(n => n.userId === userId);
+    return this.notifications.filter((n) => n.userId === userId);
   }
 
   // -------------------------------------------------------------------------

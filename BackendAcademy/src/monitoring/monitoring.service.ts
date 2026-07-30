@@ -6,11 +6,16 @@ import {
   ERROR_EVENTS_METRIC,
   HTTP_REQUESTS_METRIC,
 } from './monitoring.metrics';
+import { CorrelationLoggerService } from '../logging/logger.service';
 
 /**
  * Thin wrapper around the Prometheus counters registered by
  * {@link MonitoringModule}. Other modules inject this service to record
  * business-relevant metrics without directly knowing about `prom-client`.
+ *
+ * #377: All counters now include `tenant_id` and `request_id` labels
+ * so monitoring spans carry full request context for multi-tenant
+ * troubleshooting.
  */
 @Injectable()
 export class MonitoringService {
@@ -30,6 +35,18 @@ export class MonitoringService {
   ) {}
 
   /**
+   * #377: Extracts tenant and request IDs from the current AsyncLocalStorage
+   * context so every metric span carries request identity.
+   */
+  private getRequestContext(): { tenant_id: string; request_id: string } {
+    const ctx = CorrelationLoggerService.getContext();
+    return {
+      tenant_id: ctx?.tenantId ?? 'unknown',
+      request_id: ctx?.requestId ?? 'unknown',
+    };
+  }
+
+  /**
    * Record a single HTTP request. Routes are normalized to always start with
    * `/` so that label cardinality stays bounded.
    */
@@ -38,6 +55,7 @@ export class MonitoringService {
       method,
       route: normalizeRoute(route),
       status_code: statusCode.toString(),
+      ...this.getRequestContext(),
     });
   }
 
@@ -46,7 +64,7 @@ export class MonitoringService {
    * module). The `source` label identifies the originating module.
    */
   recordDomainEvent(eventType: string, source: string): void {
-    this.domainEvents.inc({ event_type: eventType, source });
+    this.domainEvents.inc({ event_type: eventType, source, ...this.getRequestContext() });
   }
 
   /**
@@ -54,7 +72,7 @@ export class MonitoringService {
    * details into metrics; label values must be stable and bounded.
    */
   recordError(source: string, reason: string): void {
-    this.errorEvents.inc({ source, reason });
+    this.errorEvents.inc({ source, reason, ...this.getRequestContext() });
   }
 
   /**
@@ -65,6 +83,7 @@ export class MonitoringService {
     this.domainEvents.inc({
       event_type: 'session_revoked',
       source: 'auth',
+      ...this.getRequestContext(),
     });
   }
 
@@ -76,6 +95,7 @@ export class MonitoringService {
     this.domainEvents.inc({
       event_type: 'api_key_created',
       source: 'security',
+      ...this.getRequestContext(),
     });
   }
 
@@ -87,6 +107,7 @@ export class MonitoringService {
     this.domainEvents.inc({
       event_type: 'api_key_revoked',
       source: 'security',
+      ...this.getRequestContext(),
     });
   }
 
@@ -98,6 +119,7 @@ export class MonitoringService {
     this.domainEvents.inc({
       event_type: 'api_key_anomaly',
       source: 'security',
+      ...this.getRequestContext(),
     });
   }
 
