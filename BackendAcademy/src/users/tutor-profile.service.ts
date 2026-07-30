@@ -61,8 +61,6 @@ export class TutorProfileService {
   ): Promise<TutorProfileEntity | null> {
     const profile = this.profiles.get(id);
     if (!profile) return null;
-    Object.assign(profile, dto, { updatedAt: new Date() });
-    profile.reputationScore = this.calculateReputation(profile);
     // Defensive: never allow verification status to be mutated via the
     // generic update path. Even if a malicious / buggy caller injects
     // `isVerified` or `status` into the payload, strip them here so they
@@ -251,6 +249,7 @@ export class TutorProfileService {
     profile.verifiedAt = new Date();
     profile.verifiedBy = dto.adminId ?? profile.verifiedBy ?? null;
     profile.verificationNote = dto.note ?? null;
+    profile.reputationScore = this.calculateReputation(profile);
     profile.updatedAt = new Date();
     return profile;
   }

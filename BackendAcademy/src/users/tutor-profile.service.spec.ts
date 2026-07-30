@@ -174,7 +174,7 @@ describe('TutorProfileService', () => {
 
       const before = await service.getReputation(profile.id);
 
-      await service.verify(profile.id, { adminId: 'admin-test' });
+      await service.verify(profile.id, { adminId: 'admin-1' });
 
       const after = await service.getReputation(profile.id);
 

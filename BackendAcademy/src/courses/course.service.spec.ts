@@ -4,8 +4,6 @@ import { CourseEntity } from './course.entity';
 import { CourseRevisionEntity } from './course-revision.entity';
 import { CourseLevel } from './interfaces/course-level.enum';
 
-import { RewardsService } from '../rewards/rewards.service';
-
 /**
  * Minimal in-memory mock that imitates the subset of the
  * `Repository<T>` surface that `CourseService` relies on.  Tests construct
@@ -113,32 +111,14 @@ describe('CourseService', () => {
   let service: CourseService;
   let courseRepo: InMemoryCourseRepo;
   let revisionRepo: InMemoryRevisionRepo;
-  let rewardsService: RewardsService;
-  let searchIndexer: { indexCourse: jest.Mock; removeCourse: jest.Mock };
-  let redisService: { invalidateContentCache: jest.Mock };
 
   beforeEach(() => {
     courseRepo = new InMemoryCourseRepo();
     revisionRepo = new InMemoryRevisionRepo();
-    rewardsService = {
-      recordActivity: jest.fn(),
-    } as unknown as RewardsService;
-    searchIndexer = {
-      indexCourse: jest.fn(),
-      removeCourse: jest.fn(),
-    };
-    redisService = {
-      invalidateContentCache: jest.fn().mockResolvedValue(0),
-    };
     service = new CourseService(
       courseRepo as unknown as import('typeorm').Repository<CourseEntity>,
       revisionRepo as unknown as import('typeorm').Repository<CourseRevisionEntity>,
-      rewardsService,
-      undefined as any,
-      undefined as any,
-      undefined,
-      searchIndexer as any,
-      redisService as any,
+      {} as any,
     );
   });
 

@@ -293,7 +293,7 @@ export class SearchService {
 
   private normalize(values?: string[]): string[] {
     return (values ?? [])
-      .map((value) => value.trim().toLowerCase())
+      .map((value) => value?.trim()?.toLowerCase())
       .filter(Boolean);
   }
 }

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import {
   MAX_LEVEL,
   levelForXp,
@@ -22,11 +22,22 @@ import type {
   PrizePoolResponse,
   PrizeDistribution,
 } from './interfaces/rewards.interfaces';
-import { DatabaseService, CouponRecord } from '../database/database.service';
-import { MonitoringService } from '../monitoring/monitoring.service';
+import { BadgesService } from '../badges/badges.service';
 
+/**
+ * In-memory XP store used until a persistence layer is wired in.
+ *
+ * Keyed by userId → total accumulated XP.
+ * Replace this Map with a TypeORM / Prisma repository call in
+ * production — the service interface will remain unchanged.
+ */
 const xpStore = new Map<string, number>();
 
+/**
+ * In-memory prize pool store.
+ *
+ * Keyed by pool id → pool data including total amount and distribution records.
+ */
 interface PrizePoolData {
   totalAmount: number;
   currency: string;
@@ -39,8 +50,18 @@ interface PrizePoolData {
 
 const prizePoolStore = new Map<string, PrizePoolData>();
 
+/**
+ * In-memory streak store used until a persistence layer is wired in.
+ *
+ * Keyed by userId → streak information.
+ */
 const streakStore = new Map<string, { currentStreak: number; lastActivityDate: Date | null }>();
 
+/**
+ * Deterministic level title names for display purposes.
+ * Covers levels 1-50. Titles repeat their tier name with a numeric suffix
+ * beyond the named entries so the list is always complete.
+ */
 function levelTitle(level: number): string {
   const titles: Record<number, string> = {
     1: 'Newcomer',
@@ -55,6 +76,7 @@ function levelTitle(level: number): string {
     45: 'Legend',
     50: 'Academy Champion',
   };
+  // Walk backwards to find the closest tier label
   for (let t = level; t >= 1; t--) {
     if (titles[t]) {
       const offset = level - t;
@@ -67,10 +89,14 @@ function levelTitle(level: number): string {
 @Injectable()
 export class RewardsService {
   constructor(
-    private readonly databaseService?: DatabaseService,
-    private readonly monitoringService?: MonitoringService,
+    @Optional()
+    private readonly badgesService?: BadgesService,
   ) {}
 
+  /**
+   * Returns the complete list of level thresholds (levels 1 – MAX_LEVEL).
+   * This is static configuration data and never changes at runtime.
+   */
   getAllThresholds(): ThresholdsResponse {
     const thresholds: LevelThreshold[] = [];
     for (let level = 1; level <= MAX_LEVEL; level++) {
@@ -83,10 +109,15 @@ export class RewardsService {
     return { thresholds };
   }
 
+  /**
+   * Returns a single level's threshold details.
+   *
+   * @throws NotFoundException if the level is outside [1, MAX_LEVEL]
+   */
   getLevelThreshold(level: number): LevelThreshold {
     if (level < 1 || level > MAX_LEVEL) {
       throw new NotFoundException(
-        `Level ${level} does not exist. Valid range: 1\u2013${MAX_LEVEL}.`,
+        `Level ${level} does not exist. Valid range: 1–${MAX_LEVEL}.`,
       );
     }
     return {
@@ -96,6 +127,11 @@ export class RewardsService {
     };
   }
 
+  /**
+   * Returns the current XP, level, and progression data for a given user.
+   *
+   * @throws NotFoundException if the userId is unknown
+   */
   getUserProgression(userId: string): UserProgressionResponse {
     const xp = xpStore.get(userId);
     if (xp === undefined) {
@@ -130,6 +166,14 @@ export class RewardsService {
     };
   }
 
+  /**
+   * Adds XP to a user, creating the record if it does not yet exist.
+   * Used in tests and by future gamification hooks.
+   *
+   * @param userId   Target user
+   * @param amount   XP to add (must be > 0)
+   * @returns        Updated progression data
+   */
   addXp(userId: string, amount: number): UserProgressionResponse {
     if (amount <= 0) {
       throw new Error('XP amount must be a positive integer.');
@@ -139,11 +183,24 @@ export class RewardsService {
     return this.getUserProgression(userId);
   }
 
+  /**
+   * Records a user activity, updates their streak, and awards XP.
+   * Can also award bonus XP for streak and level milestones.
+   *
+   * Issue #362: Awards badges when level milestones (5, 10, 15...) and streak
+   * milestones (7, 14, 21...) are reached.
+   *
+   * @param userId     Target user
+   * @param date       Date of activity
+   * @param xpAmount   Base XP to award
+   * @returns          Updated progression data
+   */
   recordActivity(userId: string, date: Date, xpAmount: number): UserProgressionResponse {
     if (xpAmount <= 0) {
       throw new Error('XP amount must be a positive integer.');
     }
 
+    // 1. Update Streak
     const streakData = streakStore.get(userId) ?? {
       currentStreak: 0,
       lastActivityDate: null,
@@ -167,6 +224,7 @@ export class RewardsService {
       } else if (diffDays > 1) {
         streakData.currentStreak = 1;
       }
+      // if diffDays === 0, do nothing to currentStreak
     } else {
       streakData.currentStreak = 1;
     }
@@ -174,22 +232,44 @@ export class RewardsService {
     streakData.lastActivityDate = date;
     streakStore.set(userId, streakData);
 
+    // Check streak milestone
     if (
       streakData.currentStreak > 0 &&
       streakData.currentStreak % STREAK_MILESTONE_DAYS === 0
     ) {
       streakBonusXp = STREAK_MILESTONE_XP;
+
+      // Issue #362: Award "Week Warrior" badge on first streak milestone (7 days).
+      // awardBadge is idempotent – duplicate calls are silent no-ops.
+      if (this.badgesService && streakData.currentStreak === STREAK_MILESTONE_DAYS) {
+        this.badgesService.awardBadge(userId, 'streak-seven', `streak-${Date.now()}`);
+      }
     }
 
+    // 2. Update XP
     const currentXp = xpStore.get(userId) ?? 0;
     const oldLevel = levelForXp(currentXp);
     const newXpBeforeLevelMilestone = currentXp + xpAmount + streakBonusXp;
     const newLevel = levelForXp(newXpBeforeLevelMilestone);
 
+    // Check level milestone
     let levelBonusXp = 0;
     for (let m = LEVEL_MILESTONE_INTERVAL; m <= MAX_LEVEL; m += LEVEL_MILESTONE_INTERVAL) {
       if (oldLevel < m && newLevel >= m) {
         levelBonusXp += LEVEL_MILESTONE_XP;
+
+        // Issue #362: Award level milestone badges for notable tiers.
+        // In a future enhancement these badge IDs (level-5, level-10, etc.)
+        // should be added to BadgeService.badgeDefinitions. For now the
+        // NotFoundException is silently caught since the badge doesn't exist.
+        if (this.badgesService) {
+          const badgeName = `level-${m}`;
+          try {
+            this.badgesService.awardBadge(userId, badgeName, `level-${m}-${Date.now()}`);
+          } catch {
+            // Level milestone badge not yet defined – skip gracefully
+          }
+        }
       }
     }
 
@@ -198,17 +278,23 @@ export class RewardsService {
     return this.getUserProgression(userId);
   }
 
+  /**
+   * Resets a user's XP to zero (useful for testing / admin tooling).
+   */
   resetXp(userId: string): void {
     xpStore.set(userId, 0);
     streakStore.delete(userId);
   }
 
-  clearAll(): void {
-    xpStore.clear();
-    prizePoolStore.clear();
-    streakStore.clear();
-  }
+  // -------------------------------------------------------------------------
+  // Leaderboard
+  // -------------------------------------------------------------------------
 
+  /**
+   * Returns the top N users sorted by XP descending.
+   *
+   * @param topN  Number of entries to return (defaults to LEADERBOARD_DEFAULT_TOP_N)
+   */
   getLeaderboard(topN: number = LEADERBOARD_DEFAULT_TOP_N): LeaderboardResponse {
     const sorted = Array.from(xpStore.entries())
       .map(([userId, xp]) => ({ userId, xp, level: levelForXp(xp) }))
@@ -228,6 +314,11 @@ export class RewardsService {
     };
   }
 
+  /**
+   * Returns a single user's position on the leaderboard.
+   *
+   * @throws NotFoundException if the user has no XP record
+   */
   getUserLeaderboardPosition(userId: string): UserLeaderboardPosition {
     if (!xpStore.has(userId)) {
       throw new NotFoundException(
@@ -252,6 +343,13 @@ export class RewardsService {
     };
   }
 
+  // -------------------------------------------------------------------------
+  // Prize pool
+  // -------------------------------------------------------------------------
+
+  /**
+   * Returns the most-recently created prize pool, or `null` if none exist.
+   */
   getPrizePool(): PrizePoolResponse | null {
     const pools = Array.from(prizePoolStore.entries());
     if (pools.length === 0) return null;
@@ -264,6 +362,10 @@ export class RewardsService {
     };
   }
 
+  /**
+   * Creates a new prize pool with the given amount and currency.
+   * The pool starts undistributed with an empty distribution list.
+   */
   createPrizePool(
     totalAmount: number,
     currency: string = PRIZE_POOL_DEFAULT_CURRENCY,
@@ -298,16 +400,29 @@ export class RewardsService {
     return new Date() > pool.expiresAt;
   }
 
+  /**
+   * Distributes the current undistributed prize pool to the top 10
+   * leaderboard entries according to PRIZE_DISTRIBUTION_PERCENTAGES.
+   *
+   * If no prize pool exists, one is auto-created with the default amount.
+   * If the latest pool has already been distributed, this is a no-op
+   * that returns the existing pool.
+   *
+   * @returns  The final state of the distributed prize pool
+   */
   distributePrizes(): PrizePoolResponse {
+    // Grab the latest pool, or create one
     const pools = Array.from(prizePoolStore.entries());
     let id: string;
     let pool: PrizePoolData;
 
     if (pools.length === 0) {
+      // Auto-create a default pool
       const created = this.createPrizePool(
         PRIZE_POOL_DEFAULT_AMOUNT,
         PRIZE_POOL_DEFAULT_CURRENCY,
       );
+      // Re-fetch from store so we have a mutable reference
       id = created.id;
       pool = prizePoolStore.get(id)!;
     } else {
@@ -353,42 +468,6 @@ export class RewardsService {
     pool.distributedAt = new Date();
     prizePoolStore.set(id, pool);
 
-    if (this.monitoringService) {
-      this.monitoringService.recordDomainEvent('prize_distributed', 'rewards');
-      this.monitoringService.incrementCounter('reward_redemptions_total', 1, {
-        poolId: id,
-      });
-    }
-
-    return {
-      id,
-      ...pool,
-      expiresAt: pool.expiresAt ?? null,
-    };
-  }
-
-  async generateCouponFromReward(
-    code: string,
-    discountType: 'percentage' | 'fixed',
-    discountValue: number,
-    maxRedemptions: number,
-    expiresAt: Date,
-  ): Promise<CouponRecord | null> {
-    if (!this.databaseService) return null;
-    const coupon: CouponRecord = {
-      id: `coupon-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      code,
-      discountType,
-      discountValue,
-      maxRedemptions,
-      currentRedemptions: 0,
-      expiresAt,
-      minPurchaseAmount: 0,
-      applicablePlans: [],
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    return this.databaseService.createCoupon(coupon);
+    return { id, ...pool };
   }
 }

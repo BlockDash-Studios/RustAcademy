@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
 import { StreakService } from './streak.service';
 
 describe('StreakService', () => {
@@ -17,11 +18,6 @@ describe('StreakService', () => {
     service.clearAll();
   });
 
-  // Restore real timers after each test to prevent cross-test pollution
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
   // -------------------------------------------------------------------------
   // getStreak() tests
   // -------------------------------------------------------------------------
@@ -29,7 +25,8 @@ describe('StreakService', () => {
   describe('getStreak()', () => {
     const USER = 'test-user-abc';
 
-    it('returns zero streak for new user who has never checked in', () => {
+    it('returns zero streak for new user', () => {
+      service.clearAll();
       const streak = service.getStreak(USER);
       expect(streak).toMatchObject({
         userId: USER,
@@ -69,37 +66,38 @@ describe('StreakService', () => {
     });
 
     it('continues streak on consecutive days', () => {
+      const now = new Date('2026-01-01T12:00:00Z');
+      jest.useFakeTimers();
+      jest.setSystemTime(now);
+
       // Day 1
       service.checkIn(USER);
       
-      // Simulate next day by advancing system time +24h
-      const now = Date.now();
-      const tomorrow = now + 86400000;
-      jest.useFakeTimers({ now: tomorrow });
+      // Day 2 (24 hours later)
+      jest.setSystemTime(new Date('2026-01-02T12:00:00Z'));
       
       const result = service.checkIn(USER);
       expect(result.newStreak).toBe(2);
-      // Bonus thresholds start at 3-day streak, so 2-day streak has 0 bonus
       expect(result.streakBonus).toBe(0);
       
-      // Restore real timers
       jest.useRealTimers();
     });
 
     it('resets streak after missing a day', () => {
+      const day1 = new Date('2026-01-01T12:00:00Z');
+      jest.useFakeTimers();
+      jest.setSystemTime(day1);
+
       // Day 1
       service.checkIn(USER);
       
-      // Simulate 2 days later (missed a day) by advancing system time +48h
-      const now = Date.now();
-      const twoDaysLater = now + 2 * 86400000; // +48 hours
-      jest.useFakeTimers({ now: twoDaysLater });
+      // 2 days later (missed a day)
+      jest.setSystemTime(new Date('2026-01-03T12:00:00Z'));
       
       const result = service.checkIn(USER);
       expect(result.newStreak).toBe(1); // Reset to 1
       expect(result.message).toContain('Streak reset');
       
-      // Restore real timers
       jest.useRealTimers();
     });
   });
