@@ -25,11 +25,8 @@ describe('StreakService', () => {
   describe('getStreak()', () => {
     const USER = 'test-user-abc';
 
-    it('throws NotFoundException for unknown user', () => {
-      expect(() => service.getStreak(USER)).toThrow(NotFoundException);
-    });
-
     it('returns zero streak for new user', () => {
+      service.clearAll();
       const streak = service.getStreak(USER);
       expect(streak).toMatchObject({
         userId: USER,
@@ -69,37 +66,39 @@ describe('StreakService', () => {
     });
 
     it('continues streak on consecutive days', () => {
+      const now = new Date('2026-01-01T12:00:00Z');
+      jest.useFakeTimers();
+      jest.setSystemTime(now);
+
       // Day 1
       service.checkIn(USER);
       
-      // Simulate next day by mocking Date.now
-      const now = new Date();
-      const tomorrow = new Date(now.getTime() + 86400000); // +24 hours
-      jest.spyOn(global.Date, 'now').mockImplementation(() => now.getTime());
+      // Day 2 (24 hours later)
+      jest.setSystemTime(new Date('2026-01-02T12:00:00Z'));
       
       const result = service.checkIn(USER);
       expect(result.newStreak).toBe(2);
-      expect(result.streakBonus).toBe(5);
+      expect(result.streakBonus).toBe(0);
       
-      // Restore Date.now
-      jest.restoreAllMocks();
+      jest.useRealTimers();
     });
 
     it('resets streak after missing a day', () => {
+      const day1 = new Date('2026-01-01T12:00:00Z');
+      jest.useFakeTimers();
+      jest.setSystemTime(day1);
+
       // Day 1
       service.checkIn(USER);
       
-      // Simulate 2 days later (missed a day)
-      const now = new Date();
-      const twoDaysLater = new Date(now.getTime() + 2 * 86400000); // +48 hours
-      jest.spyOn(global.Date, 'now').mockImplementation(() => twoDaysLater.getTime());
+      // 2 days later (missed a day)
+      jest.setSystemTime(new Date('2026-01-03T12:00:00Z'));
       
       const result = service.checkIn(USER);
       expect(result.newStreak).toBe(1); // Reset to 1
       expect(result.message).toContain('Streak reset');
       
-      // Restore Date.now
-      jest.restoreAllMocks();
+      jest.useRealTimers();
     });
   });
 

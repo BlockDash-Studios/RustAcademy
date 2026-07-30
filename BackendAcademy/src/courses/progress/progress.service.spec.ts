@@ -16,8 +16,55 @@ import { ProgressService } from './progress.service';
  * snapshot progress against stable ids. Course ids come from
  * courseService.create() because CreateCourseDto doesn't accept an id.
  */
+function makeMockRepo() {
+  const store = new Map<string, any>();
+  return {
+    create: (partial: any) => ({ isActive: true, ...partial }),
+    save: async (entity: any) => {
+      if (!entity.id) entity.id = crypto.randomUUID();
+      if (!entity.createdAt) entity.createdAt = new Date();
+      entity.updatedAt = new Date();
+      store.set(entity.id, entity);
+      return entity;
+    },
+    findOne: async (options: any) => {
+      if (options?.where?.id) return store.get(options.where.id) ?? null;
+      for (const row of store.values()) {
+        if (Object.entries(options?.where ?? {}).every(([k, v]) => row[k] === v)) return row;
+      }
+      return null;
+    },
+    find: async (options: any) => {
+      let rows = Array.from(store.values());
+      if (options?.where) {
+        rows = rows.filter((r) =>
+          Object.entries(options.where).every(([k, v]) => r[k] === v),
+        );
+      }
+      return rows;
+    },
+    remove: async (entity: any) => {
+      store.delete(entity.id);
+      return entity;
+    },
+    count: async (options: any) => {
+      let rows = Array.from(store.values());
+      if (options?.where) {
+        rows = rows.filter((r) =>
+          Object.entries(options.where).every(([k, v]) => r[k] === v),
+        );
+      }
+      return rows.length;
+    },
+  };
+}
+
 async function buildServices() {
-  const courseService = new CourseService();
+  const courseService = new CourseService(
+    makeMockRepo() as any,
+    makeMockRepo() as any,
+    {} as any,
+  );
   const service = new ProgressService(courseService);
   const x = await courseService.create({
     title: 'Rust Basics',

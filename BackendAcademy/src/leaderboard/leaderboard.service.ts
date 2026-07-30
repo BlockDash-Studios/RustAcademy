@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GetLeaderboardDto } from './dto/get-leaderboard.dto';
 import { LeaderboardEntry, LeaderboardResponse } from './interfaces/leaderboard.interface';
@@ -25,6 +25,8 @@ export class LeaderboardService {
   private stale = true;
 
   constructor(
+    @Optional()
+    @Inject(forwardRef(() => SubmissionService))
     private readonly submissionService?: SubmissionService,
     configService?: ConfigService,
   ) {

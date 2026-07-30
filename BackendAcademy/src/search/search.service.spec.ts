@@ -7,8 +7,40 @@ describe('SearchService', () => {
   let courseService: CourseService;
   let searchService: SearchService;
 
+  function makeStoreRepo() {
+    const store = new Map<string, any>();
+    return {
+      create: (partial: any) => ({ isActive: true, ...partial }),
+      save: async (entity: any) => {
+        if (!entity.id) entity.id = crypto.randomUUID();
+        if (!entity.createdAt) entity.createdAt = new Date();
+        entity.updatedAt = new Date();
+        store.set(entity.id, entity);
+        return entity;
+      },
+      findOne: async (options: any) => {
+        if (options?.where?.id) return store.get(options.where.id) ?? null;
+        return null;
+      },
+      find: async (options: any) => {
+        let rows = Array.from(store.values());
+        if (options?.where) {
+          rows = rows.filter((r: any) =>
+            Object.entries(options.where).every(([k, v]) => r[k] === v),
+          );
+        }
+        return rows;
+      },
+      count: async () => store.size,
+    };
+  }
+
   beforeEach(() => {
-    courseService = new CourseService();
+    courseService = new CourseService(
+      makeStoreRepo() as any,
+      makeStoreRepo() as any,
+      {} as any,
+    );
     searchService = new SearchService(courseService);
   });
 
@@ -41,12 +73,11 @@ describe('SearchService', () => {
       tags: ['axum'],
     });
 
-    await expect(
-      searchService.searchCourses({
+    const result = await searchService.searchCourses({
         tags: ['ownership'],
         categories: ['backend'],
-      }),
-    ).resolves.toEqual(
+      });
+    expect(result.entries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: ownership.id }),
         expect.objectContaining({ title: 'Web APIs' }),
@@ -66,12 +97,11 @@ describe('SearchService', () => {
       tags: ['rust'],
     });
 
-    await expect(
-      searchService.searchCourses({
+    const result = await searchService.searchCourses({
         tags: ['rust', 'async'],
         categories: ['backend'],
         match: 'all',
-      }),
-    ).resolves.toEqual([expect.objectContaining({ id: matchingCourse.id })]);
+      });
+    expect(result.entries).toEqual([expect.objectContaining({ id: matchingCourse.id })]);
   });
 });

@@ -93,14 +93,6 @@ describe('TutorProfileService', () => {
           rating: 5,
         }),
       ).rejects.toThrow(NotFoundException);
-  // -------------------- Earnings (existing behavior preserved) -----------
-
-  it('getEarningsSummary() returns earned XLM and payout details for a tutor', async () => {
-    const profile = await service.create({
-      userId: 'user-1',
-      bio: 'Test tutor',
-      specialties: [TutorSpecialty.WEB3_SOROBAN],
-      hourlyRate: 50,
     });
   });
 
@@ -182,7 +174,7 @@ describe('TutorProfileService', () => {
 
       const before = await service.getReputation(profile.id);
 
-      await service.update(profile.id, { isVerified: true });
+      await service.verify(profile.id, { adminId: 'admin-1' });
 
       const after = await service.getReputation(profile.id);
 

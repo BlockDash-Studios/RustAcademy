@@ -89,12 +89,7 @@ export class StreakService {
    * @throws NotFoundException if the userId is unknown
    */
   getStreak(userId: string): StreakResponse {
-    const record = streakStore.get(userId);
-    if (!record) {
-      throw new NotFoundException(
-        `User '${userId}' not found in the streak system.`,
-      );
-    }
+    const record = getOrCreateRecord(userId);
 
     const now = new Date();
     const nextCheckin = new Date(now.getTime() + msToNextCheckin(now));

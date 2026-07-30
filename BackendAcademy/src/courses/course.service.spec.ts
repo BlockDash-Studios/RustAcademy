@@ -118,6 +118,7 @@ describe('CourseService', () => {
     service = new CourseService(
       courseRepo as unknown as import('typeorm').Repository<CourseEntity>,
       revisionRepo as unknown as import('typeorm').Repository<CourseRevisionEntity>,
+      {} as any,
     );
   });
 

@@ -2,6 +2,9 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Inject,
+  forwardRef,
+  Optional,
 } from '@nestjs/common';
 import { GradingResultRepository } from './grading-result.repository';
 import { SubmissionService } from './submission.service';
@@ -9,6 +12,7 @@ import { GradingResultEntity } from './entities/grading-result.entity';
 import { SaveGradingResultDto } from './dto/save-grading-result.dto';
 import { SubmissionStatus } from './interfaces/submission-status.enum';
 import { GradingResultStatus } from './interfaces/grading-result-status.enum';
+import { LeaderboardService } from '../leaderboard/leaderboard.service';
 
 /**
  * Handles the business logic for saving and retrieving grading results.
@@ -21,6 +25,9 @@ export class GradingResultService {
   constructor(
     private readonly gradingResultRepo: GradingResultRepository,
     private readonly submissionService: SubmissionService,
+    @Optional()
+    @Inject(forwardRef(() => LeaderboardService))
+    private readonly leaderboardService?: LeaderboardService,
   ) {}
 
   /**
@@ -76,6 +83,10 @@ export class GradingResultService {
       dto.feedback,
       dto.score,
     );
+
+    // Issue #361: Invalidate the leaderboard cache so the next read
+    // triggers a recalculation that includes the new grade.
+    this.leaderboardService?.markStale();
 
     return saved;
   }

@@ -10,7 +10,7 @@ import { TutorReviewService } from './tutor-review.service';
 @Module({
   imports: [AuthModule],
   controllers: [SubmissionController, TutorReviewController],
-  providers: [SubmissionService, GradingResultService, GradingResultRepository],
+  providers: [SubmissionService, GradingResultService, GradingResultRepository, TutorReviewService],
   exports: [SubmissionService, GradingResultService, TutorReviewService],
 })
 export class SubmissionModule {}
