@@ -1,7 +1,5 @@
 import { Controller, Get, Post, Param, Body } from '@nestjs/common';
 import { ContractsService } from './contracts.service';
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-import { ContractsService } from './contracts.service';
 import {
   DeployContractDto,
   InvokeContractDto,
@@ -82,7 +80,7 @@ export class ContractsController {
   releasePayout(@Param('id') id: string) {
     return this.contractsService.releasePayout(id);
   }
-}
+
   @Post('invoke')
   async invokeContract(@Body() dto: InvokeContractDto) {
     return this.contractsService.invokeContract(dto);

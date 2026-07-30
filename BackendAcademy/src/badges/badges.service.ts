@@ -197,4 +197,11 @@ export class BadgesService {
   hasBadge(userId: string, badgeId: string): boolean {
     return awardedBadgeSet.has(`${userId}::${badgeId}`);
   }
+
+  /**
+   * Clears all in-memory badge data (useful for testing isolation).
+   */
+  clearAll(): void {
+    userBadgesStore.clear();
+  }
 }

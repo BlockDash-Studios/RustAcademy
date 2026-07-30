@@ -25,6 +25,12 @@ export interface Session {
 
   /** Flag set to true once the session is revoked (logout / rotation). */
   revoked: boolean;
+
+  /** SHA-256 hash of the device fingerprint (if device binding is enabled). */
+  deviceHash?: string;
+
+  /** Whether the device has been previously trusted by this user. */
+  isTrustedDevice?: boolean;
 }
 
 /**

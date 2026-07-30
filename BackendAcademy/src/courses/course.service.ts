@@ -254,6 +254,27 @@ export class CourseService {
     return savedRevision;
   }
 
+  private popularCourseIds: string[] = [];
+
+  setPopularCourseIds(ids: string[]): void {
+    this.popularCourseIds = ids;
+  }
+
+  getPopularCourseIds(): string[] {
+    return this.popularCourseIds;
+  }
+
+  async getCacheWarmKeys(): Promise<string[]> {
+    const ids = this.popularCourseIds.length > 0
+      ? this.popularCourseIds
+      : (await this.findAll()).map((c) => c.id).slice(0, 20);
+    const keys: string[] = [];
+    for (const id of ids) {
+      keys.push(`course:${id}`);
+    }
+    return keys;
+  }
+
   async completeCourse(id: string, userId: string) {
     const course = await this.courseRepo.findOne({ where: { id } });
     if (!course) {
@@ -283,5 +304,22 @@ export class CourseService {
     if (dto.categories?.length && !dto.category) {
       course.category = dto.categories[0];
     }
+  }
+
+  /**
+   * Same as findById, but throws instead of returning null. Use this in
+   * any code path (e.g. rendering a course + its lessons) where silently
+   * continuing with an undefined course would surface as a downstream
+   * server error rather than a clean 404.
+   */
+  async getOrFail(id: string): Promise<CourseEntity> {
+    const course = await this.findById(id);
+    if (!course) {
+      throw new NotFoundException({
+        error: 'COURSE_NOT_FOUND',
+        message: `Course with ID ${id} not found`,
+      });
+    }
+    return course;
   }
 }

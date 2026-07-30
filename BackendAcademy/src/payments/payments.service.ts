@@ -1,27 +1,24 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { DatabaseService } from '../database/database.service';
 import { TransactionHistoryQueryDto } from './dto/transaction-history-query.dto';
 import {
   StellarTransaction,
   TransactionHistoryResponse,
 } from './interfaces/transaction.interface';
 
+export interface WebhookPayload {
+  id: string;
+  url: string;
+  body: string;
+  signature: string;
+  idempotencyKey: string;
+  maxRetries: number;
+}
+
 @Injectable()
 export class PaymentsService {
-  /**
-   * In-memory stub ledger. The list is illustrative only - real
-   * implementation must replace this with a Horizon server query:
-   *
-   *   const server = new StellarSdk.Horizon.Server(HORIZON_URL);
-   *   server
-   *     .payments()
-   *     .forAccount(account)
-   *     .order('desc')
-   *     .limit(limit)
-   *     .call()
-   *
-   * TODO: replace with Horizon-backed repository once @stellar/stellar-sdk is
-   * added to BackendAcademy dependencies.
-   */
+  private readonly logger = new Logger(PaymentsService.name);
   private readonly stubLedger: StellarTransaction[] = [
     {
       id: 'tx-stub-0001',
@@ -73,9 +70,85 @@ export class PaymentsService {
     },
   ];
 
-  /** Hard cap to defend the stub from absurd limit queries. */
   private static readonly MAX_LIMIT = 100;
   private static readonly DEFAULT_LIMIT = 20;
+
+  private readonly defaultTimeoutMs: number;
+  private readonly webhookMaxRetries: number;
+  private readonly webhookBaseBackoffMs: number;
+  private readonly webhookMaxBackoffMs: number;
+
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly configService?: ConfigService,
+  ) {
+    this.defaultTimeoutMs = this.configService?.get<number>('DEFAULT_REQUEST_TIMEOUT_MS') ?? 30_000;
+    this.webhookMaxRetries = this.configService?.get<number>('WEBHOOK_MAX_RETRIES') ?? 5;
+    this.webhookBaseBackoffMs = this.configService?.get<number>('WEBHOOK_BASE_BACKOFF_MS') ?? 1_000;
+    this.webhookMaxBackoffMs = this.configService?.get<number>('WEBHOOK_MAX_BACKOFF_MS') ?? 60_000;
+  }
+
+  /**
+   * Executes a fetch with a global timeout policy.
+   */
+  async fetchWithTimeout(url: string, init?: RequestInit, timeoutMs?: number): Promise<Response> {
+    const timeout = timeoutMs ?? this.defaultTimeoutMs;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Delivers a webhook with exponential backoff, jitter, and retry — Issue #412.
+   */
+  async deliverWebhookWithRetry(
+    webhook: WebhookPayload,
+    deliverFn: (url: string, body: string, headers: Record<string, string>) => Promise<number>,
+  ): Promise<{ success: boolean; attempts: number; lastError?: string }> {
+    let lastError: string | undefined;
+    for (let attempt = 1; attempt <= webhook.maxRetries; attempt++) {
+      try {
+        const statusCode = await deliverFn(webhook.url, webhook.body, {
+          'X-Webhook-Signature': webhook.signature,
+          'X-Idempotency-Key': webhook.idempotencyKey,
+          'X-Webhook-Attempt': String(attempt),
+        });
+        if (statusCode >= 200 && statusCode < 300) {
+          this.logger.log(`Webhook ${webhook.id} delivered on attempt ${attempt}`);
+          return { success: true, attempts: attempt };
+        }
+        lastError = `HTTP ${statusCode}`;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+
+      if (attempt < webhook.maxRetries) {
+        const delay = this.calculateRetryDelay(attempt);
+        this.logger.warn(
+          `Webhook ${webhook.id} attempt ${attempt} failed (${lastError}), retrying in ${delay}ms`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+    this.logger.error(`Webhook ${webhook.id} failed after ${webhook.maxRetries} attempts: ${lastError}`);
+    return { success: false, attempts: webhook.maxRetries, lastError };
+  }
+
+  /**
+   * Calculates retry delay with exponential backoff and jitter — Issue #412.
+   */
+  calculateRetryDelay(attemptNumber: number): number {
+    const exponential = Math.min(
+      this.webhookBaseBackoffMs * Math.pow(2, attemptNumber - 1),
+      this.webhookMaxBackoffMs,
+    );
+    const jitter = exponential * (0.5 + Math.random() * 0.5);
+    return Math.floor(jitter);
+  }
 
   getTransactionHistory(query: TransactionHistoryQueryDto): TransactionHistoryResponse {
     const { account, limit, cursor } = query;
@@ -85,17 +158,11 @@ export class PaymentsService {
       filtered = filtered.filter((tx) => tx.account === account);
     }
 
-    // Defensive clamp on limit. Real impl will rely on Horizon's own limits.
     const effectiveLimit = Math.min(
       Math.max(1, Number(limit) || PaymentsService.DEFAULT_LIMIT),
       PaymentsService.MAX_LIMIT,
     );
 
-    // Cursor stub: parses as integer so the wire field is round-trippable
-    // through this MVP. Real impl should swap to Horizon's opaque cursor.
-    // A real Horizon cursor like "1234567890_abc..." will silently fall to
-    // 0 here - acceptable as a stub-only quirk; the DTO already documents
-    // that the field is opaque in production.
     const startIdx = cursor ? parseInt(cursor, 10) || 0 : 0;
     const page = filtered.slice(startIdx, startIdx + effectiveLimit);
     const remaining = filtered.length - (startIdx + page.length);
@@ -108,5 +175,21 @@ export class PaymentsService {
       response.nextCursor = String(startIdx + page.length);
     }
     return response;
+  }
+
+  async validateCoupon(code: string, userId: string, amount: number) {
+    return this.databaseService.validateCoupon(code, userId, amount);
+  }
+
+  async applyCoupon(code: string, userId: string, amount: number, orderId: string) {
+    return this.databaseService.applyCoupon(code, userId, amount, orderId);
+  }
+
+  async getRedemptionHistory(userId: string) {
+    return this.databaseService.getRedemptionsByUser(userId);
+  }
+
+  async getAllCoupons() {
+    return this.databaseService.getAllCoupons();
   }
 }

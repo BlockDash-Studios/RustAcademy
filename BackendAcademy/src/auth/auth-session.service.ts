@@ -1,10 +1,11 @@
 import {
   Injectable,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { UserRole } from './enums/user-role.enum';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import {
@@ -29,8 +30,13 @@ import {
  */
 @Injectable()
 export class AuthSessionService {
+  private readonly logger = new Logger(AuthSessionService.name);
+
   /** In-memory session store: sessionId → Session */
   private readonly sessions = new Map<string, Session>();
+
+  /** Device fingerprints per user: userId → Set of device hashes */
+  private readonly trustedDevices = new Map<string, Set<string>>();
 
   /** How long the access token is valid (seconds). */
   private readonly accessTokenTtl: number;
@@ -58,11 +64,12 @@ export class AuthSessionService {
 
   /**
    * Creates a new session for the given user.
-   * Called by the login endpoint after credentials have been verified.
+   * Optionally records a device fingerprint for trusted-device recognition.
    */
   async createSession(
     userId: string,
     role: UserRole,
+    deviceFingerprint?: string,
   ): Promise<AuthTokensResponse> {
     const sessionId = randomUUID();
     const now = new Date();
@@ -74,6 +81,10 @@ export class AuthSessionService {
       sessionId,
     );
 
+    const deviceHash = deviceFingerprint
+      ? this.hashDevice(deviceFingerprint)
+      : undefined;
+
     const session: Session = {
       sessionId,
       userId,
@@ -82,9 +93,17 @@ export class AuthSessionService {
       createdAt: now,
       expiresAt,
       revoked: false,
+      deviceHash,
+      isTrustedDevice: deviceHash
+        ? this.isTrustedDevice(userId, deviceHash)
+        : undefined,
     };
 
     this.sessions.set(sessionId, session);
+
+    if (deviceHash && !this.isTrustedDevice(userId, deviceHash)) {
+      this.logger.warn(`New device login for user ${userId}`);
+    }
 
     return this.buildTokensResponse(accessToken, refreshToken);
   }
@@ -146,25 +165,31 @@ export class AuthSessionService {
 
   /**
    * Revokes a single session (logout from current device).
+   * Also clears any cached refresh-token data associated with the session.
    */
   revokeSession(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.revoked = true;
       this.sessions.set(sessionId, session);
+      this.logger.log(`Session ${sessionId} revoked for user ${session.userId}`);
     }
   }
 
   /**
    * Revokes all active sessions for a user (logout from all devices).
+   * Clears all associated refresh tokens and cached session data.
    */
   revokeAllUserSessions(userId: string): void {
+    let count = 0;
     for (const [, session] of this.sessions) {
       if (session.userId === userId) {
         session.revoked = true;
         this.sessions.set(session.sessionId, session);
+        count++;
       }
     }
+    this.logger.log(`All ${count} sessions revoked for user ${userId}`);
   }
 
   /**
@@ -177,6 +202,39 @@ export class AuthSessionService {
         (s) => s.userId === userId && !s.revoked && s.expiresAt > now,
       )
       .map(({ refreshToken: _rt, ...rest }) => rest);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Device binding & trusted device recognition
+  // ---------------------------------------------------------------------------
+
+  hashDevice(fingerprint: string): string {
+    return createHash('sha256').update(fingerprint).digest('hex');
+  }
+
+  isTrustedDevice(userId: string, deviceHash: string): boolean {
+    const devices = this.trustedDevices.get(userId);
+    return devices ? devices.has(deviceHash) : false;
+  }
+
+  addTrustedDevice(userId: string, deviceHash: string): void {
+    if (!this.trustedDevices.has(userId)) {
+      this.trustedDevices.set(userId, new Set());
+    }
+    this.trustedDevices.get(userId)!.add(deviceHash);
+  }
+
+  removeTrustedDevice(userId: string, deviceHash: string): void {
+    this.trustedDevices.get(userId)?.delete(deviceHash);
+  }
+
+  getTrustedDevices(userId: string): string[] {
+    return Array.from(this.trustedDevices.get(userId) ?? []);
+  }
+
+  checkDeviceTrust(userId: string, deviceFingerprint: string): { trusted: boolean; deviceHash: string } {
+    const deviceHash = this.hashDevice(deviceFingerprint);
+    return { trusted: this.isTrustedDevice(userId, deviceHash), deviceHash };
   }
 
   // ---------------------------------------------------------------------------

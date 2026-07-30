@@ -27,6 +27,8 @@ export interface Asset {
   name?: string;
   /** Optional description supplied by the uploader. */
   description?: string;
+  /** SHA-256 content hash of the uploaded file bytes. */
+  contentHash: string;
 }
 
 /**

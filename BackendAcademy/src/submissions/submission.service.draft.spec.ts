@@ -1,5 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ChallengesService } from '../challenges/challenges.service';
+import { MonitoringService } from '../monitoring/monitoring.service';
 import { SubmissionService } from './submission.service';
 import { SubmissionStatus } from './interfaces/submission-status.enum';
 import { SaveDraftDto } from './dto/save-draft.dto';
@@ -12,9 +14,31 @@ describe('SubmissionService — draft methods', () => {
   const TASK_1 = 'task-001';
   const TASK_2 = 'task-002';
 
+  /** Stub that simulates allowed attempts so existing draft tests
+   *  continue to pass without actually hitting the real implementation. */
+  const challengesServiceStub = {
+    checkAttemptLimit: jest.fn().mockReturnValue({
+      challengeId: 'challenge-id',
+      userId: 'user-aaa',
+      current: 0,
+      max: 3,
+      remaining: 3,
+      allowed: true,
+    }),
+    recordAttempt: jest.fn().mockReturnValue(1),
+  };
+
+  const monitoringServiceStub = {
+    recordDomainEvent: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SubmissionService],
+      providers: [
+        SubmissionService,
+        { provide: ChallengesService, useValue: challengesServiceStub },
+        { provide: MonitoringService, useValue: monitoringServiceStub },
+      ],
     }).compile();
 
     service = module.get<SubmissionService>(SubmissionService);

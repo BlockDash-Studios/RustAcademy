@@ -20,7 +20,7 @@ import {
   ICourseSnapshot,
   IProgressSnapshot,
 } from './interfaces/progress-snapshot.interface';
-import { ProgressService } from './progress.service';
+import { CourseProgressRecord, ProgressService } from './progress.service';
 
 @Controller('courses/progress')
 export class ProgressController {
@@ -66,7 +66,7 @@ export class ProgressController {
   async registerCourse(
     @Param('userId', ParseUUIDPipe) userId: string,
     @Body() dto: RegisterCourseProgressDto,
-  ) {
+  ): Promise<CourseProgressRecord> {
     return this.progressService.registerCourse(userId, dto);
   }
 
@@ -79,7 +79,7 @@ export class ProgressController {
     @Param('userId', ParseUUIDPipe) userId: string,
     @Param('courseId', ParseUUIDPipe) courseId: string,
     @Body() dto: RecordLessonCompletionDto,
-  ) {
+  ): Promise<CourseProgressRecord> {
     return this.progressService.recordLessonCompletion(userId, courseId, dto);
   }
 

@@ -1,7 +1,12 @@
 use soroban_sdk::{testutils::Ledger, Vec};
+
+// Persistent-entry TTL is counted in ledger sequence numbers, not
+// timestamps — `set_timestamp` has no effect on it (see
+// `storage::ttl_test_utils` for the deterministic helpers used below).
 #[test]
-fn test_ttl_auto_extend_on_activity() {
-    // No need to import Ledger trait; only use set_timestamp
+fn test_ttl_extends_only_when_within_threshold() {
+    use crate::storage::ttl_test_utils::{advance_ledger_sequence, ttl_of};
+
     let env = Env::default();
     let contract_id = env.register(crate:: RustAcademyContract, ());
     env.as_contract(&contract_id, || {
@@ -9,34 +14,64 @@ fn test_ttl_auto_extend_on_activity() {
         let token = Address::generate(&env);
         let owner = Address::generate(&env);
         let amount = 1000i128;
-        let created_at = env.ledger().timestamp();
         let entry = EscrowEntry {
             token: token.clone(),
             amount_due: amount,
             amount_paid: amount,
             owner: owner.clone(),
             status: EscrowStatus::Pending,
-            created_at,
+            created_at: env.ledger().timestamp(),
             expires_at: 0,
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
             schema_version: crate::types::ESCROW_SCHEMA_VERSION,
         };
+        let key = DataKey::Escrow(commitment.clone());
         put_escrow(&env, &commitment, &entry);
 
-        // Simulate ledger aging and access (activity)
-        for i in 1..5 {
-            env.ledger().set_timestamp(created_at + (i * 100_000));
-            // Accessing the record should auto-extend TTL
-            assert!(get_escrow(&env, &commitment).is_some());
-        }
+        let policy = get_ttl_policy(RecordType::Escrow);
+        let initial_ttl = ttl_of(&env, &key);
+
+        // Advance to exactly the extension threshold with no activity in
+        // between: TTL must decay by precisely the ledgers advanced, proving
+        // there is no free/implicit extension from the mere passage of time.
+        let advance = initial_ttl - policy.threshold;
+        advance_ledger_sequence(&env, advance);
+        let ttl_before_activity = ttl_of(&env, &key);
+        assert_eq!(
+            ttl_before_activity,
+            policy.threshold,
+            "TTL must decay linearly with no activity"
+        );
+
+        // Accessing the record now (inside the threshold) is "activity" and
+        // must renew the TTL back to the full policy amount.
+        assert!(get_escrow(&env, &commitment).is_some());
+        let ttl_after_activity = ttl_of(&env, &key);
+        assert_eq!(
+            ttl_after_activity, initial_ttl,
+            "get_escrow should renew the TTL back to the full policy amount when within threshold"
+        );
     });
 }
 
+// This replaces a test that advanced `set_timestamp` (which cannot affect
+// TTL) and then asserted the record `is_some()` — passing regardless of
+// whether TTL logic worked at all, since presence proves nothing about TTL.
+//
+// What IS true and deterministic: (1) with no activity, TTL decays linearly
+// and is never renewed for free, and (2) once ledger sequence genuinely
+// passes an entry's `live_until_ledger`, this local sandbox (recording
+// footprint mode) auto-restores the entry to a minimum floor on the next
+// read rather than evicting it or erroring — unlike a live network, where
+// the entry would need an explicit `RestoreFootprint` operation. Presence
+// after that point is expected either way; the floor TTL value is the only
+// observable proof the entry actually lapsed.
 #[test]
-fn test_ttl_expiry_of_inactive_record() {
-    use soroban_sdk::testutils::Ledger;
+fn test_ttl_lapses_without_activity_and_sandbox_autorestores_on_read() {
+    use crate::storage::ttl_test_utils::{advance_ledger_sequence, ttl_of};
+
     let env = Env::default();
     let contract_id = env.register(crate:: RustAcademyContract, ());
     env.as_contract(&contract_id, || {
@@ -44,27 +79,59 @@ fn test_ttl_expiry_of_inactive_record() {
         let token = Address::generate(&env);
         let owner = Address::generate(&env);
         let amount = 1000i128;
-        let created_at = env.ledger().timestamp();
         let entry = EscrowEntry {
             token: token.clone(),
             amount_due: amount,
             amount_paid: amount,
             owner: owner.clone(),
             status: EscrowStatus::Pending,
-            created_at,
+            created_at: env.ledger().timestamp(),
             expires_at: 0,
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
             schema_version: crate::types::ESCROW_SCHEMA_VERSION,
         };
+        let key = DataKey::Escrow(commitment.clone());
         put_escrow(&env, &commitment, &entry);
 
-        // Simulate ledger aging without activity (no access)
-        env.ledger().set_timestamp(created_at + 10_000_000);
-        // Record should still exist (Soroban test env does not auto-expire, but this is where expiry would be checked in real runtime)
+        let policy = get_ttl_policy(RecordType::Escrow);
+        let initial_ttl = ttl_of(&env, &key);
+
+        // Pin the sandbox's auto-restore floor so the assertion below is
+        // deterministic and independent of the SDK's own default.
+        let min_persistent_ttl: u32 = 4096;
+        env.ledger().set_min_persistent_entry_ttl(min_persistent_ttl);
+
+        // Advance well past the entry's live_until_ledger with no activity.
+        advance_ledger_sequence(&env, initial_ttl + 1000);
+
+        // Reading the raw TTL (not through get_escrow, which would
+        // immediately re-extend it) surfaces the sandbox's auto-restore
+        // floor — deterministic proof the entry actually lapsed.
+        let ttl_after_lapse = ttl_of(&env, &key);
+        assert_eq!(
+            ttl_after_lapse,
+            min_persistent_ttl - 1,
+            "a lapsed persistent entry should be auto-restored to the sandbox's min TTL floor on read"
+        );
+        assert!(
+            ttl_after_lapse < policy.threshold,
+            "auto-restored TTL should be far below the record's normal renewal threshold"
+        );
+
+        // The record is still readable — expected, not a sign TTL "worked".
         assert!(get_escrow(&env, &commitment).is_some());
-        // In a real chain, a cleanup or expiry sweep would remove it if TTL expired
+
+        // Because get_escrow always renews on read, and the auto-restored
+        // TTL is now within the threshold, contract-level activity heals the
+        // record straight back to a full policy TTL, erasing any trace that
+        // it ever lapsed.
+        let ttl_after_access = ttl_of(&env, &key);
+        assert_eq!(
+            ttl_after_access, initial_ttl,
+            "get_escrow renews a just-restored entry back to the full policy TTL"
+        );
     });
 }
 
@@ -410,37 +477,69 @@ fn test_privacy_history_is_bounded() {
 
 #[test]
 fn test_privacy_level_ttl_extended_on_write_and_read() {
+    use crate::storage::ttl_test_utils::{advance_ledger_sequence, ttl_of};
+
     let env = Env::default();
     let contract_id = env.register(crate:: RustAcademyContract, ());
     env.as_contract(&contract_id, || {
         let account = Address::generate(&env);
+        let key = DataKey::PrivacyLevel(account.clone());
+        let policy = get_ttl_policy(RecordType::Privacy);
 
         // Write sets TTL.
         set_privacy_level(&env, &account, 2);
         assert_eq!(get_privacy_level(&env, &account), Some(2));
+        let ttl_after_write = ttl_of(&env, &key);
+        assert_eq!(ttl_after_write, policy.ttl, "write should set the full policy TTL");
 
-        // Update extends TTL and value is accurate.
+        // Let it decay to the renewal threshold with no further activity.
+        advance_ledger_sequence(&env, ttl_after_write - policy.threshold);
+        assert_eq!(ttl_of(&env, &key), policy.threshold);
+
+        // Update extends TTL back to the full amount and value is accurate.
         set_privacy_level(&env, &account, 5);
         assert_eq!(get_privacy_level(&env, &account), Some(5));
+        assert_eq!(
+            ttl_of(&env, &key),
+            policy.ttl,
+            "update should renew the TTL back to the full policy amount"
+        );
     });
 }
 
 #[test]
 fn test_privacy_history_ttl_extended_on_write_and_read() {
+    use crate::storage::ttl_test_utils::{advance_ledger_sequence, ttl_of};
+
     let env = Env::default();
     let contract_id = env.register(crate:: RustAcademyContract, ());
     env.as_contract(&contract_id, || {
         let account = Address::generate(&env);
+        let key = DataKey::PrivacyHistory(account.clone());
+        let policy = get_ttl_policy(RecordType::Privacy);
 
         add_privacy_history(&env, &account, 1);
         add_privacy_history(&env, &account, 2);
         add_privacy_history(&env, &account, 3);
 
         let history = get_privacy_history(&env, &account);
-        // Newest-first ordering is maintained and TTL was extended.
+        // Newest-first ordering is maintained.
         assert_eq!(history.len(), 3);
         assert_eq!(history.get(0).unwrap(), 3u32);
         assert_eq!(history.get(2).unwrap(), 1u32);
+
+        let ttl_after_writes = ttl_of(&env, &key);
+        assert_eq!(ttl_after_writes, policy.ttl, "writes should set the full policy TTL");
+
+        // Let it decay, then confirm a read renews it.
+        advance_ledger_sequence(&env, ttl_after_writes - policy.threshold);
+        assert_eq!(ttl_of(&env, &key), policy.threshold);
+        get_privacy_history(&env, &account);
+        assert_eq!(
+            ttl_of(&env, &key),
+            policy.ttl,
+            "read should renew the TTL back to the full policy amount when within threshold"
+        );
     });
 }
 

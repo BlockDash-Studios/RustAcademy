@@ -8,12 +8,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { promises as fs, createReadStream, type ReadStream } from 'node:fs';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import type {
   Asset,
   AssetListResponse,
   AssetSortOrder,
 } from './interfaces/asset.interface';
+import { SecurityService } from '../security/security.service';
 
 /**
  * Default cap (in bytes) on the size of a single uploaded asset when the
@@ -56,8 +57,13 @@ export class AssetsService implements OnModuleDestroy {
   private readonly baseUrl: string;
   private readonly maxSizeBytes: number;
   private readonly registry = new Map<string, Asset>();
+  /** Maps content hash → asset id for deduplication. */
+  private readonly contentHashIndex = new Map<string, string>();
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly securityService: SecurityService,
+  ) {
     this.uploadDir = path.resolve(
       this.configService.get<string>('ASSETS_UPLOAD_DIR') ?? DEFAULT_UPLOAD_DIR,
     );
@@ -154,8 +160,18 @@ export class AssetsService implements OnModuleDestroy {
     this.assertMimeAllowed(params.mimeType);
     this.assertSizeAllowed(params.size);
 
+    const contentHash = this.securityService.computeContentHash(params.buffer);
+
+    const existingId = this.contentHashIndex.get(contentHash);
+    if (existingId) {
+      this.logger.log(
+        `Duplicate upload detected (hash=${contentHash.slice(0, 12)}…), returning existing asset ${existingId}`,
+      );
+      return this.findById(existingId);
+    }
+
     const id = randomUUID();
-    const safeName = this.sanitizeFilename(params.originalName, id);
+    const safeName = this.hashFilename(contentHash, params.originalName);
     const finalPath = this.resolveOnDiskPath(safeName);
 
     try {
@@ -176,9 +192,11 @@ export class AssetsService implements OnModuleDestroy {
       url: this.buildDownloadUrl(id),
       name: params.name,
       description: params.description,
+      contentHash,
     };
 
     this.registry.set(id, asset);
+    this.contentHashIndex.set(contentHash, id);
     return asset;
   }
 
@@ -190,6 +208,9 @@ export class AssetsService implements OnModuleDestroy {
   async remove(id: string): Promise<void> {
     const asset = this.findById(id);
     this.registry.delete(id);
+    if (asset.contentHash) {
+      this.contentHashIndex.delete(asset.contentHash);
+    }
 
     const fullPath = this.resolveOnDiskPath(asset.filename);
     try {
@@ -265,6 +286,24 @@ export class AssetsService implements OnModuleDestroy {
     return `${base}/${id}/download`;
   }
 
+  /**
+   * Generates a signed download URL for an asset with the given scope and TTL.
+   */
+  generateSignedDownloadUrl(
+    assetId: string,
+    scope: 'read' | 'write' | 'admin',
+    userId?: string,
+    ttlSeconds?: number,
+  ): string {
+    this.findById(assetId);
+    return this.securityService.generateSignedUrl({
+      assetId,
+      scope,
+      userId,
+      ttlSeconds,
+    });
+  }
+
   private resolveMaxSizeBytes(): number {
     const configured = this.configService.get<string>('ASSETS_MAX_SIZE_MB');
     const mb = configured ? Number(configured) : 10;
@@ -303,6 +342,19 @@ export class AssetsService implements OnModuleDestroy {
       .replace(/[^a-zA-Z0-9._-]+/g, '-')
       .slice(0, MAX_FILENAME_LENGTH - id.length - ext.length - 1);
     const base = `${stem || 'asset'}-${id}${ext}`;
+    return base.length > MAX_FILENAME_LENGTH
+      ? base.slice(0, MAX_FILENAME_LENGTH)
+      : base;
+  }
+
+  /**
+   * Generates a deterministic filename using the content hash prefix,
+   * eliminating predictable or user-controlled naming in stored files.
+   */
+  private hashFilename(contentHash: string, originalName: string): string {
+    const ext = path.extname(originalName).toLowerCase().slice(0, 16) || '';
+    const hashPrefix = contentHash.slice(0, 16);
+    const base = `asset-${hashPrefix}${ext}`;
     return base.length > MAX_FILENAME_LENGTH
       ? base.slice(0, MAX_FILENAME_LENGTH)
       : base;

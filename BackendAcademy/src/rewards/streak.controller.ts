@@ -66,7 +66,7 @@ export class StreakController {
     try {
       return this.streakService.checkIn(userId);
     } catch (error) {
-      if (error.message.includes('already checked in')) {
+      if (error instanceof Error && error.message.includes('already checked in')) {
         throw new BadRequestException(error.message);
       }
       throw error;

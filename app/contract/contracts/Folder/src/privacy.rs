@@ -124,6 +124,7 @@ mod tests {
         let env = Env::default();
         let contract_id = env.register(crate::RustAcademyContract, ());
         let account = Address::generate(&env);
+        env.mock_all_auths();
         env.as_contract(&contract_id, || {
             set_privacy_level(&env, &account, 5);
             assert_eq!(get_privacy_level(&env, &account), Some(5));
@@ -177,6 +178,7 @@ mod tests {
         let env = Env::default();
         let contract_id = env.register(crate::RustAcademyContract, ());
         let account = Address::generate(&env);
+        env.mock_all_auths();
         env.as_contract(&contract_id, || {
             crate::legacy_privacy::tests::set_raw_privacy(&env, &account, true);
             let level = migrate_boolean_to_level(&env, &account);
@@ -191,6 +193,7 @@ mod tests {
         let env = Env::default();
         let contract_id = env.register(crate::RustAcademyContract, ());
         let account = Address::generate(&env);
+        env.mock_all_auths();
         env.as_contract(&contract_id, || {
             crate::legacy_privacy::tests::set_raw_privacy(&env, &account, false);
             let level = migrate_boolean_to_level(&env, &account);
@@ -204,6 +207,7 @@ mod tests {
         let env = Env::default();
         let contract_id = env.register(crate::RustAcademyContract, ());
         let account = Address::generate(&env);
+        env.mock_all_auths();
         env.as_contract(&contract_id, || {
             let level = migrate_boolean_to_level(&env, &account);
             assert_eq!(level, 0);

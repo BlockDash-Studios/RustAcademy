@@ -1,7 +1,7 @@
 export interface Notification {
   id: string;
   userId: string;
-  type: 'push' | 'in-app';
+  type: string;
   title: string;
   message: string;
   isRead: boolean;

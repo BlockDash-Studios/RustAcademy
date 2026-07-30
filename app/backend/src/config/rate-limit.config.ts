@@ -1,3 +1,14 @@
+/**
+ * Rate limits are applied per request based on a resolved group.
+ * Group resolution order (see CustomThrottlerGuard):
+ *   1. An explicit @RateLimitGroupTag(...) decorator on the route, if present.
+ *   2. Requests to a /webhooks path → "webhooks" group.
+ *   3. Requests with a resolvable user ID or API key → "authenticated" group.
+ *   4. Everything else → "public" group.
+ *
+ * Note: the API_KEYS env var (bcrypt-hashed keys for API key auth) does NOT
+ * affect these limits — it's a separate, unrelated auth mechanism.
+ */
 export type RateLimitGroup = "public" | "authenticated" | "webhooks";
 export type RateLimitWindow = "burst" | "sustained";
 export type RateLimitKeyType = "user_id" | "api_key" | "ip";
@@ -21,6 +32,12 @@ export type RateLimitConfig = {
   keyOrder: RateLimitKeyType[];
 };
 
+/**
+ * Once a request's rate-limit group is resolved, this determines which
+ * identity is used to track its usage against the group's limits — the
+ * first available identity type in this order wins. Configurable via
+ * RATE_LIMIT_KEY_ORDER (comma-separated, e.g. "api_key,user_id,ip").
+ */
 const DEFAULT_KEY_ORDER: RateLimitKeyType[] = ["user_id", "api_key", "ip"];
 
 function parseKeyOrder(raw?: string): RateLimitKeyType[] {

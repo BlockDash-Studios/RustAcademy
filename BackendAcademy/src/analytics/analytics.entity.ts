@@ -10,7 +10,7 @@ export class AnalyticsEvent {
 
   constructor(data: Partial<AnalyticsEvent>) {
     this.id = data.id || crypto.randomUUID();
-    this.eventType = data.eventType;
+    this.eventType = data.eventType || '';
     this.userId = data.userId;
     this.sessionId = data.sessionId;
     this.properties = data.properties;

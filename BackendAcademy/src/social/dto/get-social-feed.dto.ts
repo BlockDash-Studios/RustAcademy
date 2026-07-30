@@ -3,11 +3,9 @@ import { Type } from 'class-transformer';
 
 export class GetSocialFeedDto {
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @IsPositive()
-  @Min(1)
-  page?: number = 1;
+  @IsString()
+  @MaxLength(100)
+  cursor?: string;
 
   @IsOptional()
   @Type(() => Number)

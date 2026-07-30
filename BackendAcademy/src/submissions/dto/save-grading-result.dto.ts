@@ -1,6 +1,7 @@
-import { IsString, IsNumber, IsOptional, IsArray, IsEnum, Min, Max } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsArray, IsEnum, Min, Max, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { GradingResultStatus } from '../interfaces/grading-result-status.enum';
-import { RubricEntry } from '../interfaces/grading-result.interface';
+import { RubricEntryDto } from './rubric-entry.dto';
 
 export class SaveGradingResultDto {
   @IsString()
@@ -26,5 +27,7 @@ export class SaveGradingResultDto {
 
   @IsOptional()
   @IsArray()
-  rubric?: RubricEntry[];
+  @ValidateNested({ each: true })
+  @Type(() => RubricEntryDto)
+  rubric?: RubricEntryDto[];
 }

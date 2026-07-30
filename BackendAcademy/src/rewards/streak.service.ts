@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import type {
   StreakResponse,
   CheckinResponse,
@@ -85,8 +85,7 @@ function totalCheckinXp(streak: number): number {
 export class StreakService {
   /**
    * Returns the current streak status for a given user.
-   *
-   * @throws NotFoundException if the userId is unknown
+   * If the user has never checked in, returns a zero-streak response.
    */
   getStreak(userId: string): StreakResponse {
     const record = getOrCreateRecord(userId);

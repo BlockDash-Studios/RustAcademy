@@ -99,6 +99,8 @@ describe('RewardsService', () => {
     }).compile();
 
     service = module.get<RewardsService>(RewardsService);
+    // Ensure clean state for every test (#451)
+    service.clearAll();
   });
 
   // ---- getAllThresholds ----

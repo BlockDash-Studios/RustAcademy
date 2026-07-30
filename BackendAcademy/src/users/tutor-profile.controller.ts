@@ -92,45 +92,5 @@ export class TutorProfileController {
   @Get(':id/reputation')
   async getReputation(@Param('id', ParseUUIDPipe) id: string) {
     return this.tutorService.getReputation(id);
-  // ---- Verification lifecycle endpoints --------------------------------
-
-  /**
-   * Tutor requests verification (moves status -> PENDING).
-   * Idempotent if already VERIFIED.
-   */
-  @Post(':id/request-verification')
-  async requestVerification(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: RequestVerificationDto,
-  ): Promise<TutorProfileEntity> {
-    return this.tutorService.requestVerification(id, dto);
-  }
-
-  /**
-   * Admin verifies a tutor. Records audit metadata (verifiedAt, verifiedBy,
-   * optional verificationNote). Idempotent if already VERIFIED.
-   */
-  @Post(':id/verify')
-  async verify(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: VerifyTutorDto,
-  ): Promise<TutorProfileEntity> {
-    return this.tutorService.verify(id, dto);
-  }
-
-  /**
-   * Admin removes a tutor's verification. Wipes all audit metadata so
-   * downstream consumers never read stale "last verified at" timestamps.
-   */
-  @Post(':id/unverify')
-  async unverify(
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<TutorProfileEntity> {
-    return this.tutorService.unverify(id);
-  }
-
-  @Delete(':id')
-  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<boolean> {
-    return this.tutorService.remove(id);
   }
 }
