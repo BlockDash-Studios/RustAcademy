@@ -13,6 +13,35 @@ import {
 } from "@/lib/notifications";
 import { NetworkBadge } from "@/components/NetworkBadge";
 
+/** Inline stale-data banner shown when notifications may be outdated. */
+function StaleDataBanner() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="mb-6 flex items-center gap-3 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-200"
+    >
+      <svg
+        viewBox="0 0 20 20"
+        fill="currentColor"
+        className="h-5 w-5 flex-shrink-0 text-amber-300"
+        aria-hidden="true"
+      >
+        <path
+          fillRule="evenodd"
+          d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z"
+          clipRule="evenodd"
+        />
+      </svg>
+      <span>
+        <strong className="font-semibold">Notifications may be outdated.</strong>{" "}
+        This data was loaded from your local cache. Reconnect to get the latest
+        updates.
+      </span>
+    </div>
+  );
+}
+
 const CATEGORY_OPTIONS = [
   { value: "all", label: "All" },
   { value: "payments", label: CATEGORY_LABELS.payments },
@@ -46,7 +75,7 @@ function NotificationsPageContent() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { notifications, unreadCount, markAsRead, markAllAsRead } =
+  const { notifications, unreadCount, markAsRead, markAllAsRead, cacheState } =
     useNotificationCenter();
 
   const activeCategory = normalizeCategory(searchParams.get("category"));
@@ -168,6 +197,7 @@ function NotificationsPageContent() {
         </header>
 
         <section className="mt-8 rounded-[2rem] border border-white/10 bg-white/[0.03] p-8 backdrop-blur">
+          {cacheState === "stale" && <StaleDataBanner />}
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="space-y-3">
               <div>

@@ -7,15 +7,18 @@ import {
   useEffect,
   ReactNode,
 } from "react";
-
-export type WatchlistItem = {
-  id: string;
-  username: string;
-  addedAt: Date;
-};
+import {
+  type CacheState,
+  type WatchlistItem,
+  getCacheState,
+  loadWatchlistFromStorage,
+  saveWatchlistToStorage,
+} from "@/lib/watchlist";
 
 type WatchlistContextType = {
   watchlist: WatchlistItem[];
+  /** Indicates how fresh the locally cached watchlist data is. */
+  cacheState: CacheState;
   addToWatchlist: (id: string, username: string) => void;
   removeFromWatchlist: (id: string) => void;
   isInWatchlist: (id: string) => boolean;
@@ -26,44 +29,32 @@ const WatchlistContext = createContext<WatchlistContextType | undefined>(
   undefined,
 );
 
-const WATCHLIST_STORAGE_KEY = " RustAcademy-marketplace-watchlist";
-
 export function WatchlistProvider({ children }: { children: ReactNode }) {
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [cacheState, setCacheState] = useState<CacheState>("unavailable");
 
   // Load watchlist from localStorage on mount
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(WATCHLIST_STORAGE_KEY);
-      if (stored) {
-        const parsed: { id: string; username: string; addedAt: string }[] =
-          JSON.parse(stored);
-        // Convert date strings back to Date objects
-        const watchlistWithDates = parsed.map((item) => ({
-          ...item,
-          addedAt: new Date(item.addedAt),
-        }));
-        setWatchlist(watchlistWithDates);
-      }
-    } catch (error) {
-      console.error("Failed to load watchlist from localStorage:", error);
+    const entry = loadWatchlistFromStorage();
+    if (entry) {
+      setWatchlist(entry.items);
+      setCacheState(getCacheState(entry.syncedAt));
+    } else {
+      setCacheState("unavailable");
     }
   }, []);
 
-  // Save watchlist to localStorage whenever it changes
+  // Save watchlist to localStorage whenever it changes.
+  // We do NOT mark the data as freshly synced here — that only happens when
+  // a real server response confirms the data, preventing stale server
+  // responses from overwriting newer local mutations.
   useEffect(() => {
-    try {
-      localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist));
-    } catch (error) {
-      console.error("Failed to save watchlist to localStorage:", error);
-    }
+    saveWatchlistToStorage(watchlist, false);
   }, [watchlist]);
 
   const addToWatchlist = (id: string, username: string) => {
     setWatchlist((prev) => {
-      // Don't add if already exists
       if (prev.some((item) => item.id === id)) return prev;
-
       return [
         ...prev,
         {
@@ -95,6 +86,7 @@ export function WatchlistProvider({ children }: { children: ReactNode }) {
     <WatchlistContext.Provider
       value={{
         watchlist,
+        cacheState,
         addToWatchlist,
         removeFromWatchlist,
         isInWatchlist,

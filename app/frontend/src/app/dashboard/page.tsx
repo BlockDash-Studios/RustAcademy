@@ -87,8 +87,16 @@ function DashboardContent() {
   const [userBids, setUserBids] = useState<UserBid[]>([]);
   const [userListings, setUserListings] = useState<UserListing[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isStaleData, setIsStaleData] = useState(false);
 
   useEffect(() => {
+    // Check whether the cached API data is stale
+    const syncTs = localStorage.getItem("RustAcademy.notification-center.syncTs");
+    if (syncTs) {
+      const ageMs = Date.now() - Date.parse(syncTs);
+      setIsStaleData(ageMs > 5 * 60 * 1000);
+    }
+
     void callApi(() =>
       mockFetch({
         items: ACTIVITY_ITEMS,
@@ -282,6 +290,33 @@ function DashboardContent() {
         </header>
 
         <div className="mb-8 space-y-3">
+          {isStaleData && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-3 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-200"
+            >
+              <svg
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="h-5 w-5 flex-shrink-0 text-amber-300"
+                aria-hidden="true"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              <span>
+                <strong className="font-semibold">
+                  Showing cached data.
+                </strong>{" "}
+                Your dashboard may be outdated. Reconnect to fetch the latest
+                activity.
+              </span>
+            </div>
+          )}
           {spotlightMessage ? (
             <p className="rounded-2xl border border-indigo-400/20 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-50">
               {spotlightMessage}
