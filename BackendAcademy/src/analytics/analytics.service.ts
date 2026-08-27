@@ -36,6 +36,8 @@ export enum EventType {
   CONTRACT_RECONCILIATION_COMPLETED = 'contract_reconciliation_completed',
   CONTRACT_REPLAY_STARTED = 'contract_replay_started',
   CONTRACT_REPLAY_COMPLETED = 'contract_replay_completed',
+  NOTIFICATION_BATCH_FLUSHED = 'notification_batch_flushed',
+  NOTIFICATION_DELIVERED = 'notification_delivered',
 }
 
 /**
@@ -51,6 +53,7 @@ export interface ReconciliationSummary {
 
 @Injectable()
 export class AnalyticsService {
+  static readonly VALID_EVENT_TYPES = new Set<EventType>(Object.values(EventType));
   private readonly logger = new Logger(AnalyticsService.name);
   private readonly events: AnalyticsEvent[] = [];
 
@@ -404,7 +407,6 @@ export class AnalyticsService {
       totalDiscrepanciesFound: totalDiscrepancies,
     };
   }
-}
 
   // ── Notification batching analytics (#386) ────────────────
 

@@ -178,9 +178,9 @@ export class SocialController {
   @HttpCode(HttpStatus.OK)
   getPostsByHashtag(
     @Param('tag') tag: string,
-    @Query('page') page = 1,
+    @Query('cursor') cursor?: string,
     @Query('limit') limit = 10,
   ): SocialFeedResponse {
-    return this.socialService.getPostsByHashtag(tag, Number(page), Number(limit));
+    return this.socialService.getPostsByHashtag(tag, cursor, Number(limit) || 10);
   }
 }

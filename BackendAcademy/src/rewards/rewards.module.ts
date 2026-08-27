@@ -5,6 +5,7 @@ import { StreakController } from './streak.controller';
 import { StreakService } from './streak.service';
 import { ReferralController } from './referral.controller';
 import { ReferralService } from './referral.service';
+import { MonitoringModule } from '../monitoring/monitoring.module';
 
 /**
  * RewardsModule
@@ -16,6 +17,7 @@ import { ReferralService } from './referral.service';
  * /rewards/referrals/* (ReferralController + ReferralService).
  */
 @Module({
+  imports: [MonitoringModule],
   controllers: [RewardsController, StreakController, ReferralController],
   providers: [RewardsService, StreakService, ReferralService],
   exports: [RewardsService, StreakService, ReferralService],

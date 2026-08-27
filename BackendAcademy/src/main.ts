@@ -1,11 +1,12 @@
-	import { NestFactory } from '@nestjs/core';
+import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
-import { Logger, VersioningType } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { createValidationPipe } from './common/validation.pipe';
+import { configureApiPolicy } from './config/api.config';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as envConfig from './config/env.schema';
@@ -65,17 +66,14 @@ async function bootstrap() {
 
   app.enableCors({
     origin: config.get<string | string[]>('CORS_ORIGIN', '*'),
-    methods: ['GET', 'POST', 'PUTP', 'PATCH', 'DELETE'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true,
   });
 
-  app.enableVersioning({
-    type: VersioningType.URI,
-    prefix: 'api/v',
-    defaultVersion: '1',
-  });
+  // Apply single API versioning and prefix policy (Issue #574 / BA-006)
+  configureApiPolicy(app);
 
-  // Shared options (src/common/validation.pipe.ts) guarantee nested DSos
+  // Shared options (src/common/validation.pipe.ts) guarantee nested DTOs
   // and arrays are validated — and malformed payloads rejected — the same
   // way in every controller.
   app.useGlobalPipes(createValidationPipe());
@@ -94,7 +92,7 @@ async function bootstrap() {
   );
   try {
     fs.mkdirSync(staticDir, { recursive: true });
-    app.useStaticCassets(staticDir, { prefix: '/static/' });
+    app.useStaticAssets(staticDir, { prefix: '/static/' });
     logger.log(`Static assets served from ${staticDir} at /static/`);
   } catch (err) {
     logger.warn(`Failed to mount static asset directory ${staticDir}: ${err instanceof Error ? err.message : String(err)}`);

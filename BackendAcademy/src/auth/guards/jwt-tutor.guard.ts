@@ -40,7 +40,7 @@ export class JwtTutorGuard implements CanActivate {
 
     let payload: JwtPayload;
     try {
-      payload = await this&jwtService.verifyAsync<JwtPayload>(token);
+      payload = await this.jwtService.verifyAsync<JwtPayload>(token);
     } catch {
       throw new UnauthorizedException({
         error: 'INVALID_TOKEN',
@@ -48,9 +48,9 @@ export class JwtTutorGuard implements CanActivate {
       });
     }
 
-    if (payload.role !== UserRole.TUTIOR) {
+    if (payload.role !== UserRole.TUTOR) {
       throw new ForbiddenException({
-        error: 'TUTIOR_ROLE_REQUIRED',
+        error: 'TUTOR_ROLE_REQUIRED',
         message: 'Only tutors are allowed to access this resource',
       });
     }

@@ -4,11 +4,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AttendanceEntity } from './attendance.entity';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceService } from './attendance.service';
-import { validationSchema } from '../config/env.schema';
+import { envValidationSchema } from '../config/env.schema';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ validationSchema}),
+    ConfigModule.forRoot({ validationSchema: envValidationSchema }),
     TypeOrmModule.forFeature([AttendanceEntity]),
   ],
   controllers: [AttendanceController],

@@ -42,10 +42,10 @@ export class AiService {
 
   constructor(
     @Optional() @Inject(AI_PROVIDER) private aiProvider?: AiProvider,
-    private configService?: ConfigService,
-    private readonly analyticsService?: AnalyticsService,
-    private readonly redisService?: RedisService,
-    private readonly monitoringService?: MonitoringService,
+    @Optional() private configService?: ConfigService,
+    @Optional() private readonly analyticsService?: AnalyticsService,
+    @Optional() private readonly redisService?: RedisService,
+    @Optional() private readonly monitoringService?: MonitoringService,
     @Optional() private readonly promptTemplateService?: PromptTemplateService,
     @Optional() private readonly securityService?: SecurityService,
   ) {
@@ -117,22 +117,6 @@ export class AiService {
   ): Promise<AiChatResponse> {
     const { message, userId, context } = createChatRequestDto;
 
-    const response = await this.generateChatResponse(message);
-    // #374: Use versioned prompt template from configuration
-    const systemPrompt = this.promptTemplateService
-      ? this.promptTemplateService.getSystemPrompt('chat_tutor', {
-          version: this.configService?.get<string>('AI_PROMPT_TEMPLATE_VERSION'),
-        })
-      : 'You are a helpful Rust programming tutor.';
-
-    const response = this.aiProvider
-      ? await this.aiProvider.generateChatCompletion({
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: message },
-          ],
-        })
-      : this.fallbackResponse(message);
     // Issue #371: sanitise user-supplied prompts before they reach the AI
     // provider. When SecurityService is wired in, prompts containing known
     // prompt-injection patterns are either wrapped in a hard system-pinned
@@ -144,16 +128,26 @@ export class AiService {
 
     const effectiveMessage = sanitisation?.sanitised ?? message;
 
-    const response = sanitisation?.status === 'rejected'
-      ? sanitisation.sanitised
-      : this.aiProvider
-        ? await this.aiProvider.generateChatCompletion({
-            messages: [
-              { role: 'system', content: 'You are a helpful Rust programming tutor.' },
-              { role: 'user', content: effectiveMessage },
-            ],
-          })
-        : this.fallbackResponse(effectiveMessage);
+    // #374: Use versioned prompt template from configuration
+    const systemPrompt = this.promptTemplateService
+      ? this.promptTemplateService.getSystemPrompt('chat_tutor', {
+          version: this.configService?.get<string>('AI_PROMPT_TEMPLATE_VERSION'),
+        })
+      : 'You are a helpful Rust programming tutor.';
+
+    let response: string;
+    if (sanitisation?.status === 'rejected') {
+      response = sanitisation.sanitised;
+    } else if (this.aiProvider) {
+      response = await this.aiProvider.generateChatCompletion({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: effectiveMessage },
+        ],
+      });
+    } else {
+      response = this.fallbackResponse(effectiveMessage);
+    }
 
     const chatMessage: ChatMessage = {
       id: uuidv4(),
@@ -171,11 +165,13 @@ export class AiService {
     // listChatRecords() always returned nothing. Record one entry per
     // processed message here, keyed by the message id as its sessionId.
     this.chatRecords.set(chatMessage.id, {
+      id: chatMessage.id,
       sessionId: chatMessage.id,
       userId,
       messages: [chatMessage],
-      createdAt: chatMessage.timestamp,
-    } as AiChatRecord);
+      startedAt: chatMessage.timestamp,
+      lastActivityAt: chatMessage.timestamp,
+    });
 
     // #372: Auto-summarise when history exceeds threshold
     await this.autoSummarize(userId);
@@ -212,59 +208,6 @@ export class AiService {
             },
           }
         : {}),
-    };
-  }
-
-  
-  async getRecommendation(userId: string): Promise<AiRecommendationResponse> {
-    const snapshot = this.redisService
-      ? await this.redisService.getUserSnapshot(userId)
-      : null;
-
-    if (!snapshot) {
-      return {
-        userId,
-        recommendations: [],
-        explainability: {
-          factors: ['insufficient_data'],
-          confidence: 0.1,
-          userSignalAge: 0,
-          signalsUsed: [],
-          modelVersion: 'rustacademy-recommender-v2',
-        },
-        generatedAt: new Date(),
-      };
-    }
-
-    const explainability = this.redisService
-      ? await this.redisService.getRecommendationExplainability(userId)
-      : null;
-
-    const recommendedCourses = snapshot.recentCourses.length > 0
-      ? snapshot.recentCourses.slice(0, 3)
-      : ['rust-fundamentals', 'smart-contracts-101', 'stellar-basics'];
-
-    const recommendations = recommendedCourses.map((courseId, index) => ({
-      courseId,
-      score: Math.max(0, 1 - index * 0.2 - (snapshot.interactionCount > 0 ? 0 : 0.3)),
-      reason: explainability?.factors[index] || 'course_popularity',
-    }));
-
-    if (this.monitoringService) {
-      this.monitoringService.recordDomainEvent('recommendation_generated', 'ai');
-    }
-
-    return {
-      userId,
-      recommendations,
-      explainability: explainability || {
-        factors: [],
-        confidence: 0.1,
-        userSignalAge: 0,
-        signalsUsed: [],
-        modelVersion: 'rustacademy-recommender-v2',
-      },
-      generatedAt: new Date(),
     };
   }
 
@@ -349,59 +292,6 @@ export class AiService {
         `Submission exceeds maximum length of ${MAX_PRE_SCORE_CODE_LENGTH} characters`,
       );
     }
-
-    
-  async getRecommendation(userId: string): Promise<AiRecommendationResponse> {
-    const snapshot = this.redisService
-      ? await this.redisService.getUserSnapshot(userId)
-      : null;
-
-    if (!snapshot) {
-      return {
-        userId,
-        recommendations: [],
-        explainability: {
-          factors: ['insufficient_data'],
-          confidence: 0.1,
-          userSignalAge: 0,
-          signalsUsed: [],
-          modelVersion: 'rustacademy-recommender-v2',
-        },
-        generatedAt: new Date(),
-      };
-    }
-
-    const explainability = this.redisService
-      ? await this.redisService.getRecommendationExplainability(userId)
-      : null;
-
-    const recommendedCourses = snapshot.recentCourses.length > 0
-      ? snapshot.recentCourses.slice(0, 3)
-      : ['rust-fundamentals', 'smart-contracts-101', 'stellar-basics'];
-
-    const recommendations = recommendedCourses.map((courseId, index) => ({
-      courseId,
-      score: Math.max(0, 1 - index * 0.2 - (snapshot.interactionCount > 0 ? 0 : 0.3)),
-      reason: explainability?.factors[index] || 'course_popularity',
-    }));
-
-    if (this.monitoringService) {
-      this.monitoringService.recordDomainEvent('recommendation_generated', 'ai');
-    }
-
-    return {
-      userId,
-      recommendations,
-      explainability: explainability || {
-        factors: [],
-        confidence: 0.1,
-        userSignalAge: 0,
-        signalsUsed: [],
-        modelVersion: 'rustacademy-recommender-v2',
-      },
-      generatedAt: new Date(),
-    };
-  }
 
     const lines = code.split('\n').filter((l) => l.trim().length > 0).length;
     const hasComments = code.includes('//') || code.includes('/*');

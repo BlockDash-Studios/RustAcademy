@@ -1,8 +1,8 @@
-import { Controller, Get, Inject, Optional } from '@nestjs/common';
+import { Controller, Get, Inject, Optional, VERSION_NEUTRAL } from '@nestjs/common';
 import { HealthService, ReadinessResult, HealthCheckResult, WorkerReadiness } from './health.service';
 import { JobsService } from '../jobs/jobs.service';
 
-@Controller('health')
+@Controller({ path: 'health', version: VERSION_NEUTRAL })
 export class HealthController {
   constructor(
     private readonly health: HealthService,

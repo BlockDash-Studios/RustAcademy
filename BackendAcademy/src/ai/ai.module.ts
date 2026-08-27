@@ -8,8 +8,8 @@ import { OpenaiProvider } from './providers/openai.provider';
 
 function validateAiConfig(configService: ConfigService): void {
   const provider = configService.get<string>('AI_PROVIDER');
-  if (provider && !['openai', 'claude'].includes(provider)) {
-    throw new Error(`Invalid AI_PROVIDER: ${provider}. Must be 'openai' or 'claude'.`);
+  if (provider && !['openai', 'claude', 'mock'].includes(provider)) {
+    throw new Error(`Invalid AI_PROVIDER: ${provider}. Must be 'openai', 'claude', or 'mock'.`);
   }
 
   const numericParams: Array<{ key: string; min: number; max: number; integer?: boolean }> = [

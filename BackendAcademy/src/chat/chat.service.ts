@@ -104,6 +104,9 @@ export class ChatService {
       (m) => (m as any).streamingComplete !== false,
     );
     return before - this.messages.length;
+  }
+
+  /**
    * Run outgoing chat content through the SecurityService prompt sanitiser
    * when the content is long enough that it might plausibly be AI-bound or
    * carry instructions. The original behaviour is preserved when no

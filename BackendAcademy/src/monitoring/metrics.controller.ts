@@ -8,12 +8,12 @@ import type { Response } from 'express';
  * Extends the library's {@link PrometheusController} so that:
  * 1. The `path` metadata set by `PrometheusModule.register({ path })`
  *    still applies at runtime.
- * 2. The global URI versioning configured in `main.ts`
- *    (`app.enableVersioning({ type: URI, prefix: 'api/v' })`) is bypassed
- *    via {@link VERSION_NEUTRAL} on the `index` method, keeping the route
- *    at `/metrics` rather than `/api/v/metrics`. This matches Prometheus
- *    best-practice (no URI versioning on the scrape target) so any
- *    off-the-shelf Prometheus / Grafana installation works out of the box.
+ * 2. The global API prefix and versioning policy configured in `main.ts`
+ *    (`configureApiPolicy(app)`) is bypassed via {@link VERSION_NEUTRAL}
+ *    on the `index` method, keeping the route at `/metrics` rather than
+ *    `/api/v1/metrics`. This matches Prometheus best-practice (no URI
+ *    versioning on the scrape target) so any off-the-shelf Prometheus /
+ *    Grafana installation works out of the box.
  *
  * NOTE: `@Version` is *only* applied to the method (not the class) because
  * `@nestjs/common@10.4.22`'s `Version` factory dereferences `descriptor.value`,

@@ -56,21 +56,21 @@ export class AuthSessionController {
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  logout(@Query('sessionId') sessionId: string): void {
-    this.authSessionService.revokeSession(sessionId);
+  async logout(@Query('sessionId') sessionId: string): Promise<void> {
+    await this.authSessionService.revokeSession(sessionId);
   }
 
   @Post('logout-all')
   @HttpCode(HttpStatus.NO_CONTENT)
-  logoutAll(@Query('userId') userId: string): void {
-    this.authSessionService.revokeAllUserSessions(userId);
+  async logoutAll(@Query('userId') userId: string): Promise<void> {
+    await this.authSessionService.revokeAllUserSessions(userId);
   }
 
   @Get(':userId')
   @HttpCode(HttpStatus.OK)
-  getActiveSessions(
+  async getActiveSessions(
     @Param('userId') userId: string,
-  ): Omit<Session, 'refreshTokenHash'>[] {
+  ): Promise<Omit<Session, 'refreshTokenHash'>[]> {
     return this.authSessionService.getActiveSessions(userId);
   }
 

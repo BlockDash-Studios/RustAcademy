@@ -1,11 +1,11 @@
-import { Module } from '@nestjs/common';
-import { CourseModule } from '../courses';
+import { forwardRef, Module } from '@nestjs/common';
+import { CourseModule } from '../courses/course.module';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
 import { SearchIndexerService } from './search-indexer.service';
 
 @Module({
-  imports: [CourseModule],
+  imports: [forwardRef(() => CourseModule)],
   controllers: [SearchController],
   providers: [SearchService, SearchIndexerService],
   exports: [SearchService, SearchIndexerService],

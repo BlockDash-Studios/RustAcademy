@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { AnalyticsEvent } from '../analytics/analytics.entity';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { RewardsService } from '../rewards/rewards.service';
@@ -64,6 +64,29 @@ export interface CouponRedemptionReport {
   }>;
 }
 
+export type ReportStatus = 'submitted' | 'triage' | 'escalated' | 'resolved' | 'dismissed';
+
+export interface AuditEntry {
+  timestamp: Date;
+  actor: string;
+  fromStatus: ReportStatus | null;
+  toStatus: ReportStatus;
+  note: string;
+}
+
+export interface ReportTriageEntry {
+  id: string;
+  reporterId: string;
+  targetType: 'user' | 'post' | 'comment';
+  targetId: string;
+  reason: string;
+  status: ReportStatus;
+  assignedTo: string | null;
+  auditTrail: AuditEntry[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /**
  * #394: Report summarizing event replay activity.
  */
@@ -102,14 +125,58 @@ interface DailyBucket {
 
 @Injectable()
 export class ReportsService {
+  private readonly reports = new Map<string, ReportTriageEntry>();
+
   constructor(
     private readonly analyticsService: AnalyticsService,
     private readonly rewardsService: RewardsService,
-    private readonly submissionsService: SubmissionsService,
-    private readonly databaseService?: DatabaseService,
-    private readonly walletService?: WalletService,
-    private readonly certificateService?: CertificateService,
+    @Optional() private readonly databaseService?: DatabaseService,
+    @Optional() private readonly certificateService?: CertificateService,
+    @Optional() private readonly walletService?: any,
   ) {}
+
+  createReport(reporterId: string, targetType: ReportTriageEntry['targetType'], targetId: string, reason: string): ReportTriageEntry {
+    const id = crypto.randomUUID();
+    const now = new Date();
+    const entry: ReportTriageEntry = {
+      id, reporterId, targetType, targetId, reason,
+      status: 'submitted', assignedTo: null,
+      auditTrail: [{ timestamp: now, actor: reporterId, fromStatus: null, toStatus: 'submitted', note: 'Report submitted' }],
+      createdAt: now, updatedAt: now,
+    };
+    this.reports.set(id, entry);
+    return entry;
+  }
+
+  transitionReportStatus(id: string, actor: string, toStatus: ReportStatus, note: string): ReportTriageEntry {
+    const report = this.reports.get(id);
+    if (!report) throw new NotFoundException({ error: 'REPORT_NOT_FOUND', message: `Report ${id} not found` });
+    const fromStatus = report.status;
+    report.status = toStatus;
+    report.updatedAt = new Date();
+    report.auditTrail.push({ timestamp: new Date(), actor, fromStatus, toStatus, note });
+    this.reports.set(id, report);
+    return report;
+  }
+
+  getReport(id: string): ReportTriageEntry {
+    const report = this.reports.get(id);
+    if (!report) throw new NotFoundException({ error: 'REPORT_NOT_FOUND', message: `Report ${id} not found` });
+    return report;
+  }
+
+  getAllReports(status?: ReportStatus): ReportTriageEntry[] {
+    const all = Array.from(this.reports.values());
+    return status ? all.filter((r) => r.status === status) : all;
+  }
+
+  getReportsByAssignee(assignee: string): ReportTriageEntry[] {
+    return Array.from(this.reports.values()).filter((r) => r.assignedTo === assignee);
+  }
+
+  getAuditTrail(id: string): AuditEntry[] {
+    return this.getReport(id).auditTrail;
+  }
 
   async getModerationReport(): Promise<{ totalFlagged: number; actionTaken: number; pendingReview: number }> {
     return { totalFlagged: 0, actionTaken: 0, pendingReview: 0 };

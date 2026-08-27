@@ -1,29 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CorrelationLoggerService } from '../logging/logger.service';
-import { Injectable, Logger, Optional } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService, PaymentStatus } from '../database/database.service';
 import { TransactionHistoryQueryDto } from './dto/transaction-history-query.dto';
 import {
   StellarTransaction,
   TransactionHistoryResponse,
 } from './interfaces/transaction.interface';
 import { IContractAdapter } from '../contracts';
-
-/**
- * Payments service.
- *
- * #396: On-chain payment recording is isolated behind the
- * {@link IContractAdapter} interface. When the adapter is available,
- * payment events are recorded on-chain for auditability. When it is
- * not available (e.g., test environments), the service operates
- * in off-chain-only mode.
- */
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { DatabaseService, PaymentStatus } from '../database/database.service';
-import { TransactionHistoryQueryDto } from './dto/transaction-history-query.dto';
-import { StellarTransaction, TransactionHistoryResponse } from './interfaces/transaction.interface';
 
 export interface WebhookPayload {
   id: string;
@@ -63,6 +47,11 @@ export type WebhookProcessingOutcome =
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
+
+  private readonly defaultTimeoutMs: number;
+  private readonly webhookMaxRetries: number;
+  private readonly webhookBaseBackoffMs: number;
+  private readonly webhookMaxBackoffMs: number;
 
   private readonly stubLedger: StellarTransaction[] = [
     {
@@ -122,7 +111,7 @@ export class PaymentsService {
     private readonly databaseService: DatabaseService,
     @Optional()
     private readonly contractAdapter?: IContractAdapter,
-  ) {}
+    @Optional()
     private readonly configService?: ConfigService,
   ) {
     this.defaultTimeoutMs = this.configService?.get<number>('DEFAULT_REQUEST_TIMEOUT_MS') ?? 30_000;
@@ -261,14 +250,6 @@ export class PaymentsService {
   async getAllCoupons() {
     return this.databaseService.getAllCoupons();
   }
-} async getRedemptionHistory(userId: string) {
-    return this.databaseService.getRedemptionsByUser(userId);
-  }
-
-  async getAllCoupons() {
-    return this.databaseService.getAllCoupons();
-  }
-}
 
   /**
    * Processes a validated, signature-checked payment webhook event.

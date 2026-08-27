@@ -56,7 +56,7 @@ export class CourseController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateCourseDto,
-  ): Promise<CourseEntity> {
+  ): Promise<CourseEntity | null> {
     return this.courseService.update(id, dto);
   }
 
@@ -113,7 +113,7 @@ export class CourseController {
     @Param('id') id: string,
     @Param('version') version: string,
     @Body() dto: RestoreRevisionDto,
-  ): Promise<CourseEntity> {
+  ): Promise<CourseEntity | null> {
     return this.courseService.restoreRevision(
       id,
       Number(version),

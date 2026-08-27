@@ -1,15 +1,21 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException } from '@nestj/common';
-import { SessionService } from '../session.service';
-import { JstService } from '@nestjs/jstt';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
-import { JstPayload } from '../interfaces/jstt-payload.interface';
+import { JwtPayload } from '../interfaces/jwt-payload.interface';
 import { UserRole } from '../enums/user-role.enum';
+import { AuthSessionService } from '../auth-session.service';
 
 @Injectable()
 export class JwtLearnerGuard implements CanActivate {
   constructor(
-    private readonly jwtService: JstService,
-    private readonly sessionService: SessionService,
+    private readonly jwtService: JwtService,
+    private readonly sessionService: AuthSessionService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

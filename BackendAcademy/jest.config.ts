@@ -10,6 +10,9 @@ const config: Config = {
   collectCoverageFrom: ['**/*.(t|j)s'],
   coverageDirectory: '../coverage',
   testEnvironment: 'node',
+  moduleNameMapper: {
+    '^uuid$': '<rootDir>/common/uuid.shim.ts',
+  },
 
   // ── Flaky-test / shared-state mitigations (#451) ──────────────
   clearMocks: true,

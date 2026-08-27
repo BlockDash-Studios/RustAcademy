@@ -1,6 +1,11 @@
-import { Module, MiddlewareConsumer, NestModule, ValidationPipe } from '@nestjs/common';
-import { APP_GUARD, APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
-import { ThrottleGuard, ThrottleModule } from '@nestjs/throttler';
+import { Module, MiddlewareConsumer, NestModule, ValidationPipe, Injectable, Inject } from '@nestjs/common';
+import { APP_GUARD, APP_FILTER, APP_INTERCEPTOR, APP_PIPE, Reflector } from '@nestjs/core';
+import {
+  InjectThrottlerOptions,
+  InjectThrottlerStorage,
+  ThrottlerGuard,
+  ThrottlerModule,
+} from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AdminModule } from './admin/admin.module';
@@ -26,9 +31,9 @@ import { PaymentsModule } from './payments/payments.module';
 import { I18nModule } from './i18n/i18n.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { HealthModule } from './health/health.module';
-import { CorrelationIDMiddleware } from './common/correlation-id.middleware';
-import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
-import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { CorrelationIdMiddleware } from './common/correlation-id.middleware';
+import { HttpExceptionFilter } from './common/http-exception.filter';
+import { ResponseInterceptor } from './common/response.interceptor';
 import { AiModule } from './ai/ai.module';
 import { JobsModule } from './jobs/jobs.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
@@ -47,6 +52,17 @@ import { SessionsModule } from './sessions/sessions.module';
 import { AuditModule } from './audit/audit.module';
 import { HintsModule } from './hints/hint.module';
 
+@Injectable()
+export class AppThrottlerGuard extends ThrottlerGuard {
+  constructor(
+    @InjectThrottlerOptions() options: any,
+    @InjectThrottlerStorage() storageService: any,
+    reflector: Reflector,
+  ) {
+    super(options, storageService, reflector);
+  }
+}
+
 @Module({
   imports: [
     AppConfigModule,
@@ -59,8 +75,6 @@ import { HintsModule } from './hints/hint.module';
     BadgesModule,
     ChatModule,
     UsersModule,
-    ContractsModule,
-    RedisModule,
     AuditModule,
     UserProfileModule,
     TutorProfileModule,
@@ -96,14 +110,15 @@ import { HintsModule } from './hints/hint.module';
   controllers: [AppController],
   providers: [
     AppService,
-    { provide: APP_GUARD, useClass: ThrottleGuard },
-    { provide: APP_FILTER, useClass: AllExceptionsFilter },
-    { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
+    Reflector,
+    { provide: APP_GUARD, useClass: AppThrottlerGuard },
+    { provide: APP_FILTER, useClass: HttpExceptionFilter },
+    { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_PIPE, useValue: new ValidationPipe({ transform: true }) },
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(CorrelationIDMiddleware).forRoutes('*');
+    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
   }
 }

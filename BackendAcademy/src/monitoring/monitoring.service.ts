@@ -47,6 +47,13 @@ export class MonitoringService {
   }
 
   /**
+   * Increment a named counter with optional labels and value.
+   */
+  incrementCounter(name: string, value = 1, labels: Record<string, string> = {}): void {
+    this.domainEvents.inc({ event_type: name, source: 'monitoring', ...labels, ...this.getRequestContext() }, value);
+  }
+
+  /**
    * Record a single HTTP request. Routes are normalized to always start with
    * `/` so that label cardinality stays bounded.
    */

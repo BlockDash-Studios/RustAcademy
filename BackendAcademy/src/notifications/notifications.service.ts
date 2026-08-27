@@ -282,7 +282,11 @@ export class NotificationsService {
     notification: Notification,
     context: DeliveryContext,
   ): Promise<DeliveryResult[]> {
-    if (!this.providers || this.providers.length === 0) {
+    const enabledProviders = (this.providers || []).filter((p) =>
+      typeof (p as any).isEnabled === 'function' ? (p as any).isEnabled() : true,
+    );
+
+    if (enabledProviders.length === 0) {
       this.logger.warn(
         'No notification providers registered — notification stored only',
       );
@@ -322,7 +326,8 @@ export class NotificationsService {
     );
 
     if (this.pendingBatch.length >= this.batchConfig.maxBatchSize) {
-      return this.flushBatch(context);
+      const batchRes = await this.flushBatch(context);
+      return batchRes.results;
     }
 
     if (!this.batchTimer && this.batchConfig.batchWindowMs > 0) {
@@ -371,6 +376,9 @@ export class NotificationsService {
       priority: NotificationPriority.LOW,
     };
     const allResults: DeliveryResult[] = [];
+    const enabledProviders = (this.providers || []).filter((p) =>
+      typeof (p as any).isEnabled === 'function' ? (p as any).isEnabled() : true,
+    );
 
     if (enabledProviders.length > 0) {
       for (const provider of enabledProviders) {

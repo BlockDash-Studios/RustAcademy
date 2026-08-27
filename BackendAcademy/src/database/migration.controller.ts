@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Query } from '@nestjs/common';
 import { MigrationService, PreflightResult, RollbackResult } from './migration.service';
 
-@Controller('api/migrations')
+@Controller('migrations')
 export class MigrationController {
   constructor(private readonly migrationService: MigrationService) {}
 

@@ -4,6 +4,8 @@ import { RedisService } from './redis/redis.service';
 import { DatabaseService } from './database/database.service';
 import { ConfigService } from '@nestjs/config';
 
+import { TransactionManagerService } from './common/transaction-manager.service';
+
 describe('Termination & Graceful Shutdown', () => {
   let app: TestingModule;
   let jobsService: JobsService;
@@ -16,6 +18,7 @@ describe('Termination & Graceful Shutdown', () => {
         JobsService,
         RedisService,
         DatabaseService,
+        TransactionManagerService,
         {
           provide: ConfigService,
           useValue: {

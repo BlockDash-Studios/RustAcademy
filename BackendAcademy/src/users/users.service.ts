@@ -242,6 +242,11 @@ export class UsersService {
   async onPasswordReset(userId: string): Promise<void> {
     await this.authSessionService?.onPasswordReset(userId);
   }
+
+  /**
+   * Records an asset uploaded by a user.
+   */
+  recordUserUpload(userId: string, assetId: string): void {
     if (!this.userUploads.has(userId)) {
       this.userUploads.set(userId, new Set());
     }
