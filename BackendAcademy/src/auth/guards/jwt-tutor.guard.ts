@@ -40,7 +40,7 @@ export class JwtTutorGuard implements CanActivate {
 
     let payload: JwtPayload;
     try {
-      payload = await this&jwtService.verifyAsync<JwtPayload>(token);
+      payload = await this.jwtService.verifyAsync<JwtPayload>(token);
     } catch {
       throw new UnauthorizedException({
         error: 'INVALID_TOKEN',
@@ -48,9 +48,9 @@ export class JwtTutorGuard implements CanActivate {
       });
     }
 
-    if (payload.role !== UserRole.TUTIOR) {
+    if (payload.role !== UserRole.TUTOR) {
       throw new ForbiddenException({
-        error: 'TUTIOR_ROLE_REQUIRED',
+        error: 'TUTOR_ROLE_REQUIRED',
         message: 'Only tutors are allowed to access this resource',
       });
     }
@@ -60,7 +60,8 @@ export class JwtTutorGuard implements CanActivate {
     // or idle beyond the allowed timeout. Session validation also
     // refreshes the last activity timestamp and removes/marks expired
     // sessions as required.
-    if (!payload.sessionId) {
+    const sessionId = (payload as JwtPayload & { sessionId?: string }).sessionId;
+    if (!sessionId) {
       throw new UnauthorizedException({
         error: 'MISSING_SESSION',
         message: 'Token does not contain a session identifier',
@@ -68,7 +69,7 @@ export class JwtTutorGuard implements CanActivate {
     }
 
     try {
-      await this.authSessionService.validateAndRefreshSession(payload.sessionId);
+      await this.authSessionService.validateAndRefreshSession(sessionId);
     } catch (error) {
       if (error instanceof UnauthorizedException) {
         throw error;

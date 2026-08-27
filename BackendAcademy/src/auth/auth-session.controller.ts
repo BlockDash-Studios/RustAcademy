@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -45,13 +44,17 @@ export class AuthSessionController {
     return this.authSessionService.createSession(
       dto.userId,
       dto.role as UserRole,
+      dto.deviceFingerprint,
     );
   }
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(@Body() dto: RefreshTokenDto): Promise<AuthTokensResponse> {
-    return this.authSessionService.refreshTokens(dto.refreshToken);
+    return this.authSessionService.refreshTokens(
+      dto.refreshToken,
+      dto.deviceFingerprint,
+    );
   }
 
   @Post('logout')
@@ -70,7 +73,7 @@ export class AuthSessionController {
   @HttpCode(HttpStatus.OK)
   getActiveSessions(
     @Param('userId') userId: string,
-  ): Omit<Session, 'refreshTokenHash'>[] {
+  ): Omit<Session, 'refreshToken' | 'refreshTokenHash'>[] {
     return this.authSessionService.getActiveSessions(userId);
   }
 
