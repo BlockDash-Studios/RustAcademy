@@ -25,14 +25,24 @@ export interface Session {
   /** When the refresh token expires. */
   expiresAt: Date;
 
-  /** Absolute maximum lifetime of the session, independent of JWT exp. */
-  absoluteExpiresAt: Date;
+  /**
+   * Absolute maximum lifetime of the session, independent of JWT exp.
+   * BA-019 persistence migration also writes this field (optional for
+   * back-compat with records written before the migration).
+   */
+  absoluteExpiresAt?: Date;
 
-  /** Timestamp after which the session is considered idle-expired if no activity. */
-  idleExpiresAt: Date;
+  /**
+   * Timestamp after which the session is considered idle-expired if no
+   * activity. BA-019 persistence migration writes this field.
+   */
+  idleExpiresAt?: Date;
 
-  /** Grace period in seconds allowed for token delivery after expiry (clock skew buffer). */
-  deliveryGraceSeconds: number;
+  /**
+   * Grace period in seconds allowed for token delivery after expiry (clock
+   * skew buffer). BA-019 persistence migration writes this field.
+   */
+  deliveryGraceSeconds?: number;
 
   /** Flag set to true once the session is revoked (logout / rotation). */
   revoked: boolean;
@@ -45,4 +55,19 @@ export interface Session {
 
   /** Whether the device has been previously trusted by this user. */
   isTrustedDevice?: boolean;
+}
+
+/** Payload embedded inside the refresh token JWT. */
+export interface RefreshTokenPayload {
+  sub: string;
+  role: UserRole;
+  sessionId: string;
+}
+
+/** Shape returned by session issuance and rotation. */
+export interface AuthTokensResponse {
+  accessToken: string;
+  refreshToken: string;
+  tokenType: 'Bearer';
+  expiresIn: number;
 }

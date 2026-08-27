@@ -39,7 +39,7 @@ export class AuditLogService {
 
     // Provide structured output to the standard logger without secrets
     this.logger.log(
-      \Audit: \ | Actor: \ | Outcome: \ | Session: \ | Correlation: \\
+      `Audit:: action=${log.action} actor=${log.actor} outcome=${log.outcome} session=${log.session} correlation=${log.correlation}`,
     );
 
     return log;

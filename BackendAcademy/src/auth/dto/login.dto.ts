@@ -1,4 +1,4 @@
-import { IsEnum, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 import { UserRole } from '../enums/user-role.enum';
 
 /**
@@ -20,4 +20,14 @@ export class LoginDto {
   @IsNotEmpty()
   @MinLength(6)
   password: string;
+
+  /**
+   * BA-016: client-generated device fingerprint. Optional at the API layer;
+   * whether it is required to log in is controlled by the session policy
+   * (`SESSION_REQUIRE_DEVICE`). Passed to {@link AuthSessionService.createSession}
+   * unmodified only for hashing; the raw value is never stored or logged.
+   */
+  @IsOptional()
+  @IsString()
+  deviceFingerprint?: string;
 }
