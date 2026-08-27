@@ -205,7 +205,7 @@ describe('AuthSessionService security revocation', () => {
     service = new AuthSessionService(
       jwtService as never,
       configService as never,
-      new RedisService(),
+      new RedisService() as never,
       new AuditLogService(),
     );
     revokeAllUserSessions = jest.spyOn(service, 'revokeAllUserSessions');
