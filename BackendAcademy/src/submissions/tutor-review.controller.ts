@@ -17,9 +17,12 @@ import { TutorReviewService, ReviewQueuePage, ReviewStats } from './tutor-review
 import { ReviewSubmissionDto } from './dto/review-submission.dto';
 import { ReviewQueueQueryDto } from './dto/review-queue-query.dto';
 import { JwtTutorGuard } from '../auth/guards/jwt-tutor.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../auth/enums/user-role.enum';
 
-type AuthedRequest = Request & { tutor: JwtPayload };
+type AuthedRequest = Request & { user: JwtPayload };
 
 /**
  * Tutor Review Queue API
@@ -36,7 +39,8 @@ type AuthedRequest = Request & { tutor: JwtPayload };
  * │ POST /tutor/review/:id                   Review a sub    │
  * └──────────────────────────────────────────────────────────┘
  */
-@UseGuards(JwtTutorGuard)
+@UseGuards(JwtTutorGuard, RolesGuard)
+@Roles(UserRole.TUTOR)
 @Controller('tutor/review')
 export class TutorReviewController {
   constructor(private readonly tutorReviewService: TutorReviewService) {}
@@ -106,7 +110,7 @@ export class TutorReviewController {
     @Req() req: AuthedRequest,
     @Query() query: ReviewQueueQueryDto,
   ): Promise<ReviewQueuePage> {
-    return this.tutorReviewService.getReviewedByTutor(req.tutor.sub, query);
+    return this.tutorReviewService.getReviewedByTutor(req.user.sub, query);
   }
 
   // ─── Review action ────────────────────────────────────────────────────────
@@ -134,6 +138,6 @@ export class TutorReviewController {
     @Req() req: AuthedRequest,
     @Body() dto: ReviewSubmissionDto,
   ) {
-    return this.tutorReviewService.reviewSubmission(id, req.tutor.sub, dto);
+    return this.tutorReviewService.reviewSubmission(id, req.user.sub, dto);
   }
 }

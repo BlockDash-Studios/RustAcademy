@@ -68,9 +68,9 @@ export class AuthSessionController {
 
   @Get(':userId')
   @HttpCode(HttpStatus.OK)
-  getActiveSessions(
+  async getActiveSessions(
     @Param('userId') userId: string,
-  ): Omit<Session, 'refreshToken'>[] {
+  ): Promise<Omit<Session, 'refreshToken' | 'refreshTokenHash'>[]> {
     return this.authSessionService.getActiveSessions(userId);
   }
 

@@ -10,7 +10,16 @@ import {
   ParseUUIDPipe,
   Post,
   Put,
+  UseGuards,
 } from '@nestjs/common';
+import {
+  JwtAuthGuard,
+  RolesGuard,
+  SubjectOwnershipGuard,
+  Roles,
+  Ownership,
+  UserRole,
+} from '../../auth';
 import { RegisterCourseProgressDto } from './dto/register-course-progress.dto';
 import {
   RecordLessonCompletionDto,
@@ -23,6 +32,9 @@ import {
 import { CourseProgressRecord, ProgressService } from './progress.service';
 
 @Controller('courses/progress')
+@UseGuards(JwtAuthGuard, RolesGuard, SubjectOwnershipGuard)
+@Roles(UserRole.LEARNER, UserRole.ADMIN)
+@Ownership('userId')
 export class ProgressController {
   constructor(private readonly progressService: ProgressService) {}
 

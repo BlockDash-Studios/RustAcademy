@@ -230,6 +230,11 @@ export class UsersService {
   isDeleted(userId: string): boolean {
     return this.deletedUsers.has(userId);
   }
+
+  /**
+   * Records an asset upload for a user.
+   */
+  private trackUserUpload(userId: string, assetId: string): void {
     if (!this.userUploads.has(userId)) {
       this.userUploads.set(userId, new Set());
     }

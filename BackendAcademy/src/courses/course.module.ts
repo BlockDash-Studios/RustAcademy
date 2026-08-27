@@ -12,6 +12,7 @@ import { TransactionManagerService } from '../common/transaction-manager.service
 import { ConfigModule } from '@nestjs/config';
 import { SearchModule } from '../search/search.module';
 import { RedisModule } from '../redis/redis.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { RedisModule } from '../redis/redis.module';
     RewardsModule,
     SearchModule,
     RedisModule,
+    AuthModule,
   ],
   controllers: [CourseController],
   providers: [

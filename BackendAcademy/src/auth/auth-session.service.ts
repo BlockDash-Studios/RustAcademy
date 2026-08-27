@@ -3,6 +3,7 @@
   UnauthorizedException,
   Logger,
   Inject,
+  Optional,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { AuditLogService } from '../audit/audit.service';
@@ -69,11 +70,6 @@ export class AuthSessionService {
   private readonly logger = new Logger(AuthSessionService.name);
 
   /**
-   * Redis client for persistent storing of sessions and trusted devices.
-   */
-  private readonly redis: Redis;
-
-  /**
    * #350: Centralized session policy
    */
   private readonly sessionPolicy: SessionPolicy;
@@ -82,6 +78,7 @@ export class AuthSessionService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    @Optional() private readonly auditService?: AuditLogService,
   ) {
     // #350: Load centralized session policy from config
     this.sessionPolicy = {
@@ -98,10 +95,6 @@ export class AuthSessionService {
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
   }
-
-    private hashToken(token: string): string {
-      return createHash('sha256').update(token).digest('hex');
-     }
 
   // ---------------------------------------------------------------------------
   // #350: Public policy access
@@ -164,7 +157,8 @@ export class AuthSessionService {
     const session: Session = {
       sessionId,
       userId,
-      role,  refreshTokenHash: this.hashToken(refreshToken),
+      role,
+      refreshTokenHash: this.hashToken(refreshToken),
       createdAt: now,
       expiresAt,
       revoked: false,
@@ -175,13 +169,13 @@ export class AuthSessionService {
     };
 
     await this.setSession(session);
-    if (deviceHash) await this.rds.sadd(`trustedDevices:${userId}`, deviceHash);
+    if (deviceHash) await this.redis.sadd(`trustedDevices:${userId}`, deviceHash);
 
     if (deviceHash && !(await this.isTrustedDevice(userId, deviceHash))) {
       this.logger.warn(`New device login for user ${userId}`);
     }
 
-    this.auditService.create({ action: 'login', actor: userId, outcome: 'SUCCESS', session: sessionId, requestContext: { deviceHash } });
+    this.auditService?.create({ action: 'login', actor: userId, outcome: 'SUCCESS', session: sessionId, requestContext: { deviceHash } });
     return this.buildTokensResponse(accessToken, refreshToken);
   }
 
@@ -214,8 +208,6 @@ export class AuthSessionService {
       });
     }
 
-    if (session.refreshToken !== rawRefreshToken) {
-      // Token reuse detected -- revoke the whole session as a security measure.
     if (this.hashToken(rawRefreshToken) !== session.refreshTokenHash) {
       // Token reuse detected — revoke the whole session as a security measure.
       session.revoked = true;
@@ -239,7 +231,7 @@ export class AuthSessionService {
     session.revoked = true;
     await this.setSession(session);
 
-    this.auditService.create({ action: 'refresh', actor: session.userId, outcome: 'SUCCESS', session: session.sessionId });
+    this.auditService?.create({ action: 'refresh', actor: session.userId, outcome: 'SUCCESS', session: session.sessionId });
     return await this.createSession(session.userId, session.role);
   }
 
@@ -253,7 +245,7 @@ export class AuthSessionService {
       session.revoked = true;
       await this.setSession(session);
       this.logger.log(`Session ${sessionId} revoked for user ${session.userId}`);
-      this.auditService.create({ action: 'logout', actor: session.userId, outcome: 'SUCCESS', session: sessionId });
+      this.auditService?.create({ action: 'logout', actor: session.userId, outcome: 'SUCCESS', session: sessionId });
     }
   }
 
@@ -262,7 +254,7 @@ export class AuthSessionService {
    * Clears all associated refresh tokens and cached session data.
    */
   async revokeAllUserSessions(userId: string): Promise<void> {
-    const sessionIds = await this.rds.smembers(`userSessions:${userId}`);
+    const sessionIds = await this.redis.smembers(`userSessions:${userId}`);
     let count = 0;
     for (const sessionId of sessionIds) {
       const session = await this.getSession(sessionId);
@@ -273,20 +265,20 @@ export class AuthSessionService {
       }
     }
     this.logger.log(`All ${count} sessions revoked for user ${userId}`);
-    this.auditService.create({ action: 'logout_all', actor: userId, outcome: 'SUCCESS', requestContext: { count } });
+    this.auditService?.create({ action: 'logout_all', actor: userId, outcome: 'SUCCESS', requestContext: { count } });
   }
 
   /**
    * Returns all active (non-revoked, non-expired) sessions for a user.
    */
-  async getActiveSessions(userId: string): Promise<Omit<Session, 'refreshToken'>[]> {
-    const sessionIds = await this.rds.smembers(`userSessions:${userId}`);
+  async getActiveSessions(userId: string): Promise<Omit<Session, 'refreshToken' | 'refreshTokenHash'>[]> {
+    const sessionIds = await this.redis.smembers(`userSessions:${userId}`);
     const now = new Date();
-    const result: Omit<Session, 'refreshToken'>[] = [];
+    const result: Omit<Session, 'refreshToken' | 'refreshTokenHash'>[] = [];
     for (const sessionId of sessionIds) {
       const session = await this.getSession(sessionId);
       if (session && !session.revoked && session.expiresAt > now) {
-        const { refreshToken, ...rest } = session;
+        const { refreshTokenHash: _omitted, ...rest } = session;
         result.push(rest);
       }
     }
@@ -302,22 +294,22 @@ export class AuthSessionService {
   }
 
   async isTrustedDevice(userId: string, deviceHash: string): Promise<boolean> {
-    const devices = await this.rds.smembers(`trustedDevices:${userId}`);
+    const devices = await this.redis.smembers(`trustedDevices:${userId}`);
     return devices.includes(deviceHash);
   }
 
   async addTrustedDevice(userId: string, deviceHash: string): Promise<void> {
-    await this.rds.sadd(`trustedDevices:${userId}`, deviceHash);
-    this.auditService.create({ action: 'add_trusted_device', actor: userId, outcome: 'SUCCESS', requestContext: { deviceHash } });
+    await this.redis.sadd(`trustedDevices:${userId}`, deviceHash);
+    this.auditService?.create({ action: 'add_trusted_device', actor: userId, outcome: 'SUCCESS', requestContext: { deviceHash } });
   }
 
   async removeTrustedDevice(userId: string, deviceHash: string): Promise<void> {
-    await this.rds.srem(`trustedDevices:${userId}`, deviceHash);
-    this.auditService.create({ action: 'remove_trusted_device', actor: userId, outcome: 'SUCCESS', requestContext: { deviceHash } });
+    await this.redis.srem(`trustedDevices:${userId}`, deviceHash);
+    this.auditService?.create({ action: 'remove_trusted_device', actor: userId, outcome: 'SUCCESS', requestContext: { deviceHash } });
   }
 
   async getTrustedDevices(userId: string): Promise<string[]> {
-    return await this.rds.smembers(`trustedDevices:${userId}`);
+    return await this.redis.smembers(`trustedDevices:${userId}`);
   }
 
   async checkDeviceTrust(userId: string, deviceFingerprint: string): Promise<{ trusted: boolean; deviceHash: string }> {
@@ -338,20 +330,20 @@ export class AuthSessionService {
   }
 
   private async getSession(sessionId: string): Promise<Session | null> {
-    const data = await this.rds.get(this.sessionKey(sessionId));
+    const data = await this.redis.get(this.sessionKey(sessionId));
     if (!data) return null;
     return JSON.parse(data) as Session;
   }
 
   private async setSession(session: Session): Promise<void> {
     const tll = Math.max(1, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000) + this.sessionPolicy.deliveryGracePeriod);
-    await this.rds.set(this.sessionKey(session.sessionId), JSON.stringify(session), 'EX', tll);
+    await this.redis.set(this.sessionKey(session.sessionId), JSON.stringify(session), 'EX', tll);
     const userKey = this.userSessionsKey(session.userId);
-    await this.rds.sadd(userKey, session.sessionId);
+    await this.redis.sadd(userKey, session.sessionId);
   }
 
   private get refreshSecret(): string {
-    return this.configService.get<string>('JMT_REFRESH_SECRET', this.configService.get<string>('JMT_SECRET', 'change-me'));
+    return this.configService.get<string>('JWT_REFRESH_SECRET', this.configService.get<string>('JWT_SECRET', 'change-me'));
   }
 
   private async signTokenPair(
@@ -383,6 +375,8 @@ export class AuthSessionService {
     return {
       accessToken,
       refreshToken,
+      tokenType: 'Bearer',
+      expiresIn: this.sessionPolicy.accessTokenTtl,
     };
   }
 }

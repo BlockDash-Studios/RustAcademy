@@ -350,59 +350,6 @@ export class AiService {
       );
     }
 
-    
-  async getRecommendation(userId: string): Promise<AiRecommendationResponse> {
-    const snapshot = this.redisService
-      ? await this.redisService.getUserSnapshot(userId)
-      : null;
-
-    if (!snapshot) {
-      return {
-        userId,
-        recommendations: [],
-        explainability: {
-          factors: ['insufficient_data'],
-          confidence: 0.1,
-          userSignalAge: 0,
-          signalsUsed: [],
-          modelVersion: 'rustacademy-recommender-v2',
-        },
-        generatedAt: new Date(),
-      };
-    }
-
-    const explainability = this.redisService
-      ? await this.redisService.getRecommendationExplainability(userId)
-      : null;
-
-    const recommendedCourses = snapshot.recentCourses.length > 0
-      ? snapshot.recentCourses.slice(0, 3)
-      : ['rust-fundamentals', 'smart-contracts-101', 'stellar-basics'];
-
-    const recommendations = recommendedCourses.map((courseId, index) => ({
-      courseId,
-      score: Math.max(0, 1 - index * 0.2 - (snapshot.interactionCount > 0 ? 0 : 0.3)),
-      reason: explainability?.factors[index] || 'course_popularity',
-    }));
-
-    if (this.monitoringService) {
-      this.monitoringService.recordDomainEvent('recommendation_generated', 'ai');
-    }
-
-    return {
-      userId,
-      recommendations,
-      explainability: explainability || {
-        factors: [],
-        confidence: 0.1,
-        userSignalAge: 0,
-        signalsUsed: [],
-        modelVersion: 'rustacademy-recommender-v2',
-      },
-      generatedAt: new Date(),
-    };
-  }
-
     const lines = code.split('\n').filter((l) => l.trim().length > 0).length;
     const hasComments = code.includes('//') || code.includes('/*');
     const hasFunctions = code.includes('fn ');
@@ -463,6 +410,58 @@ export class AiService {
       weaknesses,
       suggestions,
       evaluatedAt: new Date(),
+    };
+  }
+
+  async getRecommendation(userId: string): Promise<AiRecommendationResponse> {
+    const snapshot = this.redisService
+      ? await this.redisService.getUserSnapshot(userId)
+      : null;
+
+    if (!snapshot) {
+      return {
+        userId,
+        recommendations: [],
+        explainability: {
+          factors: ['insufficient_data'],
+          confidence: 0.1,
+          userSignalAge: 0,
+          signalsUsed: [],
+          modelVersion: 'rustacademy-recommender-v2',
+        },
+        generatedAt: new Date(),
+      };
+    }
+
+    const explainability = this.redisService
+      ? await this.redisService.getRecommendationExplainability(userId)
+      : null;
+
+    const recommendedCourses = snapshot.recentCourses.length > 0
+      ? snapshot.recentCourses.slice(0, 3)
+      : ['rust-fundamentals', 'smart-contracts-101', 'stellar-basics'];
+
+    const recommendations = recommendedCourses.map((courseId, index) => ({
+      courseId,
+      score: Math.max(0, 1 - index * 0.2 - (snapshot.interactionCount > 0 ? 0 : 0.3)),
+      reason: explainability?.factors[index] || 'course_popularity',
+    }));
+
+    if (this.monitoringService) {
+      this.monitoringService.recordDomainEvent('recommendation_generated', 'ai');
+    }
+
+    return {
+      userId,
+      recommendations,
+      explainability: explainability || {
+        factors: [],
+        confidence: 0.1,
+        userSignalAge: 0,
+        signalsUsed: [],
+        modelVersion: 'rustacademy-recommender-v2',
+      },
+      generatedAt: new Date(),
     };
   }
 

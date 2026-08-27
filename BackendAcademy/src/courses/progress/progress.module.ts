@@ -3,9 +3,10 @@ import { CourseModule } from '../course.module';
 import { ProgressController } from './progress.controller';
 import { ProgressService } from './progress.service';
 import { TransactionManagerService } from '../../common/transaction-manager.service';
+import { AuthModule } from '../../auth/auth.module';
 
 @Module({
-  imports: [CourseModule],
+  imports: [CourseModule, AuthModule],
   controllers: [ProgressController],
   providers: [ProgressService, TransactionManagerService],
   exports: [ProgressService],
