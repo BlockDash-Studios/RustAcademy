@@ -404,7 +404,6 @@ export class AnalyticsService {
       totalDiscrepanciesFound: totalDiscrepancies,
     };
   }
-}
 
   // ── Notification batching analytics (#386) ────────────────
 

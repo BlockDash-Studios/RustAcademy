@@ -22,8 +22,13 @@ import { RestoreRevisionDto } from './dto/restore-revision.dto';
 import { CompleteCourseDto } from './dto/complete-course.dto';
 import { CreateRatingDto } from './dto/create-rating.dto';
 import { CourseRatingStatsDto } from './dto/rating-stats.dto';
-import { JwtLearnerGuard } from '../auth/guards/jwt-learner.guard';
-import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import {
+  JwtLearnerGuard,
+  RolesGuard,
+  Roles,
+  UserRole,
+  JwtPayload,
+} from '../auth';
 
 @Controller('courses')
 export class CourseController {
@@ -136,7 +141,8 @@ export class CourseController {
    * Returns 201 Created on first submission, 200 OK on update.
    */
   @Post(':id/ratings')
-  @UseGuards(JwtLearnerGuard)
+  @UseGuards(JwtLearnerGuard, RolesGuard)
+  @Roles(UserRole.LEARNER)
   async submitRating(
     @Param('id') courseId: string,
     @Body() dto: CreateRatingDto,
@@ -179,7 +185,8 @@ export class CourseController {
    */
   @Delete(':id/ratings')
   @HttpCode(204)
-  @UseGuards(JwtLearnerGuard)
+  @UseGuards(JwtLearnerGuard, RolesGuard)
+  @Roles(UserRole.LEARNER)
   async deleteRating(
     @Param('id') courseId: string,
     @Request() req: Express.Request & { user: JwtPayload },

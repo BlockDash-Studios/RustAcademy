@@ -235,13 +235,18 @@ export class UsersService {
     return this.deletedUsers.has(userId);
   }
 
-  async onPasswordChanged(userId: string): Promise<void> {
+async onPasswordChanged(userId: string): Promise<void> {
     await this.authSessionService?.onPasswordChanged(userId);
   }
 
   async onPasswordReset(userId: string): Promise<void> {
     await this.authSessionService?.onPasswordReset(userId);
   }
+
+  /**
+   * Records an asset upload for a user.
+   */
+  private trackUserUpload(userId: string, assetId: string): void {
     if (!this.userUploads.has(userId)) {
       this.userUploads.set(userId, new Set());
     }

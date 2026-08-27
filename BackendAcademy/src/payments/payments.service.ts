@@ -122,7 +122,7 @@ export class PaymentsService {
     private readonly databaseService: DatabaseService,
     @Optional()
     private readonly contractAdapter?: IContractAdapter,
-  ) {}
+    @Optional()
     private readonly configService?: ConfigService,
   ) {
     this.defaultTimeoutMs = this.configService?.get<number>('DEFAULT_REQUEST_TIMEOUT_MS') ?? 30_000;
@@ -261,14 +261,6 @@ export class PaymentsService {
   async getAllCoupons() {
     return this.databaseService.getAllCoupons();
   }
-} async getRedemptionHistory(userId: string) {
-    return this.databaseService.getRedemptionsByUser(userId);
-  }
-
-  async getAllCoupons() {
-    return this.databaseService.getAllCoupons();
-  }
-}
 
   /**
    * Processes a validated, signature-checked payment webhook event.

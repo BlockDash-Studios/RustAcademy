@@ -1,8 +1,10 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { LocalizationService } from '../i18n/localization.service';
+import { JwtAdminGuard, RolesGuard, Roles, UserRole } from '../auth';
 
 @Controller('admin')
+@UseGuards(JwtAdminGuard, RolesGuard)
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
@@ -10,6 +12,7 @@ export class AdminController {
   ) {}
 
   @Get('analytics/summary')
+  @Roles(UserRole.ADMIN)
   async getDashboardSummary() {
     const summary = await this.adminService.getDashboardSummary();
     return {

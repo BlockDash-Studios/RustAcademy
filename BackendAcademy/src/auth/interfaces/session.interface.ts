@@ -26,13 +26,13 @@ export interface Session {
   expiresAt: Date;
 
   /** Absolute maximum lifetime of the session, independent of JWT exp. */
-  absoluteExpiresAt: Date;
+  absoluteExpiresAt?: Date;
 
   /** Timestamp after which the session is considered idle-expired if no activity. */
-  idleExpiresAt: Date;
+  idleExpiresAt?: Date;
 
   /** Grace period in seconds allowed for token delivery after expiry (clock skew buffer). */
-  deliveryGraceSeconds: number;
+  deliveryGraceSeconds?: number;
 
   /** Flag set to true once the session is revoked (logout / rotation). */
   revoked: boolean;
@@ -45,4 +45,26 @@ export interface Session {
 
   /** Whether the device has been previously trusted by this user. */
   isTrustedDevice?: boolean;
+}
+
+/**
+ * Payload embedded in a signed refresh JWT.
+ */
+export interface RefreshTokenPayload {
+  sub: string;
+  sessionId: string;
+  role: UserRole;
+  iat?: number;
+  exp?: number;
+}
+
+/**
+ * Returned to the caller after a successful login or token refresh.
+ */
+export interface AuthTokensResponse {
+  accessToken: string;
+  refreshToken: string;
+  tokenType: 'Bearer';
+  /** Access token TTL in seconds. */
+  expiresIn: number;
 }
