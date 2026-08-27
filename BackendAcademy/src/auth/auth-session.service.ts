@@ -2,7 +2,6 @@
   Injectable,
   UnauthorizedException,
   Logger,
-  Inject,
   Optional,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -16,7 +15,7 @@ import {
   RefreshTokenPayload,
   Session,
 } from './interfaces/session.interface';
-import { Redis } from 'ioredis';
+import { RedisService } from '../redis/redis.service';
 
 /**
  * #350: Centralized session policy configuration.
@@ -69,15 +68,12 @@ const DEFAULT_SESSION_POLICY: SessionPolicy = {
 export class AuthSessionService {
   private readonly logger = new Logger(AuthSessionService.name);
 
-  /**
-   * #350: Centralized session policy
-   */
   private readonly sessionPolicy: SessionPolicy;
 
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    @Optional() private readonly redis: RedisService,
     @Optional() private readonly auditService?: AuditLogService,
   ) {
     // #350: Load centralized session policy from config
@@ -209,9 +205,8 @@ export class AuthSessionService {
     }
 
     if (this.hashToken(rawRefreshToken) !== session.refreshTokenHash) {
-      // Token reuse detected — revoke the whole session as a security measure.
-      session.revoked = true;
-      await this.setSession(session);
+      // Replay detection — the whole refresh-token family may be compromised.
+      await this.revokeAllUserSessions(session.userId, 'token_reuse');
       throw new UnauthorizedException({
         error: 'TOKEN_REUSE_DETECTED',
         message: 'Refresh token has already been used; session revoked',
@@ -239,13 +234,13 @@ export class AuthSessionService {
    * Revokes a single session (logout from current device).
    * Also clears any cached refresh-token data associated with the session.
    */
-  async revokeSession(sessionId: string): Promise<void> {
+  async revokeSession(sessionId: string, reason = 'logout'): Promise<void> {
     const session = await this.getSession(sessionId);
     if (session) {
       session.revoked = true;
       await this.setSession(session);
       this.logger.log(`Session ${sessionId} revoked for user ${session.userId}`);
-      this.auditService?.create({ action: 'logout', actor: session.userId, outcome: 'SUCCESS', session: sessionId });
+      this.auditService?.create({ action: reason, actor: session.userId, outcome: 'SUCCESS', session: sessionId });
     }
   }
 
@@ -253,7 +248,7 @@ export class AuthSessionService {
    * Revokes all active sessions for a user (logout from all devices).
    * Clears all associated refresh tokens and cached session data.
    */
-  async revokeAllUserSessions(userId: string): Promise<void> {
+  async revokeAllUserSessions(userId: string, reason = 'logout_all'): Promise<void> {
     const sessionIds = await this.redis.smembers(`userSessions:${userId}`);
     let count = 0;
     for (const sessionId of sessionIds) {
@@ -265,20 +260,39 @@ export class AuthSessionService {
       }
     }
     this.logger.log(`All ${count} sessions revoked for user ${userId}`);
-    this.auditService?.create({ action: 'logout_all', actor: userId, outcome: 'SUCCESS', requestContext: { count } });
+    this.auditService?.create({ action: reason, actor: userId, outcome: 'SUCCESS', requestContext: { count } });
+  }
+
+  async onPasswordChanged(userId: string): Promise<void> {
+    await this.revokeAllUserSessions(userId, 'password_changed');
+  }
+
+  async onPasswordReset(userId: string): Promise<void> {
+    await this.revokeAllUserSessions(userId, 'password_reset');
+  }
+
+  async onPrivilegeChanged(userId: string): Promise<void> {
+    await this.revokeAllUserSessions(userId, 'privilege_changed');
+  }
+
+  async onAccountDeleted(userId: string): Promise<void> {
+    await this.revokeAllUserSessions(userId, 'account_deleted');
+    await this.redis.del(`userSessions:${userId}`);
+    await this.redis.del(`trustedDevices:${userId}`);
   }
 
   /**
    * Returns all active (non-revoked, non-expired) sessions for a user.
    */
-  async getActiveSessions(userId: string): Promise<Omit<Session, 'refreshToken' | 'refreshTokenHash'>[]> {
+  async getActiveSessions(userId: string): Promise<Omit<Session, 'refreshTokenHash'>[]> {
     const sessionIds = await this.redis.smembers(`userSessions:${userId}`);
     const now = new Date();
-    const result: Omit<Session, 'refreshToken' | 'refreshTokenHash'>[] = [];
+    const result: Omit<Session, 'refreshTokenHash'>[] = [];
     for (const sessionId of sessionIds) {
       const session = await this.getSession(sessionId);
       if (session && !session.revoked && session.expiresAt > now) {
-        const { refreshTokenHash: _omitted, ...rest } = session;
+        const { refreshTokenHash, ...rest } = session;
+        void refreshTokenHash;
         result.push(rest);
       }
     }
@@ -332,14 +346,20 @@ export class AuthSessionService {
   private async getSession(sessionId: string): Promise<Session | null> {
     const data = await this.redis.get(this.sessionKey(sessionId));
     if (!data) return null;
-    return JSON.parse(data) as Session;
+    const session = JSON.parse(data as string) as Session;
+    session.createdAt = new Date(session.createdAt);
+    session.expiresAt = new Date(session.expiresAt);
+    return session;
   }
 
   private async setSession(session: Session): Promise<void> {
-    const tll = Math.max(1, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000) + this.sessionPolicy.deliveryGracePeriod);
-    await this.redis.set(this.sessionKey(session.sessionId), JSON.stringify(session), 'EX', tll);
-    const userKey = this.userSessionsKey(session.userId);
-    await this.redis.sadd(userKey, session.sessionId);
+    const ttlMs = Math.max(
+      1,
+      (session.expiresAt.getTime() - Date.now()) +
+        this.sessionPolicy.deliveryGracePeriod * 1000,
+    );
+    await this.redis.set(this.sessionKey(session.sessionId), JSON.stringify(session), ttlMs);
+    await this.redis.sadd(this.userSessionsKey(session.userId), session.sessionId);
   }
 
   private get refreshSecret(): string {
@@ -380,9 +400,3 @@ export class AuthSessionService {
     };
   }
 }
-
-
-
-
-
-

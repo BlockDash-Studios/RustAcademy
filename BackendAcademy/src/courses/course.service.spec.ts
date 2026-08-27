@@ -381,6 +381,84 @@ describe('CourseService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Taxonomy normalization (BA-047)
+  // ---------------------------------------------------------------------------
+
+  it('normalizes free-text fields on create', async () => {
+    const course = await service.create({
+      title: '  Rust   Basics  ',
+      description: '  An intro to Rust.  ',
+      level: 'INTERMEDIATE' as CourseLevel,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+    });
+
+    expect(course.title).toBe('Rust Basics');
+    expect(course.description).toBe('An intro to Rust.');
+    expect(course.level).toBe(CourseLevel.INTERMEDIATE);
+    expect(course.slug).toBe('rust-basics');
+  });
+
+  it('canonicalizes taxonomy arrays (trim, lowercase, dedupe, drop blanks) on create', async () => {
+    const course = await service.create({
+      title: 'Rust Basics',
+      description: 'An intro',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+      category: 'WASM',
+      categories: ['WASM', '  Rust ', 'Rust', '  '],
+      tags: [' Ownership ', 'ownership'],
+      prerequisites: ['  borrowed ', 'lifetimes'],
+      skills: ['Memory Safety', 'memory safety'],
+    });
+
+    expect(course.category).toBe('wasm');
+    expect(course.categories).toEqual(['wasm', 'rust']);
+    expect(course.tags).toEqual(['ownership']);
+    expect(course.prerequisites).toEqual(['borrowed', 'lifetimes']);
+    expect(course.skills).toEqual(['memory safety']);
+  });
+
+  it('normalizes taxonomy fields on update only when provided', async () => {
+    const course = await service.create({
+      title: 'Rust Basics',
+      description: 'An intro',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+      tags: [' original '],
+      prerequisites: ['stay'],
+    });
+
+    const updated = await service.update(course.id, { skills: [' WASM ', 'wasm'] });
+
+    // Fields that were not part of the update payload must be untouched.
+    expect(updated!.tags).toEqual(['original']);
+    expect(updated!.prerequisites).toEqual(['stay']);
+    // Provided taxonomy is canonicalized.
+    expect(updated!.skills).toEqual(['wasm']);
+  });
+
+  it('keeps the canonical title bound reflected in the persisted slug on update', async () => {
+    const course = await service.create({
+      title: 'Rust Basics',
+      description: 'An intro',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+    });
+
+    const updated = await service.update(course.id, { title: ' Rust   Advanced ' });
+    expect(updated!.title).toBe('Rust Advanced');
+    expect(updated!.slug).toBe('rust-advanced');
+  });
+
   // Revision lookup
   // ---------------------------------------------------------------------------
 

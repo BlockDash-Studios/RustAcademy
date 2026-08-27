@@ -45,6 +45,7 @@ import { RedisModule } from './redis/redis.module';
 import { ReportsModule } from './reports/reports.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { AuditModule } from './audit/audit.module';
+import { HintsModule } from './hints/hint.module';
 
 @Module({
   imports: [
@@ -90,6 +91,7 @@ import { AuditModule } from './audit/audit.module';
     I18nModule,
     NotificationsModule,
     HealthModule,
+    HintsModule,
   ],
   controllers: [AppController],
   providers: [
