@@ -70,6 +70,11 @@ export class CourseController {
     return this.courseService.remove(id);
   }
 
+  @Post(':id/restore')
+  async restore(@Param('id') id: string) {
+    return this.courseService.restoreCourse(id);
+  }
+
   // ---------------------------------------------------------------------------
   // Revision history endpoints
   //

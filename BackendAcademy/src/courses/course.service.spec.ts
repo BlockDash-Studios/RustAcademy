@@ -3,6 +3,7 @@ import { CourseService } from './course.service';
 import { CourseEntity } from './course.entity';
 import { CourseRevisionEntity } from './course-revision.entity';
 import { CourseLevel } from './interfaces/course-level.enum';
+import { TransactionManagerService } from '../common/transaction-manager.service';
 
 import { RewardsService } from '../rewards/rewards.service';
 
@@ -134,12 +135,75 @@ describe('CourseService', () => {
       courseRepo as unknown as import('typeorm').Repository<CourseEntity>,
       revisionRepo as unknown as import('typeorm').Repository<CourseRevisionEntity>,
       rewardsService,
-      undefined as any,
+      new TransactionManagerService(),
       undefined as any,
       undefined,
       searchIndexer as any,
       redisService as any,
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Soft-delete and restore lifecycle (#352)
+  // ---------------------------------------------------------------------------
+
+  it('soft-deletes a course by marking it inactive instead of removing the row', async () => {
+    const course = await service.create({
+      title: 'SoftDel',
+      description: 'Desc',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+    });
+
+    const removed = await service.remove(course.id);
+    expect(removed).toBe(true);
+
+    // Course is inactive but still findable by id
+    const fetched = await service.findById(course.id);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.isActive).toBe(false);
+
+    // Does NOT appear in active-only listings
+    const all = await service.findAll();
+    expect(all.map((c) => c.id)).not.toContain(course.id);
+
+    // Revision history is preserved
+    const revisions = await service.getRevisions(course.id);
+    expect(revisions.length).toBeGreaterThanOrEqual(2);
+    expect(revisions[revisions.length - 1].reason).toBe('update');
+    expect(revisions[revisions.length - 1].changeNote).toBe('Course soft-deleted');
+  });
+
+  it('restores a soft-deleted course and records a restore revision', async () => {
+    const course = await service.create({
+      title: 'Restorable',
+      description: 'Desc',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+    });
+
+    await service.remove(course.id);
+    const restored = await service.restoreCourse(course.id);
+
+    expect(restored).not.toBeNull();
+    expect(restored!.isActive).toBe(true);
+    expect(restored!.version).toBe(3); // create + soft-delete + restore
+
+    const all = await service.findAll();
+    expect(all.map((c) => c.id)).toContain(course.id);
+
+    const revisions = await service.getRevisions(course.id);
+    expect(revisions[revisions.length - 1].reason).toBe('restore');
+    expect(revisions[revisions.length - 1].changeNote).toBe('Course restored from soft-delete');
+  });
+
+  it('returns null when restoring a non-existent course', async () => {
+    const result = await service.restoreCourse('ghost-course');
+    expect(result).toBeNull();
   });
 
   // ---------------------------------------------------------------------------
@@ -462,7 +526,7 @@ describe('CourseService', () => {
   // Removal preserves revision history
   // ---------------------------------------------------------------------------
 
-  it('removes the course but keeps its revision history queryable for audit', async () => {
+  it('soft-deletes a course and keeps its revision history queryable for audit', async () => {
     const course = await service.create({
       title: 'ToDelete',
       description: 'Desc',
@@ -474,15 +538,20 @@ describe('CourseService', () => {
 
     expect(await service.remove(course.id)).toBe(true);
 
-    // The course itself is gone
-    expect(await service.findById(course.id)).toBeNull();
-    // But the revision snapshot is preserved (the repo's `remove` only
-    // touches the course row).  This matches the production behaviour where
-    // revisions survive a course deletion for audit purposes.
+    // The course is inactive but still present (soft-delete)
+    const fetched = await service.findById(course.id);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.isActive).toBe(false);
+
+    // Revision history is preserved — both the initial create and
+    // the soft-delete revision exist.
     const revisions = await service.getRevisions(course.id);
-    expect(revisions).toHaveLength(1);
+    expect(revisions).toHaveLength(2);
     expect(revisions[0].snapshot.title).toBe('ToDelete');
+    expect(revisions[0].reason).toBe('create');
+    expect(revisions[1].reason).toBe('update');
+    expect(revisions[1].changeNote).toBe('Course soft-deleted');
     expect(await service.getRevisionByVersion(course.id, 1)).not.toBeNull();
-    expect(await service.getRevisionCount(course.id)).toBe(1);
+    expect(await service.getRevisionCount(course.id)).toBe(2);
   });
 });

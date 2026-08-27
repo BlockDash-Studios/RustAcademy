@@ -17,11 +17,11 @@ export class MigrationController {
    * Returns the rollback plan without executing it.
    */
   @Get('rollback-plan')
-  getRollbackPlan(@Query('steps') steps?: string): {
-    plan: ReturnType<MigrationService['getRollbackPlan']>;
-  } {
+  async getRollbackPlan(@Query('steps') steps?: string): Promise<{
+    plan: Awaited<ReturnType<MigrationService['getRollbackPlan']>>;
+  }> {
     const stepCount = steps ? parseInt(steps, 10) : 5;
-    return { plan: this.migrationService.getRollbackPlan(stepCount) };
+    return { plan: await this.migrationService.getRollbackPlan(stepCount) };
   }
 
   /**
@@ -50,7 +50,7 @@ export class MigrationController {
    * Returns the migration history.
    */
   @Get('history')
-  getHistory() {
-    return { migrations: this.migrationService.getMigrationHistory() };
+  async getHistory() {
+    return { migrations: await this.migrationService.getMigrationHistory() };
   }
 }

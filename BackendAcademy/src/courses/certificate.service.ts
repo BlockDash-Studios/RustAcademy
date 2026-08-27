@@ -65,9 +65,12 @@ export class CertificateService {
   constructor(private readonly configService: ConfigService) {}
 
   /**
-   * Generate a new certificate for a completed course.
+   * #360: Generate a new certificate for a completed course, or return
+   * the existing active certificate if one already exists for this
+   * user+course pair. This makes the operation idempotent — repeated
+   * calls with the same arguments always return the same certificate.
    *
-   * @returns The newly created certificate record.
+   * @returns The existing or newly created certificate record.
    */
   async generateCertificate(params: {
     userId: string;
@@ -76,6 +79,18 @@ export class CertificateService {
     userName?: string;
     xpAwarded: number;
   }): Promise<CertificateRecord> {
+    // Idempotent: return existing active certificate if present
+    const existing = this.findActiveByUserAndCourse(
+      params.userId,
+      params.courseId,
+    );
+    if (existing) {
+      this.logger.log(
+        `Certificate already exists: ${existing.id} for user=${params.userId}, course=${params.courseId} — returning existing`,
+      );
+      return existing;
+    }
+
     const id = `cert_${uuidv4()}`;
     const verificationCode = this.generateVerificationCode();
     const baseUrl = this.configService.get<string>(
@@ -109,6 +124,25 @@ export class CertificateService {
     );
 
     return certificate;
+  }
+
+  /**
+   * #360: Find the first active certificate for a user+course pair.
+   * Returns undefined when no active certificate exists.
+   */
+  private findActiveByUserAndCourse(
+    userId: string,
+    courseId: string,
+  ): CertificateRecord | undefined {
+    const ids = this.byUser.get(userId);
+    if (!ids) return undefined;
+    for (const id of ids) {
+      const cert = this.certificates.get(id);
+      if (cert && cert.courseId === courseId && cert.status === 'active') {
+        return cert;
+      }
+    }
+    return undefined;
   }
 
   /**

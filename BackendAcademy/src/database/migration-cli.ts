@@ -99,7 +99,7 @@ async function bootstrap() {
 
     case 'history': {
       console.log('📜 Migration history:\n');
-      const history = migrationService.getMigrationHistory();
+      const history = await migrationService.getMigrationHistory();
       if (history.length === 0) {
         console.log('  No migrations recorded.');
       }
