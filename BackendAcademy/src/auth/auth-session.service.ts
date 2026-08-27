@@ -182,7 +182,10 @@ export class AuthSessionService {
     return this.withRefreshLock(payload.sessionId, async () => {
       const claimKey = `refreshClaim:${payload.sessionId}`;
       const claimed = await this.redis.set(claimKey, randomUUID(), 'EX', 30, 'NX');
-      if (claimed !== 'OK') {
+      // ioredis returns "OK" on success and null when the NX key already
+      // exists. Store adapters without NX semantics (e.g. RedisService)
+      // resolve to void/undefined, which we treat as a successful claim.
+      if (claimed === null) {
         throw new UnauthorizedException({
           error: 'SESSION_NOT_FOUND',
           message: 'Session has been revoked or does not exist',
@@ -199,9 +202,9 @@ export class AuthSessionService {
       }
 
       if (this.hashToken(rawRefreshToken) !== session.refreshTokenHash) {
-        session.revoked = true;
-        await this.setSession(session);
-        await this.redis.del(claimKey);
+        // A replay indicates that the user's refresh-token family may be
+        // compromised, so revoke every remaining session for the user.
+        await this.revokeAllUserSessions(session.userId, 'token_reuse');
         throw new UnauthorizedException({
           error: 'TOKEN_REUSE_DETECTED',
           message: 'Refresh token has already been used; session revoked',
@@ -252,17 +255,71 @@ export class AuthSessionService {
     });
   }
 
-  async revokeSession(sessionId: string): Promise<void> {
+  /**
+   * Validates that a session is still active (exists, not revoked, not
+   * expired, not idle). Throws `UnauthorizedException` otherwise. Used by
+   * guards enforcing session lifetime independently of JWT verification.
+   */
+  async validateSession(sessionId: string): Promise<Session> {
+    const session = await this.getSession(sessionId);
+    const now = new Date();
+
+    if (!session || session.revoked) {
+      throw new UnauthorizedException({
+        error: 'SESSION_NOT_FOUND',
+        message: 'Session is expired, revoked, or does not exist',
+      });
+    }
+
+    if (this.isSessionExpired(session, now)) {
+      session.revoked = true;
+      await this.setSession(session);
+      throw new UnauthorizedException({
+        error: 'SESSION_EXPIRED',
+        message: 'Session has expired; please log in again',
+      });
+    }
+
+    if (this.isSessionIdle(session, now)) {
+      session.revoked = true;
+      await this.setSession(session);
+      throw new UnauthorizedException({
+        error: 'SESSION_IDLE_TIMEOUT',
+        message: 'Session has been idle for too long; please log in again',
+      });
+    }
+
+    return session;
+  }
+
+  /**
+   * Validates an active session (same checks as {@link validateSession}) and
+   * refreshes the last-activity timestamp, extending the idle window.
+   */
+  async validateAndRefreshSession(sessionId: string): Promise<Session> {
+    const session = await this.validateSession(sessionId);
+    await this.touchSession(sessionId);
+    return session;
+  }
+
+  /**
+   * Revokes a single session (logout from current device).
+   */
+  async revokeSession(sessionId: string, reason = 'logout'): Promise<void> {
     const session = await this.getSession(sessionId);
     if (session) {
       session.revoked = true;
       await this.setSession(session);
       this.logger.log(`Session ${sessionId} revoked for user ${session.userId}`);
-      await this.audit('logout', session.userId, { session: sessionId });
+      await this.audit(reason, session.userId, { session: sessionId });
     }
   }
 
-  async revokeAllUserSessions(userId: string): Promise<void> {
+  /**
+   * Revokes all active sessions for a user (logout from all devices).
+   * Also clears the user's session-set so orphaned ids do not accumulate.
+   */
+  async revokeAllUserSessions(userId: string, reason = 'logout_all'): Promise<void> {
     const sessionIds = await this.redis.smembers(this.userSessionsKey(userId));
     let count = 0;
     for (const sessionId of sessionIds) {
@@ -274,7 +331,27 @@ export class AuthSessionService {
       }
     }
     this.logger.log(`All ${count} sessions revoked for user ${userId}`);
-    await this.audit('logout_all', userId, { requestContext: { count } });
+    await this.audit(reason, userId, { requestContext: { count } });
+  }
+
+  /**
+   * #360: Revoke all sessions when a security-sensitive user event occurs.
+   */
+  async onPasswordChanged(userId: string): Promise<void> {
+    await this.revokeAllUserSessions(userId, 'password_changed');
+  }
+
+  async onPasswordReset(userId: string): Promise<void> {
+    await this.revokeAllUserSessions(userId, 'password_reset');
+  }
+
+  async onPrivilegeChanged(userId: string): Promise<void> {
+    await this.revokeAllUserSessions(userId, 'privilege_changed');
+  }
+
+  async onAccountDeleted(userId: string): Promise<void> {
+    await this.revokeAllUserSessions(userId, 'account_deleted');
+    await this.redis.del(`trustedDevices:${userId}`);
   }
 
   /**
@@ -341,6 +418,14 @@ export class AuthSessionService {
   // -------------------------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------------------------
+
+  private async touchSession(sessionId: string): Promise<void> {
+    const session = await this.getSession(sessionId);
+    if (session) {
+      session.lastUsedAt = new Date();
+      await this.setSession(session);
+    }
+  }
 
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');

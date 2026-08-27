@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, Optional, ConflictException } fr
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CourseEntity } from './course.entity';
+import { CourseLevel } from './interfaces/course-level.enum';
 import {
   CourseRevisionEntity,
   CourseRevisionReason,
@@ -71,12 +72,14 @@ export class CourseService {
    * observe a course without an audit trail entry.
    */
   async create(dto: CreateCourseDto): Promise<CourseEntity> {
-    const slug = await this.createUniqueSlug(dto.title);
+    // BA-047: bound + canonicalize taxonomy before anything is persisted.
+    const normalized = this.normalizeCourseInput(dto);
+    const slug = await this.createUniqueSlug(normalized.title ?? dto.title);
     const course = this.courseRepo.create({
       id: crypto.randomUUID(),
       version: CourseService.INITIAL_VERSION,
       slug,
-      ...dto,
+      ...normalized,
     });
 
     const txResult = await this.transactionManager.runAtomic(async (tx) => {
@@ -128,14 +131,17 @@ export class CourseService {
     const course = await this.courseRepo.findOne({ where: { id } });
     if (!course) return null;
 
+    // BA-047: bound + canonicalize taxonomy so only canonical values persist.
+    const normalized = this.normalizeCourseInput(dto);
+
     const previousVersion = course.version;
     course.version = previousVersion + 1;
     course.updatedAt = new Date();
-    Object.assign(course, dto);
-    if (dto.title !== undefined) {
-      course.slug = await this.createUniqueSlug(dto.title, course.id);
+    Object.assign(course, normalized);
+    if (normalized.title !== undefined) {
+      course.slug = await this.createUniqueSlug(normalized.title, course.id);
     }
-    this.syncCourseTaxonomy(course, dto);
+    this.syncCourseTaxonomy(course, normalized);
     const saved = await this.courseRepo.save(course);
 
     // #449: Rollback the course update if the revision append fails
@@ -522,6 +528,92 @@ export class CourseService {
     if (dto.categories?.length && !dto.category) {
       course.category = dto.categories[0];
     }
+  }
+
+  /**
+   * BA-047: Canonicalize course taxonomy input so that only bounded,
+   * normalized values reach persistence.
+   *
+   * - Free-text fields (title, description, category) are trimmed and
+   *   inner whitespace is collapsed.
+   * - The enum level is lower-cased to its canonical `CourseLevel` value.
+   * - Taxonomy arrays (categories, tags, prerequisites, skills) are
+   *   trimmed, lower-cased, de-duplicated, and have blank items removed.
+   */
+  private normalizeCourseInput<T extends Partial<CreateCourseDto>>(
+    input: T,
+  ): Partial<CourseEntity> {
+    const normalized: Partial<CourseEntity> = { ...input } as Partial<
+      CourseEntity
+    >;
+
+    if (typeof normalized.title === 'string') {
+      normalized.title = this.collapseWhitespace(normalized.title);
+    }
+    if (typeof normalized.description === 'string') {
+      normalized.description = normalized.description.trim();
+    }
+    if (typeof normalized.category === 'string') {
+      normalized.category = this.normalizeTaxonomyItem(normalized.category);
+    }
+    if (typeof normalized.level === 'string') {
+      normalized.level = this.canonicalizeLevel(normalized.level);
+    }
+
+    // Only normalize taxonomy arrays that were actually provided, so an
+    // absent field on update never overwrites already-persisted values with
+    // an empty/undefined array.
+    if (Array.isArray(input.categories)) {
+      normalized.categories = this.normalizeTaxonomy(input.categories);
+    }
+    if (Array.isArray(input.tags)) {
+      normalized.tags = this.normalizeTaxonomy(input.tags);
+    }
+    if (Array.isArray(input.prerequisites)) {
+      normalized.prerequisites = this.normalizeTaxonomy(input.prerequisites);
+    }
+    if (Array.isArray(input.skills)) {
+      normalized.skills = this.normalizeTaxonomy(input.skills);
+    }
+
+    return normalized;
+  }
+
+  private collapseWhitespace(value: string): string {
+    return value.trim().replace(/\s+/g, ' ');
+  }
+
+  private normalizeTaxonomyItem(value: string): string {
+    return value
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+  }
+
+  private normalizeTaxonomy(values: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const raw of values) {
+      const item = this.normalizeTaxonomyItem(raw ?? '');
+      if (item && !seen.has(item)) {
+        seen.add(item);
+        result.push(item);
+      }
+    }
+    return result;
+  }
+
+  private canonicalizeLevel(level: string): CourseLevel {
+    const canonical = level.trim().toLowerCase();
+    if (
+      canonical === CourseLevel.BEGINNER ||
+      canonical === CourseLevel.INTERMEDIATE ||
+      canonical === CourseLevel.ADVANCED ||
+      canonical === CourseLevel.WEB3
+    ) {
+      return canonical as CourseLevel;
+    }
+    return level as CourseLevel;
   }
 
   private async createUniqueSlug(title: string, excludeId?: string): Promise<string> {

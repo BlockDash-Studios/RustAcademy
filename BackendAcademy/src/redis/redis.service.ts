@@ -29,6 +29,7 @@ export class RedisService implements OnApplicationShutdown {
   private readonly logger = new Logger(RedisService.name);
   private readonly snapshots = new Map<string, UserSnapshot>();
   private readonly cache = new Map<string, { value: unknown; expiresAt: number }>();
+  private readonly sets = new Map<string, Set<string>>();
   private readonly DEFAULT_TTL_MS = 5 * 60 * 1000;
   private readonly SNAPSHOT_TTL_MS = 2 * 60 * 1000;
 
@@ -130,6 +131,21 @@ export class RedisService implements OnApplicationShutdown {
 
   async del(key: string): Promise<void> {
     this.cache.delete(key);
+    this.sets.delete(key);
+  }
+
+  async sadd(key: string, value: string): Promise<void> {
+    const members = this.sets.get(key) ?? new Set<string>();
+    members.add(value);
+    this.sets.set(key, members);
+  }
+
+  async smembers(key: string): Promise<string[]> {
+    return Array.from(this.sets.get(key) ?? []);
+  }
+
+  async srem(key: string, value: string): Promise<void> {
+    this.sets.get(key)?.delete(value);
   }
 
   async getKeys(pattern: string): Promise<string[]> {
