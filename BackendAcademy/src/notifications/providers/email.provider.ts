@@ -5,6 +5,7 @@ import {
   DeliveryContext,
 } from '../interfaces/notification-provider.interface';
 import { Notification } from '../interfaces/notifications.interface';
+import { sanitiseTemplateValue } from '../email.service';
 
 /**
  * Default fallback values for missing personalization fields.
@@ -26,6 +27,10 @@ const FALLBACKS: Record<string, string> = {
  * Handles sending notifications via email. Supports template-based rendering
  * with fallback content for missing personalization fields so broken
  * or blank email content is never sent to users.
+ *
+ * All user-supplied values are HTML-escaped and dangerous constructs
+ * (script, iframe, etc.) are stripped before interpolation to prevent
+ * XSS attacks in email content.
  */
 @Injectable()
 export class EmailNotificationProvider implements INotificationProvider {
@@ -103,7 +108,7 @@ export class EmailNotificationProvider implements INotificationProvider {
     return true;
   }
 
-  // ── Template rendering with fallback support (#387) ───────────
+  // ── Template rendering with fallback support (#387, Task 2) ────────
 
   /**
    * Renders the email subject, applying personalization fields
@@ -150,14 +155,20 @@ export class EmailNotificationProvider implements INotificationProvider {
    * Replaces {{placeholder}} patterns in text with values from the
    * delivery context, falling back to defaults for any missing fields.
    *
-   * This is the core fix for issue #387: email templates always render
-   * complete, readable content even when user data is incomplete.
+   * Security (Task 2):
+   *  - All interpolated values are HTML-escaped via `sanitiseTemplateValue`
+   *    to prevent XSS when email content is rendered in HTML-capable
+   *    email clients.
+   *  - Dangerous HTML constructs (script, iframe, object, embed) are
+   *    stripped before escaping as a defence-in-depth measure.
+   *  - Unknown or missing placeholders fall back to `[keyName]` for
+   *    predictable, documented behaviour.
    */
   private applyPersonalization(
     text: string,
     context: DeliveryContext,
   ): string {
-    const fields = {
+    const fields: Record<string, string | undefined> = {
       name: context.name,
       email: context.email,
       ...(context.personalization || {}),
@@ -166,7 +177,7 @@ export class EmailNotificationProvider implements INotificationProvider {
     return text.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
       const value = fields[key];
       if (value !== undefined && value !== null && value !== '') {
-        return value;
+        return sanitiseTemplateValue(value);
       }
       // Use fallback or a safe placeholder
       return FALLBACKS[key] || `[${key}]`;
