@@ -9,6 +9,7 @@ import {
   SearchResults,
   UserSearchHit,
 } from './interfaces/search.interface';
+import { SearchRepository } from './interfaces/search-repository.interface';
 
 /**
  * Default field-weight configuration for course relevance (Issue #370).
@@ -38,52 +39,8 @@ export class SearchService {
   constructor(
     private readonly courseService: CourseService,
     @Optional() private readonly indexer?: SearchIndexerService,
+    @Optional() private readonly searchRepository?: SearchRepository,
   ) {}
-
-  /**
-   * In-memory fixture set. Replace with a real SearchRepository backed by
-   * Postgres `tsvector` (or an external index like Meilisearch / pg_trgm).
-   *
-   * TODO: replace with a SearchRepository.searchUsers|searchCourses|searchPosts.
-   */
-  private readonly users: UserSearchHit[] = [
-    { id: 'user-0001', username: 'rustmaster', displayName: 'Rust Master' },
-    { id: 'user-0002', username: 'codewarrior', displayName: 'Code Warrior' },
-    { id: 'user-0003', username: 'stellar-learner', displayName: 'Stellar Learner' },
-    { id: 'user-0004', username: 'soroban-tutor', displayName: 'Soroban Tutor' },
-    { id: 'user-0005', username: 'blockdash-dev', displayName: 'BlockDash Dev' },
-    { id: 'user-0006', username: 'rustacean', displayName: 'Rustacean' },
-    { id: 'user-0007', username: 'memorieslock', displayName: 'MemoriesLock' },
-    { id: 'user-0008', username: 'rust-newbie', displayName: 'Rust Newbie' },
-  ];
-
-  private readonly posts: PostSearchHit[] = [
-    {
-      id: 'post-001',
-      title: 'My first Soroban contract',
-      body: 'Building helloworld on Stellar is fun.',
-    },
-    {
-      id: 'post-002',
-      title: 'Rust lifetime annotations explained',
-      body: 'A clear walkthrough of the borrow checker.',
-    },
-    {
-      id: 'post-003',
-      title: 'Stellar path payments in 2026',
-      body: 'New path-finding APIs and best practices.',
-    },
-    {
-      id: 'post-004',
-      title: 'Onboarding for new Rust learners',
-      body: 'What the Rust Academy cohort should do first.',
-    },
-    {
-      id: 'post-005',
-      title: 'Memo on stellar transactions',
-      body: 'How text memos are encoded and limits.',
-    },
-  ];
 
   /**
    * Apply pagination + substring matching. Pure helper - intent is shared
@@ -131,13 +88,15 @@ export class SearchService {
   }
 
   searchUsers(query: SearchQueryDto): SearchResults<UserSearchHit> {
-    return this.paginate(
-      this.users,
-      query.q,
-      query.limit,
-      query.offset,
-      (u) => `${u.id} ${u.username} ${u.displayName}`,
-    );
+    if (this.searchRepository) {
+      return this.searchRepository.searchUsers({
+        q: query.q,
+        limit: query.limit,
+        offset: query.offset,
+      });
+    }
+    // Fallback: return empty results when no repository is available
+    return { entries: [], total: 0, hasMore: false };
   }
 
   /**
@@ -270,13 +229,15 @@ export class SearchService {
   }
 
   searchPosts(query: SearchQueryDto): SearchResults<PostSearchHit> {
-    return this.paginate(
-      this.posts,
-      query.q,
-      query.limit,
-      query.offset,
-      (p) => `${p.id} ${p.title} ${p.body}`,
-    );
+    if (this.searchRepository) {
+      return this.searchRepository.searchPosts({
+        q: query.q,
+        limit: query.limit,
+        offset: query.offset,
+      });
+    }
+    // Fallback: return empty results when no repository is available
+    return { entries: [], total: 0, hasMore: false };
   }
 
   /**
