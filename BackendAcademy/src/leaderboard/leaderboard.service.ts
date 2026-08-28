@@ -1,14 +1,20 @@
 import { Injectable } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { GetLeaderboardDto } from './dto/get-leaderboard.dto';
 import { LeaderboardEntry, LeaderboardResponse } from './interfaces/leaderboard.interface';
-import { v4 as uuidv4 } from 'uuid';
+
+/** BA-121: stable deterministic ID derived from username — survives restarts */
+function stableId(username: string): string {
+  return createHash('sha256').update(`leaderboard:${username}`).digest('hex').slice(0, 36);
+}
 
 @Injectable()
 export class LeaderboardService {
-  // Sample leaderboard data - in a real implementation, this would come from a database
+  // BA-121: IDs are now deterministic (SHA-256 of username) so snapshots are
+  // cacheable and userId-based rank queries work across process restarts.
   private sampleUsers: Omit<LeaderboardEntry, 'rank'>[] = [
     {
-      userId: uuidv4(),
+      userId: stableId('rustmaster'),
       username: 'rustmaster',
       avatarUrl: 'https://example.com/avatars/rustmaster.png',
       score: 15420,
@@ -17,7 +23,7 @@ export class LeaderboardService {
       streak: 45,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('codewarrior'),
       username: 'codewarrior',
       avatarUrl: 'https://example.com/avatars/codewarrior.png',
       score: 14890,
@@ -26,7 +32,7 @@ export class LeaderboardService {
       streak: 32,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('memorieslock'),
       username: 'memorieslock',
       avatarUrl: 'https://example.com/avatars/memorieslock.png',
       score: 14250,
@@ -35,7 +41,7 @@ export class LeaderboardService {
       streak: 28,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('rustacean'),
       username: 'rustacean',
       avatarUrl: 'https://example.com/avatars/rustacean.png',
       score: 13780,
@@ -44,7 +50,7 @@ export class LeaderboardService {
       streak: 21,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('systemshade'),
       username: 'systemshade',
       avatarUrl: 'https://example.com/avatars/systemshade.png',
       score: 13150,
@@ -53,7 +59,7 @@ export class LeaderboardService {
       streak: 18,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('codelover'),
       username: 'codelover',
       avatarUrl: 'https://example.com/avatars/codelover.png',
       score: 12890,
@@ -62,7 +68,7 @@ export class LeaderboardService {
       streak: 15,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('learningdev'),
       username: 'learningdev',
       avatarUrl: 'https://example.com/avatars/learningdev.png',
       score: 11560,
@@ -71,7 +77,7 @@ export class LeaderboardService {
       streak: 12,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('newbiecoder'),
       username: 'newbiecoder',
       avatarUrl: 'https://example.com/avatars/newbiecoder.png',
       score: 9870,

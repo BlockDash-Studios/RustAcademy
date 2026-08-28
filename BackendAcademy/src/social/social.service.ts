@@ -22,9 +22,20 @@ export class SocialService {
   private readonly hashtags = new Map<string, Hashtag>();
   private idCounter = 1;
 
+  /** BA-119: Maximum number of hashtags allowed per post to prevent spam. */
+  private static readonly MAX_HASHTAGS_PER_POST = 10;
+
   createPost(userId: string, dto: CreateSocialPostDto): SocialPost {
     const normalizedUserId = this.normalizeUserId(userId);
     const normalizedContent = this.normalizeContent(dto.content);
+
+    // BA-119: Reject posts that exceed the hashtag limit.
+    const hashtagCount = (normalizedContent.match(/#[a-zA-Z0-9_]+/g) ?? []).length;
+    if (hashtagCount > SocialService.MAX_HASHTAGS_PER_POST) {
+      throw new BadRequestException(
+        `Post may contain at most ${SocialService.MAX_HASHTAGS_PER_POST} hashtags, found ${hashtagCount}.`,
+      );
+    }
 
     const post: SocialPost = {
       id: this.generateId(),
