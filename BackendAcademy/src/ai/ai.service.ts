@@ -12,6 +12,8 @@ import {
   AiRecommendationResponse,
   ChatMessage,
   Hint,
+  HintUsageAnalytics,
+  HintUsageRecord,
   VoiceInteractionResponse,
   TtsResponse,
 } from './interfaces/ai.interface';
@@ -30,6 +32,14 @@ const MAX_CHAT_HISTORY_PER_USER = 200; // bound in-memory growth per user
 const MAX_TRACKED_USERS = 5_000; // bound total map size across users
 const MAX_PRE_SCORE_CODE_LENGTH = 20_000; // guard against oversized submissions
 
+/// BA-081: Redis key prefix for durable hint usage records.
+const HINT_USAGE_KEY_PREFIX = 'hint:usage:';
+/// BA-081: Redis key prefix for the per-hint user set (for unique-user counts).
+const HINT_USERS_KEY_PREFIX = 'hint:users:';
+/// BA-081: Hint usage must survive restarts for calibration analytics; keep
+/// records for 90 days instead of relying on the cache default TTL.
+const HINT_USAGE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -37,6 +47,8 @@ export class AiService {
   private chatHistory: Map<string, ChatMessage[]> = new Map();
   private chatRecords: Map<string, AiChatRecord> = new Map();
   private hints: Map<string, Hint[]> = new Map();
+  /** BA-081: Durable hint usage records keyed by `userId:hintId`. */
+  private hintUsage: Map<string, HintUsageRecord> = new Map();
   private readonly defaultTimeoutMs: number;
   private readonly maxChatHistoryLength: number;
 
@@ -249,7 +261,7 @@ export class AiService {
   }
 
   async getHint(getHintDto: GetHintDto): Promise<AiHintResponse> {
-    const { challengeId, difficulty = 1 } = getHintDto;
+    const { challengeId, difficulty = 1, userId } = getHintDto;
 
     const challengeHints = this.hints.get(challengeId) || [];
 
@@ -267,11 +279,121 @@ export class AiService {
 
     hint.usedCount++;
 
+    // BA-081: Persist user-scoped hint usage so counts are durable and can
+    // support difficulty calibration across instances. Falls back to a
+    // process-local map when RedisService isn't injected.
+    await this.recordHintUsage(userId, challengeId, hint);
+
     return {
       hint: hint.hint,
       hintId: hint.id,
       difficulty: hint.difficulty,
     };
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // BA-081: Hint usage analytics
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Persist a hint request, deduplicated per `userId:hintId`.
+   *
+   * The in-memory map is the source of truth when no RedisService is
+   * injected (unit tests). When it is, every record is mirrored to Redis
+   * under `hint:usage:{userId}:{hintId}` and every hint keeps a set of the
+   * users who used it (`hint:users:{hintId}`) so unique-user counts survive
+   * restarts and are correct across instances.
+   */
+  private async recordHintUsage(
+    userId: string,
+    challengeId: string,
+    hint: Hint,
+  ): Promise<void> {
+    const recordKey = `${userId}:${hint.id}`;
+    const existing = this.hintUsage.get(recordKey);
+    const now = new Date();
+
+    const record: HintUsageRecord = existing
+      ? { ...existing, usedCount: existing.usedCount + 1, lastUsedAt: now }
+      : {
+          hintId: hint.id,
+          challengeId,
+          difficulty: hint.difficulty,
+          userId,
+          usedCount: 1,
+          firstUsedAt: now,
+          lastUsedAt: now,
+        };
+    this.hintUsage.set(recordKey, record);
+
+    if (this.redisService) {
+      await Promise.all([
+        this.redisService.set(
+          `${HINT_USAGE_KEY_PREFIX}${recordKey}`,
+          record,
+          HINT_USAGE_TTL_MS,
+        ),
+        this.redisService.sadd(`${HINT_USERS_KEY_PREFIX}${hint.id}`, userId),
+      ]);
+    }
+  }
+
+  /**
+   * BA-081: Aggregate hint usage for analytics. Combines the process-local
+   * map with any records persisted in Redis so results are correct even
+   * after a restart or across replicas.
+   */
+  async getHintUsageAnalytics(): Promise<HintUsageAnalytics> {
+    const records = await this.collectHintUsageRecords();
+
+    const usesByHint: Record<string, number> = {};
+    const usesByDifficulty: Record<number, number> = {};
+    const uniqueUserIds = new Set<string>();
+    let totalUses = 0;
+
+    for (const record of records) {
+      usesByHint[record.hintId] = (usesByHint[record.hintId] ?? 0) + record.usedCount;
+      usesByDifficulty[record.difficulty] =
+        (usesByDifficulty[record.difficulty] ?? 0) + record.usedCount;
+      uniqueUserIds.add(record.userId);
+      totalUses += record.usedCount;
+    }
+
+    return {
+      totalUses,
+      uniqueUsers: uniqueUserIds.size,
+      records,
+      usesByHint,
+      usesByDifficulty,
+    };
+  }
+
+  /**
+   * BA-081: Fetch every persisted hint usage record, merging the local map
+   * with Redis state (Redis wins on key collision since it may contain data
+   * from another instance).
+   */
+  private async collectHintUsageRecords(): Promise<HintUsageRecord[]> {
+    const merged = new Map<string, HintUsageRecord>(this.hintUsage);
+
+    if (this.redisService) {
+      const persistedKeys = await this.redisService.getKeys(
+        `${HINT_USAGE_KEY_PREFIX}*`,
+      );
+      for (const key of persistedKeys) {
+        const stored = (await this.redisService.get(key)) as
+          | HintUsageRecord
+          | null
+          | undefined;
+        if (stored && stored.hintId) {
+          merged.set(key.replace(HINT_USAGE_KEY_PREFIX, ''), stored);
+        }
+      }
+    }
+
+    return Array.from(merged.values()).sort(
+      (a, b) => b.lastUsedAt.getTime() - a.lastUsedAt.getTime(),
+    );
   }
 
   async preScore(dto: PreScoreDto): Promise<PreScoreResult> {

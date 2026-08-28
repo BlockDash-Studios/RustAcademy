@@ -5,7 +5,7 @@ import { GetHintDto } from './dto/get-hint.dto';
 import { PreScoreDto } from './dto/pre-score.dto';
 import { VoiceInteractionDto } from './dto/voice-interaction.dto';
 import { TtsRequestDto } from './dto/tts-request.dto';
-import { ChatMessage } from './interfaces/ai.interface';
+import { ChatMessage, HintUsageAnalytics } from './interfaces/ai.interface';
 
 @Controller('ai')
 export class AiController {
@@ -19,6 +19,11 @@ export class AiController {
   @Post('hint')
   async getHint(@Body() getHintDto: GetHintDto) {
     return this.aiService.getHint(getHintDto);
+  }
+
+  @Get('hints/analytics')
+  async getHintUsageAnalytics(): Promise<HintUsageAnalytics> {
+    return this.aiService.getHintUsageAnalytics();
   }
 
   @Post('pre-score')

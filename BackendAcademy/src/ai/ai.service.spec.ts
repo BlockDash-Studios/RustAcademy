@@ -93,6 +93,46 @@ describe('AiService', () => {
       const hint = await service.getHint({ userId: 'user-1', challengeId: 'nope', difficulty: 1 });
       expect(hint.hint).toContain('No hints available');
     });
+
+    it('records user-scoped, deduplicated hint usage (BA-081)', async () => {
+      const service = new AiService(undefined, configService({}));
+
+      await service.getHint({ userId: 'user-1', challengeId: 'sample-challenge-001', difficulty: 1 });
+      await service.getHint({ userId: 'user-1', challengeId: 'sample-challenge-001', difficulty: 1 });
+      await service.getHint({ userId: 'user-2', challengeId: 'sample-challenge-001', difficulty: 1 });
+      await service.getHint({ userId: 'user-2', challengeId: 'sample-challenge-001', difficulty: 2 });
+
+      const analytics = await service.getHintUsageAnalytics();
+
+      // Same user requesting the same hint twice is one deduplicated record.
+      expect(analytics.uniqueUsers).toBe(2);
+      expect(analytics.totalUses).toBe(4);
+      expect(analytics.records).toHaveLength(3);
+
+      const firstHint = analytics.records.find(
+        (r) => r.userId === 'user-1' && r.difficulty === 1,
+      );
+      expect(firstHint?.usedCount).toBe(2);
+
+      // Difficulty distribution is captured for calibration.
+      expect(analytics.usesByDifficulty[1]).toBe(3);
+      expect(analytics.usesByDifficulty[2]).toBe(1);
+    });
+
+    it('survives a restart by persisting through RedisService (BA-081)', async () => {
+      const redis = new (require('../redis/redis.service').RedisService)();
+      const service = new AiService(undefined, configService({}), undefined, redis);
+
+      await service.getHint({ userId: 'user-1', challengeId: 'sample-challenge-001', difficulty: 1 });
+
+      // A fresh service instance (simulating a restart) reads from Redis.
+      const restarted = new AiService(undefined, configService({}), undefined, redis);
+      const analytics = await restarted.getHintUsageAnalytics();
+
+      expect(analytics.totalUses).toBe(1);
+      expect(analytics.uniqueUsers).toBe(1);
+      expect(analytics.records[0].userId).toBe('user-1');
+    });
   });
 
   describe('preScore', () => {
