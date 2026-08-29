@@ -20,7 +20,7 @@ import * as Joi from 'joi';
  */
 
 /** Runtime environments understood by the application. */
-export const NODE_ENVIRONMENTS = ['development', 'production', 'test'] as const;
+export const NODE_ENVIRONMENTS = ['development', 'production', 'staging', 'test'] as const;
 
 export type NodeEnvironment = (typeof NODE_ENVIRONMENTS)[number];
 
@@ -138,6 +138,7 @@ function perEnvironment(
   return base.when('NODE_ENV', {
     switch: [
       { is: 'production', then: branches.production },
+      { is: 'staging', then: branches.production },
       { is: 'test', then: branches.test },
     ],
     otherwise: branches.development,
@@ -229,6 +230,17 @@ export const baseEnvSchema = Joi.object({
     'Database connection URL. Mandatory in production — the service refuses ' +
       'to boot without persistence configured.',
   ),
+
+  DB_SYNCHRONIZE: Joi.boolean()
+    .when('NODE_ENV', {
+      is: 'development',
+      then: Joi.boolean().default(true),
+      otherwise: Joi.boolean().valid(false).default(false),
+    })
+    .description(
+      'TypeORM schema synchronization. Enabled only in development; forced ' +
+        'to false in production-like environments — use migrations instead.',
+    ),
 
   REDIS_HOST: perEnvironment(Joi.string().hostname(), {
     production: Joi.string().required(),
