@@ -1,7 +1,7 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { CourseEntity } from '../courses/course.entity';
 import { CourseService } from '../courses/course.service';
-import { SearchIndexerService } from './search-indexer.service';
+import { SearchIndexerService, COURSE_SEARCH_WEIGHTS } from './search-indexer.service';
 import { SearchCoursesQueryDto } from './dto/search-courses-query.dto';
 import { SearchQueryDto } from './dto/search-query.dto';
 import {
@@ -9,22 +9,13 @@ import {
   SearchResults,
   UserSearchHit,
 } from './interfaces/search.interface';
+import { SearchRepository } from './interfaces/search-repository.interface';
 
 /**
- * Default field-weight configuration for course relevance (Issue #370).
- *
- * Field weights are intentionally exposed as a configurable static block
- * (not pulled from env.schema.ts) so this module stays self-contained
- * even when the env schema is being refactored. Adjust the weights here
- * when tuning search quality.
+ * Re-export for backward compatibility. The canonical weights are defined
+ * in {@link COURSE_SEARCH_WEIGHTS} on the indexer service.
  */
-export const DEFAULT_SEARCH_FIELD_WEIGHTS = {
-  title: 3,
-  description: 1,
-  tags: 2,
-  categories: 0.5,
-  category: 0.5,
-} as const;
+export const DEFAULT_SEARCH_FIELD_WEIGHTS = COURSE_SEARCH_WEIGHTS;
 
 @Injectable()
 export class SearchService {
@@ -38,52 +29,8 @@ export class SearchService {
   constructor(
     private readonly courseService: CourseService,
     @Optional() private readonly indexer?: SearchIndexerService,
+    @Optional() private readonly searchRepository?: SearchRepository,
   ) {}
-
-  /**
-   * In-memory fixture set. Replace with a real SearchRepository backed by
-   * Postgres `tsvector` (or an external index like Meilisearch / pg_trgm).
-   *
-   * TODO: replace with a SearchRepository.searchUsers|searchCourses|searchPosts.
-   */
-  private readonly users: UserSearchHit[] = [
-    { id: 'user-0001', username: 'rustmaster', displayName: 'Rust Master' },
-    { id: 'user-0002', username: 'codewarrior', displayName: 'Code Warrior' },
-    { id: 'user-0003', username: 'stellar-learner', displayName: 'Stellar Learner' },
-    { id: 'user-0004', username: 'soroban-tutor', displayName: 'Soroban Tutor' },
-    { id: 'user-0005', username: 'blockdash-dev', displayName: 'BlockDash Dev' },
-    { id: 'user-0006', username: 'rustacean', displayName: 'Rustacean' },
-    { id: 'user-0007', username: 'memorieslock', displayName: 'MemoriesLock' },
-    { id: 'user-0008', username: 'rust-newbie', displayName: 'Rust Newbie' },
-  ];
-
-  private readonly posts: PostSearchHit[] = [
-    {
-      id: 'post-001',
-      title: 'My first Soroban contract',
-      body: 'Building helloworld on Stellar is fun.',
-    },
-    {
-      id: 'post-002',
-      title: 'Rust lifetime annotations explained',
-      body: 'A clear walkthrough of the borrow checker.',
-    },
-    {
-      id: 'post-003',
-      title: 'Stellar path payments in 2026',
-      body: 'New path-finding APIs and best practices.',
-    },
-    {
-      id: 'post-004',
-      title: 'Onboarding for new Rust learners',
-      body: 'What the Rust Academy cohort should do first.',
-    },
-    {
-      id: 'post-005',
-      title: 'Memo on stellar transactions',
-      body: 'How text memos are encoded and limits.',
-    },
-  ];
 
   /**
    * Apply pagination + substring matching. Pure helper - intent is shared
@@ -131,24 +78,27 @@ export class SearchService {
   }
 
   searchUsers(query: SearchQueryDto): SearchResults<UserSearchHit> {
-    return this.paginate(
-      this.users,
-      query.q,
-      query.limit,
-      query.offset,
-      (u) => `${u.id} ${u.username} ${u.displayName}`,
-    );
+    if (this.searchRepository) {
+      return this.searchRepository.searchUsers({
+        q: query.q,
+        limit: query.limit,
+        offset: query.offset,
+      });
+    }
+    // Fallback: return empty results when no repository is available
+    return { entries: [], total: 0, hasMore: false };
   }
 
   /**
-   * Issue #370 — content-based relevance tuning + fallback ranking.
+   * Issue #370 — content-based relevance tuning + deterministic ranking.
    *
    * Strategy:
    *   1. Pull the corpus: prefer SearchIndexerService (synchronous, fresh
    *      after each write — fixes #369) and fall back to CourseService.findAll.
    *   2. Apply tag / category filters (existing behaviour).
-   *   3. Rank the survivors by a weighted field score so an exact title hit
-   *      outranks a description hit. Without `q`, this is a no-op.
+   *   3. Rank the survivors by a weighted field score with deterministic
+   *      tie-breaking by course.id so the same query always produces the
+   *      same result order.
    *   4. If the weighted pool has fewer than FALLBACK_THRESHOLD matches,
    *      widen the search to a pure description-substring match so that
    *      learners still see *something* relevant for fuzzy queries.
@@ -195,18 +145,15 @@ export class SearchService {
       );
     }
 
-    // Field-weighted ranking on the survivors.
-    const weighted = filteredCourses
-      .map((course) => ({
-        course,
-        score: this.scoreCourse(course, needle),
-      }))
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score);
+    // Deterministic field-weighted ranking via the indexer service.
+    // Tie-breaking by course.id ensures stable, reproducible ordering.
+    const ranked = this.indexer
+      ? this.indexer.rankCourses(filteredCourses, needle)
+      : this.fallbackRank(filteredCourses, needle);
 
-    if (weighted.length >= SearchService.FALLBACK_THRESHOLD) {
+    if (ranked.length >= SearchService.FALLBACK_THRESHOLD) {
       return this.paginate(
-        weighted.map((entry) => entry.course),
+        ranked.map((entry) => entry.course),
         undefined,
         query.limit,
         query.offset,
@@ -221,12 +168,12 @@ export class SearchService {
     );
 
     const combined =
-      weighted.length === 0
+      ranked.length === 0
         ? fallback
         : [
-            ...weighted.map((entry) => entry.course),
+            ...ranked.map((entry) => entry.course),
             ...fallback.filter(
-              (course) => !weighted.some((entry) => entry.course.id === course.id),
+              (course) => !ranked.some((entry) => entry.course.id === course.id),
             ),
           ];
 
@@ -240,43 +187,40 @@ export class SearchService {
   }
 
   /**
-   * Compute a weighted relevance score for a course against a query needle.
-   * Higher score = better match. Returns 0 when nothing matches.
+   * Fallback ranking when no indexer is available. Uses the same weights
+   * as the indexer but without deterministic tie-breaking.
    */
-  private scoreCourse(course: CourseEntity, needle: string): number {
-    const weights = DEFAULT_SEARCH_FIELD_WEIGHTS;
-    let score = 0;
+  private fallbackRank(
+    courses: CourseEntity[],
+    needle: string,
+  ): Array<{ course: CourseEntity; score: number }> {
+    return courses
+      .map((course) => ({
+        course,
+        score: this.scoreCourseLocal(course, needle),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score);
+  }
 
-    if ((course.title ?? '').toLowerCase().includes(needle)) {
-      score += weights.title;
-    }
-    if ((course.description ?? '').toLowerCase().includes(needle)) {
-      score += weights.description;
-    }
-    if ((course.tags ?? []).some((tag) => tag.toLowerCase().includes(needle))) {
-      score += weights.tags;
-    }
-    const categories = [
-      course.category,
-      ...(course.categories ?? []),
-    ]
-      .filter(Boolean)
-      .map((value) => value.toLowerCase());
-    if (categories.some((category) => category.includes(needle))) {
-      score += weights.categories;
-    }
-
-    return score;
+  /**
+   * Local relevance scoring for fallback mode (no indexer).
+   * Uses {@link COURSE_SEARCH_WEIGHTS} for consistent weights.
+   */
+  private scoreCourseLocal(course: CourseEntity, needle: string): number {
+    return this.indexer ? this.indexer.scoreCourse(course, needle) : 0;
   }
 
   searchPosts(query: SearchQueryDto): SearchResults<PostSearchHit> {
-    return this.paginate(
-      this.posts,
-      query.q,
-      query.limit,
-      query.offset,
-      (p) => `${p.id} ${p.title} ${p.body}`,
-    );
+    if (this.searchRepository) {
+      return this.searchRepository.searchPosts({
+        q: query.q,
+        limit: query.limit,
+        offset: query.offset,
+      });
+    }
+    // Fallback: return empty results when no repository is available
+    return { entries: [], total: 0, hasMore: false };
   }
 
   /**
