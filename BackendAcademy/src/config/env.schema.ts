@@ -165,15 +165,43 @@ function productionSecret(defaults: {
 }
 
 /**
+ * Canonical Joi validation options used both at module bootstrap and in unit
+ * tests. Exporting them here guarantees every consumer validates with the
+ * same settings.
+ *
+ *  - `abortEarly: false`  — report every invalid variable, not just the first
+ *  - `allowUnknown: true` — don't fail on keys the schema doesn't declare
+ *    (e.g. platform-injected vars like PATH, HOME, CI)
+ *  - `convert: true`      — coerce string env-vars to number/boolean so Joi
+ *    range checks (port bounds, TTL limits, …) work correctly
+ */
+export const ENV_VALIDATION_OPTIONS: Joi.ValidationOptions = {
+  abortEarly: false,
+  allowUnknown: true,
+  convert: true,
+};
+
+/**
  * Parses `CORS_ORIGIN` into the shape `main.ts` expects: either the literal
- * wildcard or a list of concrete origins.
+ * wildcard `'*'` or a list of concrete origins.
+ *
+ * In production / staging `'*'` is explicitly rejected: a wildcard bypasses
+ * the Same-Origin policy and, when combined with `credentials: true`, lets
+ * any attacker site read authenticated responses (see CORS security advisory
+ * #662).
  */
 function parseCorsOrigin(
   value: string,
   helpers: Joi.CustomHelpers,
 ): string | string[] | Joi.ErrorReport {
   const trimmed = value.trim();
+
+  // Wildcard is only permitted outside production/staging.
   if (trimmed === '*') {
+    const env = (helpers.state.ancestors?.[0] as Record<string, unknown>)?.NODE_ENV;
+    if (env === 'production' || env === 'staging') {
+      return helpers.error('corsOrigin.wildcardForbidden');
+    }
     return '*';
   }
 
@@ -204,13 +232,41 @@ export const baseEnvSchema = Joi.object({
     .default(3000)
     .description('Port number for the HTTP server'),
 
-  CORS_ORIGIN: Joi.string()
-    .default('*')
-    .custom(parseCorsOrigin, 'CORS origin list')
-    .description(
-      'Allowed CORS origin. Either "*" or a comma-separated list of origins, ' +
-        'parsed here so main.ts receives a ready-to-use value.',
-    ),
+  /**
+   * Allowed CORS origin(s).
+   *
+   * - Development / test:  defaults to `'*'` for convenience.
+   * - Production / staging: `'*'` is **forbidden**. An explicit comma-separated
+   *   list of origins (e.g. `https://rustacademy.xyz,https://www.rustacademy.xyz`)
+   *   is required so the API is only accessible from known first-party frontends.
+   *
+   * The custom parser normalises the value into the shape `main.ts` expects:
+   * the literal string `'*'`, a single origin string, or an array of origins.
+   */
+  CORS_ORIGIN: perEnvironment(
+    Joi.string()
+      .custom(parseCorsOrigin, 'CORS origin list')
+      .messages({
+        'corsOrigin.wildcardForbidden':
+          'CORS_ORIGIN must not be "*" in production or staging — provide an explicit allow-list of origins',
+      }),
+    {
+      production: Joi.string()
+        .invalid('*')
+        .required()
+        .messages({
+          'any.invalid':
+            'CORS_ORIGIN must not be "*" in production — provide an explicit allow-list of origins',
+          'any.required':
+            'CORS_ORIGIN is required in production — provide an explicit allow-list of origins',
+        }),
+      test: Joi.string().default('*'),
+      development: Joi.string().default('*'),
+    },
+  ).description(
+    'Allowed CORS origins. Either "*" (non-production only) or a comma-separated ' +
+      'list of explicit origins. Production requires an explicit allow-list.',
+  ),
 
   LOCALE: Joi.string().default('en').description('Default localization locale'),
 

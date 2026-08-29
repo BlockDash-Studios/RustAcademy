@@ -68,10 +68,30 @@ async function bootstrap() {
 
   app.use(helmet());
 
+  const corsOrigin = config.get<string | string[]>('CORS_ORIGIN', '*');
+  const isWildcard = corsOrigin === '*';
+
+  // Guard: refuse to start in production/staging with a wildcard CORS origin.
+  // A wildcard combined with credentials:true lets any attacker site read
+  // authenticated API responses — browsers would normally block it, but it is
+  // safer to fail-fast at startup so a misconfigured deployment is obvious.
+  if (nodeEnv === 'production' || nodeEnv === 'staging') {
+    if (isWildcard) {
+      throw new Error(
+        'CORS_ORIGIN must not be "*" in production or staging. ' +
+        'Set it to a comma-separated allow-list of explicit origins.',
+      );
+    }
+  }
+
   app.enableCors({
-    origin: config.get<string | string[]>('CORS_ORIGIN', '*'),
+    origin: corsOrigin,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    credentials: true,
+    // credentials:true allows cookies/Authorization headers to be sent cross-origin.
+    // It MUST NOT be combined with origin:'*' — browsers block such responses
+    // and it would be a security vulnerability anyway. Only enable it when an
+    // explicit allow-list is in use.
+    credentials: !isWildcard,
   });
 
   app.enableVersioning({
