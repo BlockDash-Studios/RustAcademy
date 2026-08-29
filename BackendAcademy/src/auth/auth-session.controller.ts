@@ -16,22 +16,10 @@ import { AuthTokensResponse, Session } from './interfaces/session.interface';
 import { UserRole } from './enums/user-role.enum';
 import { AntiCheatService } from '../security/anti-cheat.service';
 
-/**
- * AuthSessionController — Issue #220, #410
- *
- * Exposes session-management and API key workflow endpoints:
- *
- *  POST   /auth/session/login         — issue access + refresh token pair
- *  POST   /auth/session/refresh       — rotate refresh token, return new pair
- *  POST   /auth/session/logout        — revoke single session
- *  POST   /auth/session/logout-all    — revoke all sessions for a user
- *  GET    /auth/session/:userId       — list active sessions
- *
- *  POST   /auth/api-keys              — issue a new API key
- *  GET    /auth/api-keys/:userId      — list a user's API keys
- *  POST   /auth/api-keys/:keyId/revoke — revoke an API key
- *  POST   /auth/api-keys/:keyId/rotate — rotate an API key
- */
+export class HeartbeatDto {
+  sessionId: string;
+}
+
 @Controller('auth/session')
 export class AuthSessionController {
   constructor(
@@ -54,16 +42,23 @@ export class AuthSessionController {
     return this.authSessionService.refreshTokens(dto.refreshToken);
   }
 
+  @Post('heartbeat')
+  @HttpCode(HttpStatus.OK)
+  async heartbeat(@Body() dto: HeartbeatDto): Promise<{ updated: boolean }> {
+    await this.authSessionService.updateLastActivity(dto.sessionId);
+    return { updated: true };
+  }
+
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  logout(@Query('sessionId') sessionId: string): void {
-    this.authSessionService.revokeSession(sessionId);
+  async logout(@Query('sessionId') sessionId: string): Promise<void> {
+    await this.authSessionService.revokeSession(sessionId);
   }
 
   @Post('logout-all')
   @HttpCode(HttpStatus.NO_CONTENT)
-  logoutAll(@Query('userId') userId: string): void {
-    this.authSessionService.revokeAllUserSessions(userId);
+  async logoutAll(@Query('userId') userId: string): Promise<void> {
+    await this.authSessionService.revokeAllUserSessions(userId);
   }
 
   @Get(':userId')
