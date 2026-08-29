@@ -485,25 +485,12 @@ export class CourseService {
       referenceRevisionId?: string;
     } = {},
   ): Promise<CourseRevisionEntity> {
+    const snapshot = this.buildImmutableSnapshot(course);
     const revision = this.revisionRepo.create({
       id: crypto.randomUUID(),
       courseId: course.id,
       version: course.version,
-      snapshot: {
-        title: course.title,
-        description: course.description,
-        level: course.level,
-        order: course.order,
-        learningPathId: course.learningPathId,
-        duration: course.duration,
-        category: course.category,
-        categories: [...(course.categories ?? [])],
-        tags: [...(course.tags ?? [])],
-        prerequisites: [...(course.prerequisites ?? [])],
-        skills: [...(course.skills ?? [])],
-        xpReward: course.xpReward,
-        isActive: course.isActive,
-      },
+      snapshot,
       changeNote: options.changeNote,
       revisionAuthor: options.revisionAuthor,
       reason,
@@ -516,6 +503,43 @@ export class CourseService {
     course.updatedAt = new Date();
     await this.courseRepo.save(course);
     return savedRevision;
+  }
+
+  private buildImmutableSnapshot(
+    course: CourseEntity,
+  ): CourseRevisionEntity['snapshot'] {
+    const snapshot: CourseRevisionEntity['snapshot'] = {
+      title: course.title,
+      description: course.description,
+      level: course.level,
+      order: course.order,
+      learningPathId: course.learningPathId,
+      duration: course.duration,
+      category: course.category,
+      categories: [...(course.categories ?? [])],
+      tags: [...(course.tags ?? [])],
+      prerequisites: [...(course.prerequisites ?? [])],
+      skills: [...(course.skills ?? [])],
+      xpReward: course.xpReward,
+      isActive: course.isActive,
+    };
+
+    return this.deepFreeze(snapshot);
+  }
+
+  private deepFreeze<T>(value: T): T {
+    if (value === null || typeof value !== 'object') {
+      return value;
+    }
+
+    Object.getOwnPropertyNames(value as object).forEach((key) => {
+      const nested = (value as Record<string, unknown>)[key];
+      if (nested && typeof nested === 'object' && !Object.isFrozen(nested)) {
+        this.deepFreeze(nested);
+      }
+    });
+
+    return Object.freeze(value);
   }
 
   private syncCourseTaxonomy(
