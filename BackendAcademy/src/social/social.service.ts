@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateSocialPostDto } from './dto/create-social-post.dto';
 import { GetSocialFeedDto } from './dto/get-social-feed.dto';
 import { UpdateModerationDto } from './dto/update-moderation.dto';
@@ -12,6 +12,9 @@ import {
 import { Hashtag, HashtagListResponse } from './interfaces/hashtag.interface';
 
 export { ModerationStatus, SocialPost, SocialFeedResponse, FollowResponse } from './interfaces/social-post.interface';
+
+/** Roles that are permitted to perform moderation actions. */
+const MODERATOR_ROLES = new Set(['moderator', 'admin']);
 
 @Injectable()
 export class SocialService {
@@ -43,11 +46,28 @@ export class SocialService {
     return post;
   }
 
-  getFeed(dto: GetSocialFeedDto): SocialFeedResponse {
+  getFeed(dto: GetSocialFeedDto, requesterId?: string, requesterRole?: string): SocialFeedResponse {
     const { limit = 10, status, search, userId, tag, cursor } = dto;
-    const normalizedStatus = status
-      ? this.normalizeStatus(status)
-      : 'approved';
+
+    // ── Visibility enforcement (Issue #686) ──────────────────────────────
+    // Determine which moderation status is being requested.
+    // Only moderators/admins may request non-approved statuses.
+    // Public callers always see only "approved" content.
+    const isModerator = requesterRole ? MODERATOR_ROLES.has(requesterRole) : false;
+
+    let normalizedStatus: ModerationStatus;
+    if (status) {
+      normalizedStatus = this.normalizeStatus(status);
+      // Non-moderators may not request pending/flagged/rejected feeds
+      if (!isModerator && normalizedStatus !== 'approved') {
+        throw new ForbiddenException({
+          error: 'FORBIDDEN',
+          message: 'Only moderators may access non-approved content feeds',
+        });
+      }
+    } else {
+      normalizedStatus = 'approved';
+    }
 
     let filteredPosts = Array.from(this.posts.values()).filter(
       (post) => post.moderationStatus === normalizedStatus,
@@ -116,14 +136,29 @@ export class SocialService {
     return post;
   }
 
+  /**
+   * Moderates a post (approve, reject, or flag it).
+   *
+   * Role enforcement (Issue #686): only moderators and admins may perform
+   * moderation actions on posts.
+   */
   moderatePost(
     postId: string,
     moderatorId: string,
     dto: UpdateModerationDto,
+    moderatorRole?: string,
   ): SocialPost {
     const normalizedPostId = this.normalizeId(postId, 'postId');
     const normalizedModeratorId = this.normalizeUserId(moderatorId);
     const normalizedStatus = this.normalizeStatus(dto.status);
+
+    // Enforce moderator role if provided
+    if (moderatorRole !== undefined && !MODERATOR_ROLES.has(moderatorRole)) {
+      throw new ForbiddenException({
+        error: 'FORBIDDEN',
+        message: 'Only moderators may perform moderation actions',
+      });
+    }
 
     const post = this.posts.get(normalizedPostId);
 
@@ -144,16 +179,38 @@ export class SocialService {
     return post;
   }
 
-  deletePost(postId: string): void {
+  /**
+   * Deletes a post.
+   *
+   * Ownership enforcement (Issue #686): only the post's author or a
+   * moderator/admin may delete. Regular users cannot remove other users' posts.
+   */
+  deletePost(postId: string, requesterId?: string, requesterRole?: string): void {
     const normalizedPostId = this.normalizeId(postId, 'postId');
-    const deleted = this.posts.delete(normalizedPostId);
+    const post = this.posts.get(normalizedPostId);
 
-    if (!deleted) {
+    if (!post) {
       throw new NotFoundException({
         error: 'POST_NOT_FOUND',
         message: `Post with ID ${normalizedPostId} not found`,
       });
     }
+
+    // If a requesterId is provided, enforce ownership unless the requester is a moderator
+    if (requesterId) {
+      const normalizedRequesterId = this.normalizeUserId(requesterId);
+      const isModerator = requesterRole ? MODERATOR_ROLES.has(requesterRole) : false;
+      const isAuthor = post.userId === normalizedRequesterId;
+
+      if (!isAuthor && !isModerator) {
+        throw new ForbiddenException({
+          error: 'FORBIDDEN',
+          message: 'You are not allowed to delete this post',
+        });
+      }
+    }
+
+    this.posts.delete(normalizedPostId);
   }
 
   flagPost(postId: string, userId: string): SocialPost {
