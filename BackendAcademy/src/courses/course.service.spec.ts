@@ -276,6 +276,40 @@ describe('CourseService', () => {
     ]);
   });
 
+  it('freezes historical snapshots at the persistence boundary when source arrays are mutated', async () => {
+    const sourcePrerequisites = ['rust-basics'];
+    const sourceSkills = ['ownership'];
+
+    const course = await service.create({
+      title: 'Immutable Snapshot Test',
+      description: 'Desc',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+      prerequisites: sourcePrerequisites,
+      skills: sourceSkills,
+    });
+
+    await service.update(course.id, {
+      prerequisites: ['rust-basics', 'ownership'],
+      skills: ['borrowing'],
+    });
+
+    sourcePrerequisites.push('mutated-source');
+    sourceSkills.push('mutated-source-skill');
+    course.prerequisites.push('mutated-course');
+    course.skills.push('mutated-course-skill');
+
+    const revisions = await service.getRevisions(course.id);
+    const snapshot = revisions[0].snapshot;
+
+    expect(snapshot.prerequisites).toEqual(['rust-basics']);
+    expect(snapshot.skills).toEqual(['ownership']);
+    expect(() => snapshot.prerequisites.push('mutated-history')).toThrow(TypeError);
+    expect(() => snapshot.skills.push('mutated-history')).toThrow(TypeError);
+  });
+
   // ---------------------------------------------------------------------------
   // Revision lookup
   // ---------------------------------------------------------------------------
