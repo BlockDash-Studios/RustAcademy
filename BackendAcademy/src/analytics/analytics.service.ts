@@ -36,6 +36,7 @@ export enum EventType {
   CONTRACT_RECONCILIATION_COMPLETED = 'contract_reconciliation_completed',
   CONTRACT_REPLAY_STARTED = 'contract_replay_started',
   CONTRACT_REPLAY_COMPLETED = 'contract_replay_completed',
+  // #386: Notification batching events
   // #386: Notification delivery analytics
   NOTIFICATION_BATCH_FLUSHED = 'notification_batch_flushed',
   NOTIFICATION_DELIVERED = 'notification_delivered',
@@ -56,6 +57,11 @@ export interface ReconciliationSummary {
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
   private readonly events: AnalyticsEvent[] = [];
+
+  /** Allow-listed event types used by validateEventPayload(). */
+  static readonly VALID_EVENT_TYPES: ReadonlySet<EventType> = new Set(
+    Object.values(EventType),
+  );
 
   /** #394: History of reconciliation results for analytics */
   private readonly reconciliationHistory: StateReconciliationResult[] = [];
