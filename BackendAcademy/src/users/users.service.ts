@@ -2,16 +2,20 @@ import { Injectable, Logger } from '@nestjs/common';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { SocialService } from '../social/social.service';
+import {
+  UpdateUserPreferencesDto,
+  LearnerPreferencesDto,
+  TutorPreferencesDto,
+} from './dto/update-preferences.dto';
 
-export interface UserPreferencesDto {
-  learnerPreferences?: Record<string, unknown>;
-  tutorPreferences?: Record<string, unknown>;
-}
+// Re-export so existing callers that import UserPreferencesDto from this
+// module continue to compile without changes.
+export { UpdateUserPreferencesDto as UserPreferencesDto };
 
 export interface UserPreferencesResponse {
   userId: string;
-  learnerPreferences?: Record<string, unknown>;
-  tutorPreferences?: Record<string, unknown>;
+  learnerPreferences?: LearnerPreferencesDto;
+  tutorPreferences?: TutorPreferencesDto;
 }
 
 export interface UserPrivilegeChangeEvent {
@@ -75,24 +79,26 @@ export class UsersService {
 
   async updatePreferences(
     userId: string,
-    dto: UserPreferencesDto,
+    dto: UpdateUserPreferencesDto,
   ): Promise<UserPreferencesResponse> {
-    const existing = this.preferencesByUser.get(userId) || {
+    const existing = this.preferencesByUser.get(userId) ?? {
       userId,
       learnerPreferences: {},
       tutorPreferences: {},
     };
 
-    const next = {
-      ...existing,
-      ...dto,
+    // Shallow-merge only the typed, allow-listed fields from each sub-DTO.
+    // Unknown keys are already rejected by the global ValidationPipe before
+    // this method is reached, so no further stripping is needed here.
+    const next: UserPreferencesResponse = {
+      userId,
       learnerPreferences: {
-        ...(existing.learnerPreferences || {}),
-        ...(dto.learnerPreferences || {}),
+        ...(existing.learnerPreferences ?? {}),
+        ...(dto.learnerPreferences ?? {}),
       },
       tutorPreferences: {
-        ...(existing.tutorPreferences || {}),
-        ...(dto.tutorPreferences || {}),
+        ...(existing.tutorPreferences ?? {}),
+        ...(dto.tutorPreferences ?? {}),
       },
     };
 
@@ -135,12 +141,12 @@ export class UsersService {
   async getUserNotificationPreferences(
     userId: string,
   ): Promise<UserNotificationPreferences> {
-    const prefs = this.preferencesByUser.get(userId);
+    const lp = this.preferencesByUser.get(userId)?.learnerPreferences;
     return {
       userId,
-      email_alerts: (prefs?.learnerPreferences?.['email_alerts'] as boolean) ?? true,
-      push_notifications: (prefs?.learnerPreferences?.['push_notifications'] as boolean) ?? true,
-      marketing_updates: (prefs?.learnerPreferences?.['marketing_updates'] as boolean) ?? false,
+      email_alerts: lp?.email_alerts ?? true,
+      push_notifications: lp?.push_notifications ?? true,
+      marketing_updates: lp?.marketing_updates ?? false,
     };
   }
 
@@ -151,15 +157,13 @@ export class UsersService {
    * never render broken or blank content (#387).
    */
   async getUserProfileFields(userId: string): Promise<UserProfileFields> {
-    const prefs = this.preferencesByUser.get(userId);
+    const lp = this.preferencesByUser.get(userId)?.learnerPreferences;
     return {
       userId,
-      name: (prefs?.learnerPreferences?.['displayName'] as string) || undefined,
-      email: (prefs?.learnerPreferences?.['email'] as string) || undefined,
-      displayName:
-        (prefs?.learnerPreferences?.['displayName'] as string) || undefined,
-      avatarUrl:
-        (prefs?.learnerPreferences?.['avatarUrl'] as string) || undefined,
+      name: lp?.displayName || undefined,
+      email: lp?.email || undefined,
+      displayName: lp?.displayName || undefined,
+      avatarUrl: lp?.avatarUrl || undefined,
     };
   }
 
@@ -230,6 +234,11 @@ export class UsersService {
   isDeleted(userId: string): boolean {
     return this.deletedUsers.has(userId);
   }
+
+  /**
+   * Records an asset upload against a user for ownership tracking.
+   */
+  recordAssetUpload(userId: string, assetId: string): void {
     if (!this.userUploads.has(userId)) {
       this.userUploads.set(userId, new Set());
     }
