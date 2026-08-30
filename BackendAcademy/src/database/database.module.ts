@@ -6,7 +6,20 @@ import { MigrationController } from './migration.controller';
 import { DatabaseService } from './database.service';
 import { TransactionManagerService } from '../common/transaction-manager.service';
 
-@Global()
+/**
+ * Determines whether TypeORM should auto-synchronize the schema.
+ *
+ * Synchronization is allowed only in local development and test environments.
+ * Deployed environments (staging, production, qa, preview, etc.) must use
+ * migrations as the only schema-change path, so this returns `false` for any
+ * environment that is not explicitly allowlisted.
+ */
+export function shouldSynchronizeSchema(nodeEnv: string | undefined): boolean {
+  const env = nodeEnv || 'development';
+  return ['development', 'test'].includes(env);
+}
+
+Global()
 @Module({
   imports: [
     TypeOrmModule.forRootAsync({
@@ -15,7 +28,8 @@ import { TransactionManagerService } from '../common/transaction-manager.service
         type: 'postgres',
         url: config.get<string>('DATABASE_URL'),
         autoLoadEntities: true,
-        synchronize: config.get('NODE_ENV') !== 'production',
+        // Schema changes in deployed environments must go through migrations.
+        synchronize: shouldSynchronizeScchema(config.get<string>('NODE_ENV', 'development')),
         ssl: config.get('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
       }),
       inject: [ConfigService],

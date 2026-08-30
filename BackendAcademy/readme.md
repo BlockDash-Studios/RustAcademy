@@ -15,30 +15,30 @@ The server starts on `http://localhost:3000` by default (configurable via `PORT`
 
 The following environment variables are validated at startup. Copy `.env.example` (or set them in your deployment config) and customize as needed.
 
-| Variable | Required (prod) | Default (dev/test) | Description |
-|---|---|---|---|
-| `NODE_ENV` | No | `development` | Runtime environment (`development`, `production`, `test`) |
-| `PORT` | No | `3000` | Server port |
-| `CORS_ORIGIN` | No | `*` | Allowed CORS origin(s): `*` or a comma-separated list |
-| `DATABASE_URL` | **Yes** | `postgresql://…/rustacademy_development` | Database connection string. Mandatory in production — the service refuses to boot without persistence configured |
-| `REDIS_HOST` | **Yes** | `localhost` | Redis host for caching and background jobs. Mandatory in production |
-| `REDIS_PORT` | No | `6379` | Redis port |
-| `REDIS_PASSWORD` | No | — | Optional Redis password |
-| `JWT_SECRET` | **Yes** | `development`-only insecure value | Secret key for JWT signing. Required in production and must be ≥ 32 chars; the shipped example/development values are rejected |
-| `ASSET_SIGNING_SECRET` | **Yes** | `development`-only insecure value | HMAC secret for signed asset URLs. Required in production; an empty secret makes signed URLs forgeable |
-| `AI_PROVIDER` | No | `mock` | AI provider (`claude`, `openai`, `mock`) |
-| `ANTHROPIC_API_KEY` | When `AI_PROVIDER=claude` | — | Anthropic API key |
-| `OPENAI_API_KEY` | When `AI_PROVIDER=openai` | — | OpenAI API key |
-| `AI_MODEL` | No | — | AI model override |
-| `AI_MAX_TOKENS` | No | `4096` | Max tokens for AI requests |
-| `AI_TEMPERATURE` | No | `0.7` | Temperature for AI responses |
-| `LOCALE` | No | `en` | Localization locale (currently `en` supported) |
-| `ASSETS_UPLOAD_DIR` | No | `./data/uploads` | Directory where uploaded assets are persisted |
-| `ASSETS_STATIC_DIR` | No | `./public` | Read-only static asset directory served at `/static` |
-| `ASSETS_BASE_URL` | No | `/api/v1/assets` | Base URL advertised inside asset metadata |
-| `ASSETS_MAX_SIZE_MB` | No | `10` | Maximum size of a single uploaded asset (MB) |
-| `ASSETS_MAX_TOTAL_MB` | No | `1024` | Aggregate byte quota across all stored assets (MB) |
-| `ASSETS_MAX_COUNT` | No | `10000` | Maximum number of assets retained by the registry |
+| Variable               | Required (prod)           | Default (dev/test)                       | Description                                                                                                                    |
+| ---------------------- | ------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `NODE_ENV`             | No                        | `development`                            | Runtime environment (`development`, `production`, `test`)                                                                      |
+| `PORT`                 | No                        | `3000`                                   | Server port                                                                                                                    |
+| `CORS_ORIGIN`          | No                        | `*`                                      | Allowed CORS origin(s): `*` or a comma-separated list                                                                          |
+| `DATABASE_URL`         | **Yes**                   | `postgresql://…/rustacademy_development` | Database connection string. Mandatory in production — the service refuses to boot without persistence configured               |
+| `REDIS_HOST`           | **Yes**                   | `localhost`                              | Redis host for caching and background jobs. Mandatory in production                                                            |
+| `REDIS_PORT`           | No                        | `6379`                                   | Redis port                                                                                                                     |
+| `REDIS_PASSWORD`       | No                        | —                                        | Optional Redis password                                                                                                        |
+| `JWT_SECRET`           | **Yes**                   | `development`-only insecure value        | Secret key for JWT signing. Required in production and must be ≥ 32 chars; the shipped example/development values are rejected |
+| `ASSET_SIGNING_SECRET` | **Yes**                   | `development`-only insecure value        | HMAC secret for signed asset URLs. Required in production; an empty secret makes signed URLs forgeable                         |
+| `AI_PROVIDER`          | No                        | `mock`                                   | AI provider (`claude`, `openai`, `mock`)                                                                                       |
+| `ANTHROPIC_API_KEY`    | When `AI_PROVIDER=claude` | —                                        | Anthropic API key                                                                                                              |
+| `OPENAI_API_KEY`       | When `AI_PROVIDER=openai` | —                                        | OpenAI API key                                                                                                                 |
+| `AI_MODEL`             | No                        | —                                        | AI model override                                                                                                              |
+| `AI_MAX_TOKENS`        | No                        | `4096`                                   | Max tokens for AI requests                                                                                                     |
+| `AI_TEMPERATURE`       | No                        | `0.7`                                    | Temperature for AI responses                                                                                                   |
+| `LOCALE`               | No                        | `en`                                     | Localization locale (currently `en` supported)                                                                                 |
+| `ASSETS_UPLOAD_DIR`    | No                        | `./data/uploads`                         | Directory where uploaded assets are persisted                                                                                  |
+| `ASSETS_STATIC_DIR`    | No                        | `./public`                               | Read-only static asset directory served at `/static`                                                                           |
+| `ASSETS_BASE_URL`      | No                        | `/api/v1/assets`                         | Base URL advertised inside asset metadata                                                                                      |
+| `ASSETS_MAX_SIZE_MB`   | No                        | `10`                                     | Maximum size of a single uploaded asset (MB)                                                                                   |
+| `ASSETS_MAX_TOTAL_MB`  | No                        | `1024`                                   | Aggregate byte quota across all stored assets (MB)                                                                             |
+| `ASSETS_MAX_COUNT`     | No                        | `10000`                                  | Maximum number of assets retained by the registry                                                                              |
 
 > **Production note:** when `NODE_ENV=production`, startup validation rejects missing
 > `DATABASE_URL`, `REDIS_HOST`, `JWT_SECRET` and `ASSET_SIGNING_SECRET`, low-entropy
@@ -56,33 +56,33 @@ minute hour day-of-month month day-of-week
 
 ### Schedule Configuration
 
-| Variable | Default | Description |
-|---|---|---|
-| `CRON_CLEANUP_SCHEDULE` | `0 0 * * *` | Daily cleanup at midnight |
-| `CRON_ANALYTICS_SCHEDULE` | `0 */6 * * *` | Analytics every 6 hours |
+| Variable                      | Default        | Description                    |
+| ----------------------------- | -------------- | ------------------------------ |
+| `CRON_CLEANUP_SCHEDULE`       | `0 0 * * *`    | Daily cleanup at midnight      |
+| `CRON_ANALYTICS_SCHEDULE`     | `0 */6 * * *`  | Analytics every 6 hours        |
 | `CRON_NOTIFICATIONS_SCHEDULE` | `*/30 * * * *` | Notifications every 30 minutes |
 
 ### Cron Expression Reference
 
-| Expression | Meaning |
-|---|---|
-| `* * * * *` | Every minute |
-| `*/5 * * * *` | Every 5 minutes |
-| `0 * * * *` | Every hour at minute 0 |
-| `0 0 * * *` | At midnight daily |
-| `0 0 * * 0` | At midnight every Sunday |
-| `0 9 * * 1-5` | At 9 AM, Monday–Friday |
-| `0 0 1 * *` | At midnight on the 1st of every month |
+| Expression    | Meaning                               |
+| ------------- | ------------------------------------- |
+| `* * * * *`   | Every minute                          |
+| `*/5 * * * *` | Every 5 minutes                       |
+| `0 * * * *`   | Every hour at minute 0                |
+| `0 0 * * *`   | At midnight daily                     |
+| `0 0 * * 0`   | At midnight every Sunday              |
+| `0 9 * * 1-5` | At 9 AM, Monday–Friday                |
+| `0 0 1 * *`   | At midnight on the 1st of every month |
 
 ### Field Ranges
 
-| Field | Allowed Values |
-|---|---|
-| Minute | `0–59` |
-| Hour | `0–23` |
-| Day of Month | `1–31` |
-| Month | `1–12` |
-| Day of Week | `0–7` (0 or 7 is Sunday) |
+| Field        | Allowed Values           |
+| ------------ | ------------------------ |
+| Minute       | `0–59`                   |
+| Hour         | `0–23`                   |
+| Day of Month | `1–31`                   |
+| Month        | `1–12`                   |
+| Day of Week  | `0–7` (0 or 7 is Sunday) |
 
 Invalid cron expressions are caught at startup and logged as errors. Use the `/api/jobs/schedules` endpoint to view all configured schedules and their next run times.
 
@@ -124,12 +124,12 @@ The `MigrationService` provides preflight validation and rollback awareness for 
 
 ### Migration Scripts
 
-| Script | Description |
-|---|---|
+| Script                     | Description                                     |
+| -------------------------- | ----------------------------------------------- |
 | `pnpm migration:preflight` | Run preflight checks before applying migrations |
-| `pnpm migration:rollback` | Roll back the most recent migration |
-| `pnpm migration:history` | View migration history |
-| `pnpm migration:dry-run` | Simulate a rollback without executing |
+| `pnpm migration:rollback`  | Roll back the most recent migration             |
+| `pnpm migration:history`   | View migration history                          |
+| `pnpm migration:dry-run`   | Simulate a rollback without executing           |
 
 ### Preflight Validation
 
@@ -149,11 +149,11 @@ Each preflight check generates a rollback plan describing the steps needed to re
 
 Notifications are delivered through a centralized provider interface (`INotificationProvider`), supporting multiple channels:
 
-| Provider | ID | Description |
-|---|---|---|
-| Email | `email` | Sends notifications via email with template personalization |
-| Push | `push` | Delivers push notifications to user devices |
-| In-App | `in-app` | Stores notifications in the user's in-app feed |
+| Provider | ID       | Description                                                 |
+| -------- | -------- | ----------------------------------------------------------- |
+| Email    | `email`  | Sends notifications via email with template personalization |
+| Push     | `push`   | Delivers push notifications to user devices                 |
+| In-App   | `in-app` | Stores notifications in the user's in-app feed              |
 
 Configure enabled providers via `NOTIFICATION_PROVIDERS` (comma-separated: `email,push,in-app`).
 
@@ -162,23 +162,23 @@ Configure enabled providers via `NOTIFICATION_PROVIDERS` (comma-separated: `emai
 Email templates use `{{placeholder}}` syntax for personalization. When user data is incomplete,
 missing fields are replaced with sensible defaults so content never renders blank:
 
-| Placeholder | Fallback |
-|---|---|
-| `{{name}}` | "RustAcademy Learner" |
-| `{{courseName}}` | "your course" |
-| `{{milestoneName}}` | "a new milestone" |
-| `{{submissionTitle}}` | "your submission" |
-| Any unrecognized key | `[key]` (safe bracket notation) |
+| Placeholder           | Fallback                        |
+| --------------------- | ------------------------------- |
+| `{{name}}`            | "RustAcademy Learner"           |
+| `{{courseName}}`      | "your course"                   |
+| `{{milestoneName}}`   | "a new milestone"               |
+| `{{submissionTitle}}` | "your submission"               |
+| Any unrecognized key  | `[key]` (safe bracket notation) |
 
 ## Notification Batching (#386)
 
 Low-priority reminders (streak nudges, course suggestions) can be grouped into batches
 to reduce noise and improve delivery efficiency:
 
-| Variable | Default | Description |
-|---|---|---|
-| `NOTIFICATION_BATCH_ENABLED` | `false` | Enable batching |
-| `NOTIFICATION_BATCH_MAX_SIZE` | `10` | Max notifications per batch |
+| Variable                       | Default | Description                       |
+| ------------------------------ | ------- | --------------------------------- |
+| `NOTIFICATION_BATCH_ENABLED`   | `false` | Enable batching                   |
+| `NOTIFICATION_BATCH_MAX_SIZE`  | `10`    | Max notifications per batch       |
 | `NOTIFICATION_BATCH_WINDOW_MS` | `30000` | Auto-flush window in milliseconds |
 
 ---

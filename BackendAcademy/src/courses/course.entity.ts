@@ -26,6 +26,10 @@ export class CourseEntity {
   @Column({ type: 'varchar', length: 200 })
   title: string;
 
+  @Index('uq_courses_slug', { unique: true })
+  @Column({ type: 'varchar', length: 240 })
+  slug: string;
+
   @Column({ type: 'text' })
   description: string;
 

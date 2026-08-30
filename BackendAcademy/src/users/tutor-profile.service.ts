@@ -8,6 +8,30 @@ import { VerifyTutorDto } from './dto/verify-tutor.dto';
 import { RequestVerificationDto } from './dto/request-verification.dto';
 import { VerificationStatus } from './interfaces/verification-status.enum';
 
+/**
+ * BA-042 — Allowed verification state transitions.
+ *
+ * This is the single source of truth for the verification lifecycle state
+ * machine. Any transition not present here is rejected with a
+ * BadRequestException regardless of caller intent.
+ */
+const ALLOWED_TRANSITIONS: Record<VerificationStatus, VerificationStatus[]> = {
+  [VerificationStatus.UNVERIFIED]: [
+    VerificationStatus.PENDING,
+    VerificationStatus.VERIFIED,
+  ],
+  [VerificationStatus.PENDING]: [
+    VerificationStatus.VERIFIED,
+    VerificationStatus.REJECTED,
+    VerificationStatus.UNVERIFIED,
+  ],
+  [VerificationStatus.VERIFIED]: [VerificationStatus.UNVERIFIED],
+  [VerificationStatus.REJECTED]: [
+    VerificationStatus.PENDING,
+    VerificationStatus.VERIFIED,
+  ],
+};
+
 export interface TutorEarningsSummary {
   tutorId: string;
   earnedXlm: number;
@@ -219,9 +243,12 @@ export class TutorProfileService {
     const profile = this.requireProfile(id);
 
     if (profile.status === VerificationStatus.VERIFIED) {
-      // Idempotent: already verified.
+      // Idempotent: already verified — repeat requests are a safe no-op.
       return profile;
     }
+
+    // BA-042: reject illegal transitions (e.g. VERIFIED -> PENDING).
+    this.assertCanTransition(profile.status, VerificationStatus.PENDING);
 
     profile.status = VerificationStatus.PENDING;
     profile.isVerified = false;
@@ -246,9 +273,40 @@ export class TutorProfileService {
       return profile;
     }
 
+    // BA-042: enforce the state machine before mutating.
+    this.assertCanTransition(profile.status, VerificationStatus.VERIFIED);
+
     profile.status = VerificationStatus.VERIFIED;
     profile.isVerified = true;
     profile.verifiedAt = new Date();
+    profile.verifiedBy = dto.adminId ?? profile.verifiedBy ?? null;
+    profile.verificationNote = dto.note ?? null;
+    profile.updatedAt = new Date();
+    return profile;
+  }
+
+  /**
+   * Admin-initiated: reject a tutor's verification application. Records the
+   * reviewer identity and reason. Rejection is only legal from PENDING;
+   * an already-REJECTED request is idempotent.
+   */
+  async reject(
+    id: string,
+    dto: VerifyTutorDto,
+  ): Promise<TutorProfileEntity> {
+    const profile = this.requireProfile(id);
+
+    if (profile.status === VerificationStatus.REJECTED) {
+      // Idempotent: already rejected.
+      return profile;
+    }
+
+    // BA-042: only PENDING applications may be rejected.
+    this.assertCanTransition(profile.status, VerificationStatus.REJECTED);
+
+    profile.status = VerificationStatus.REJECTED;
+    profile.isVerified = false;
+    profile.verifiedAt = null;
     profile.verifiedBy = dto.adminId ?? profile.verifiedBy ?? null;
     profile.verificationNote = dto.note ?? null;
     profile.updatedAt = new Date();
@@ -261,6 +319,15 @@ export class TutorProfileService {
    */
   async unverify(id: string): Promise<TutorProfileEntity> {
     const profile = this.requireProfile(id);
+
+    if (profile.status === VerificationStatus.UNVERIFIED) {
+      // Idempotent: already unverified.
+      return profile;
+    }
+
+    // BA-042: only VERIFIED (and PENDING/REJECTED rollback) may be unverified.
+    this.assertCanTransition(profile.status, VerificationStatus.UNVERIFIED);
+
     profile.status = VerificationStatus.UNVERIFIED;
     profile.isVerified = false;
     profile.verifiedAt = null;
@@ -302,32 +369,17 @@ export class TutorProfileService {
   }
 
   /**
-   * Internal helper used by the controller to validate that a status
-   * transition is legal. Currently exposed for callers that want explicit
-   * feedback rather than silent idempotency.
+   * BA-042: Validate that a status transition is legal. Throws a
+   * BadRequestException when the transition is not allowed by the
+   * verification state machine, giving callers explicit feedback rather
+   * than silently ignoring the request.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private assertCanTransition(
     from: VerificationStatus,
     to: VerificationStatus,
   ): void {
-    const allowed: Record<VerificationStatus, VerificationStatus[]> = {
-      [VerificationStatus.UNVERIFIED]: [
-        VerificationStatus.PENDING,
-        VerificationStatus.VERIFIED,
-      ],
-      [VerificationStatus.PENDING]: [
-        VerificationStatus.VERIFIED,
-        VerificationStatus.REJECTED,
-        VerificationStatus.UNVERIFIED,
-      ],
-      [VerificationStatus.VERIFIED]: [VerificationStatus.UNVERIFIED],
-      [VerificationStatus.REJECTED]: [
-        VerificationStatus.PENDING,
-        VerificationStatus.VERIFIED,
-      ],
-    };
-    if (!allowed[from].includes(to)) {
+    const allowed = ALLOWED_TRANSITIONS[from] ?? [];
+    if (!allowed.includes(to)) {
       throw new BadRequestException(
         `Illegal verification transition: ${from} -> ${to}`,
       );

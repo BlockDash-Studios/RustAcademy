@@ -84,6 +84,39 @@ export class TutorProfileController {
     return this.tutorService.rate(id, dto);
   }
 
+  // ---- Verification lifecycle (BA-042) -----------------------------------
+
+  @Post(':id/verification/request')
+  async requestVerification(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RequestVerificationDto,
+  ): Promise<TutorProfileEntity> {
+    return this.tutorService.requestVerification(id, dto);
+  }
+
+  @Post(':id/verification/verify')
+  async verify(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: VerifyTutorDto,
+  ): Promise<TutorProfileEntity> {
+    return this.tutorService.verify(id, dto);
+  }
+
+  @Post(':id/verification/reject')
+  async reject(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: VerifyTutorDto,
+  ): Promise<TutorProfileEntity> {
+    return this.tutorService.reject(id, dto);
+  }
+
+  @Post(':id/verification/unverify')
+  async unverify(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<TutorProfileEntity> {
+    return this.tutorService.unverify(id);
+  }
+
   @Get(':id/reviews')
   async getReviews(@Param('id', ParseUUIDPipe) id: string) {
     return this.tutorService.getReviews(id);

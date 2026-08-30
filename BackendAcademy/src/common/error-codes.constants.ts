@@ -1,4 +1,5 @@
 export enum ErrorCode {
+  SUCCESS = 'SUCCESS',
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   NOT_FOUND = 'NOT_FOUND',
   UNAUTHORIZED = 'UNAUTHORIZED',
@@ -44,9 +45,15 @@ export enum ErrorCode {
   ACCOUNT_LOCKED = 'ACCOUNT_LOCKED',
   TOO_MANY_REQUESTS = 'TOO_MANY_REQUESTS',
   HTTP_EXCEPTION = 'HTTP_EXCEPTION',
+  HINT_NOT_FOUND = 'HINT_NOT_FOUND',
+  HINT_TIER_EXCEEDED = 'HINT_TIER_EXCEEDED',
+  HINT_CHALLENGE_INACCESSIBLE = 'HINT_CHALLENGE_INACCESSIBLE',
+  HINT_COOLDOWN_ACTIVE = 'HINT_COOLDOWN_ACTIVE',
+  HINT_MAX_VIEWS_EXCEEDED = 'HINT_MAX_VIEWS_EXCEEDED',
 }
 
 export const ERROR_CODE_MESSAGES: Record<ErrorCode, string> = {
+  [ErrorCode.SUCCESS]: 'Success',
   [ErrorCode.VALIDATION_ERROR]: 'The request body failed validation',
   [ErrorCode.NOT_FOUND]: 'The requested resource was not found',
   [ErrorCode.UNAUTHORIZED]: 'Authentication is required',
@@ -92,4 +99,9 @@ export const ERROR_CODE_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.ACCOUNT_LOCKED]: 'This account has been locked',
   [ErrorCode.TOO_MANY_REQUESTS]: 'Too many requests, please try again later',
   [ErrorCode.HTTP_EXCEPTION]: 'An HTTP error occurred',
+  [ErrorCode.HINT_NOT_FOUND]: 'No hints available for this challenge',
+  [ErrorCode.HINT_TIER_EXCEEDED]: 'You have not unlocked this hint tier yet',
+  [ErrorCode.HINT_CHALLENGE_INACCESSIBLE]: 'You do not have access to this challenge',
+  [ErrorCode.HINT_COOLDOWN_ACTIVE]: 'Please wait before requesting another hint',
+  [ErrorCode.HINT_MAX_VIEWS_EXCEEDED]: 'You have reached the maximum views for this hint',
 }

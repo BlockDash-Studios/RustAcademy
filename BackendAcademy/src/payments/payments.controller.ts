@@ -8,13 +8,17 @@ import {
   HttpStatus,
   Post,
   Query,
+  RawBodyRequest,
+  Req,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Request } from 'express';
 import { PaymentsService, PaymentWebhookEvent } from './payments.service';
 import { TransactionHistoryQueryDto } from './dto/transaction-history-query.dto';
 import { TransactionHistoryResponse } from './interfaces/transaction.interface';
 import { AntiCheatService } from '../security/anti-cheat.service';
+import { SecurityService } from '../security/security.service';
 import { MetricsService } from '../monitoring/metrics.service';
 
 const WEBHOOK_METRIC_SOURCE = 'payments.webhook';
@@ -24,6 +28,7 @@ export class PaymentsController {
   constructor(
     private readonly paymentsService: PaymentsService,
     private readonly antiCheatService: AntiCheatService,
+    private readonly securityService: SecurityService,
     private readonly metricsService: MetricsService,
     private readonly configService?: ConfigService,
   ) {}
@@ -36,18 +41,24 @@ export class PaymentsController {
   /**
    * POST /payments/webhook — receives provider webhook callbacks.
    *
-   * Verifies HMAC signature and rejects transport-level replayed payloads
-   * (Issue #411), then hands the parsed event to
-   * PaymentsService.processPaymentWebhookEvent, which is the layer that
-   * actually validates the requested status transition against the
-   * payment's *current* stored status before mutating anything — this is
-   * what prevents duplicate/out-of-order callbacks from corrupting payment
-   * state even when they aren't exact byte-for-byte replays (Issue #412
-   * follow-up).
+   * #662: The HMAC signature is verified against the *raw* request bytes
+   * (`req.rawBody`, enabled via `rawBody: true` in main.ts) using a
+   * timing-safe comparison *before* the payload is parsed or normalized.
+   * This guarantees the signature covers exactly what the provider sent, and
+   * that an invalid signature can never reach
+   * `PaymentsService.processPaymentWebhookEvent` (so it can never mutate
+   * payment state). Transport-level replayed payloads are then rejected via
+   * the idempotency key (Issue #411), and the parsed event is handed to
+   * PaymentsService.processPaymentWebhookEvent, which validates the
+   * requested status transition against the payment's *current* stored
+   * status — this is what prevents duplicate/out-of-order callbacks from
+   * corrupting payment state even when they aren't exact byte-for-byte
+   * replays (Issue #412 follow-up).
    */
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   async receiveWebhook(
+    @Req() req: RawBodyRequest<Request>,
     @Body() body: string,
     @Headers('x-webhook-signature') signature?: string,
     @Headers('x-idempotency-key') idempotencyKey?: string,
@@ -57,17 +68,32 @@ export class PaymentsController {
       if (!signature) {
         throw new UnauthorizedException('Missing webhook signature');
       }
-      const crypto = require('crypto');
-      const expected = crypto.createHmac('sha256', webhookSecret).update(body).digest('hex');
-      const sigBuf = Buffer.from(signature, 'hex');
-      const expBuf = Buffer.from(expected, 'hex');
-      if (sigBuf.length !== expBuf.length || !require('crypto').timingSafeEqual(sigBuf, expBuf)) {
+      // Verify against the unparsed request bytes. `rawBody` is a Buffer when
+      // Nest's raw-body capture is enabled; fall back to re-serializing the
+      // parsed body so direct unit-test invocations still verify correctly.
+      const rawBody =
+        req.rawBody ??
+        Buffer.from(typeof body === 'string' ? body : JSON.stringify(body), 'utf8');
+      const valid = this.securityService.verifyWebhookSignatureRaw(
+        rawBody,
+        signature,
+        webhookSecret,
+      );
+      if (!valid) {
+        this.metricsService.recordErrorEvent(WEBHOOK_METRIC_SOURCE, 'invalid_signature');
         throw new UnauthorizedException('Invalid webhook signature');
       }
     }
 
     if (idempotencyKey) {
-      const replayed = this.antiCheatService.isWebhookReplayed(idempotencyKey);
+      // Issue #663: the replay claim is durable and fingerprint-bound to
+      // this payload, so a replayed callback is recognised even after a
+      // process restart and in-progress vs completed work is distinguished.
+      const rawPayload = typeof body === 'string' ? body : JSON.stringify(body ?? {});
+      const replayed = await this.antiCheatService.isWebhookReplayed(
+        idempotencyKey,
+        rawPayload,
+      );
       if (replayed) {
         this.metricsService.recordErrorEvent(WEBHOOK_METRIC_SOURCE, 'transport_replay');
         throw new UnauthorizedException('Duplicate/replayed webhook payload');
@@ -76,7 +102,10 @@ export class PaymentsController {
 
     let event: PaymentWebhookEvent;
     try {
-      const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+      const raw =
+        req.rawBody?.toString('utf8') ??
+        (typeof body === 'string' ? body : JSON.stringify(body));
+      const parsed = JSON.parse(raw);
       event = this.toPaymentWebhookEvent(parsed);
     } catch (err) {
       this.metricsService.recordErrorEvent(WEBHOOK_METRIC_SOURCE, 'malformed_payload');

@@ -12,11 +12,13 @@ import {
   AiRecommendationResponse,
   ChatMessage,
   Hint,
+  HintUsageAnalytics,
+  HintUsageRecord,
   VoiceInteractionResponse,
   TtsResponse,
 } from './interfaces/ai.interface';
 import { PreScoreResult } from './interfaces/pre-score.interface';
-import { AiProvider } from './interfaces/ai-provider.interface';
+import { AiProvider, ProviderChatResult } from './interfaces/ai-provider.interface';
 import { PromptTemplateService } from './prompt-template.service';
 import { v4 as uuidv4 } from 'uuid';
 import { AnalyticsService } from '../analytics/analytics.service';
@@ -30,6 +32,14 @@ const MAX_CHAT_HISTORY_PER_USER = 200; // bound in-memory growth per user
 const MAX_TRACKED_USERS = 5_000; // bound total map size across users
 const MAX_PRE_SCORE_CODE_LENGTH = 20_000; // guard against oversized submissions
 
+/// BA-081: Redis key prefix for durable hint usage records.
+const HINT_USAGE_KEY_PREFIX = 'hint:usage:';
+/// BA-081: Redis key prefix for the per-hint user set (for unique-user counts).
+const HINT_USERS_KEY_PREFIX = 'hint:users:';
+/// BA-081: Hint usage must survive restarts for calibration analytics; keep
+/// records for 90 days instead of relying on the cache default TTL.
+const HINT_USAGE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -37,6 +47,8 @@ export class AiService {
   private chatHistory: Map<string, ChatMessage[]> = new Map();
   private chatRecords: Map<string, AiChatRecord> = new Map();
   private hints: Map<string, Hint[]> = new Map();
+  /** BA-081: Durable hint usage records keyed by `userId:hintId`. */
+  private hintUsage: Map<string, HintUsageRecord> = new Map();
   private readonly defaultTimeoutMs: number;
   private readonly maxChatHistoryLength: number;
 
@@ -117,22 +129,6 @@ export class AiService {
   ): Promise<AiChatResponse> {
     const { message, userId, context } = createChatRequestDto;
 
-    const response = await this.generateChatResponse(message);
-    // #374: Use versioned prompt template from configuration
-    const systemPrompt = this.promptTemplateService
-      ? this.promptTemplateService.getSystemPrompt('chat_tutor', {
-          version: this.configService?.get<string>('AI_PROMPT_TEMPLATE_VERSION'),
-        })
-      : 'You are a helpful Rust programming tutor.';
-
-    const response = this.aiProvider
-      ? await this.aiProvider.generateChatCompletion({
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: message },
-          ],
-        })
-      : this.fallbackResponse(message);
     // Issue #371: sanitise user-supplied prompts before they reach the AI
     // provider. When SecurityService is wired in, prompts containing known
     // prompt-injection patterns are either wrapped in a hard system-pinned
@@ -144,16 +140,10 @@ export class AiService {
 
     const effectiveMessage = sanitisation?.sanitised ?? message;
 
-    const response = sanitisation?.status === 'rejected'
-      ? sanitisation.sanitised
-      : this.aiProvider
-        ? await this.aiProvider.generateChatCompletion({
-            messages: [
-              { role: 'system', content: 'You are a helpful Rust programming tutor.' },
-              { role: 'user', content: effectiveMessage },
-            ],
-          })
-        : this.fallbackResponse(effectiveMessage);
+    const response =
+      sanitisation?.status === 'rejected'
+        ? sanitisation.sanitised
+        : await this.generateChatResponse(effectiveMessage);
 
     const chatMessage: ChatMessage = {
       id: uuidv4(),
@@ -171,23 +161,20 @@ export class AiService {
     // listChatRecords() always returned nothing. Record one entry per
     // processed message here, keyed by the message id as its sessionId.
     this.chatRecords.set(chatMessage.id, {
+      id: chatMessage.id,
       sessionId: chatMessage.id,
       userId,
       messages: [chatMessage],
-      createdAt: chatMessage.timestamp,
-    } as AiChatRecord);
+      startedAt: chatMessage.timestamp,
+      lastActivityAt: chatMessage.timestamp,
+    });
 
     // #372: Auto-summarise when history exceeds threshold
     await this.autoSummarize(userId);
 
-    // Track prompt template version in metrics (#374)
+    // Track prompt template usage in metrics (#374)
     if (this.monitoringService) {
-      const templateVersion =
-        this.configService?.get<string>('AI_PROMPT_TEMPLATE_VERSION') ?? '1.0.0';
-      this.monitoringService.incrementCounter('ai_prompt_template_used', 1, {
-        version: templateVersion,
-        template: 'chat_tutor',
-      });
+      this.monitoringService.recordDomainEvent('ai_prompt_template_used', 'ai');
     }
 
     if (this.redisService) {
@@ -215,79 +202,37 @@ export class AiService {
     };
   }
 
-  
-  async getRecommendation(userId: string): Promise<AiRecommendationResponse> {
-    const snapshot = this.redisService
-      ? await this.redisService.getUserSnapshot(userId)
-      : null;
-
-    if (!snapshot) {
-      return {
-        userId,
-        recommendations: [],
-        explainability: {
-          factors: ['insufficient_data'],
-          confidence: 0.1,
-          userSignalAge: 0,
-          signalsUsed: [],
-          modelVersion: 'rustacademy-recommender-v2',
-        },
-        generatedAt: new Date(),
-      };
-    }
-
-    const explainability = this.redisService
-      ? await this.redisService.getRecommendationExplainability(userId)
-      : null;
-
-    const recommendedCourses = snapshot.recentCourses.length > 0
-      ? snapshot.recentCourses.slice(0, 3)
-      : ['rust-fundamentals', 'smart-contracts-101', 'stellar-basics'];
-
-    const recommendations = recommendedCourses.map((courseId, index) => ({
-      courseId,
-      score: Math.max(0, 1 - index * 0.2 - (snapshot.interactionCount > 0 ? 0 : 0.3)),
-      reason: explainability?.factors[index] || 'course_popularity',
-    }));
-
-    if (this.monitoringService) {
-      this.monitoringService.recordDomainEvent('recommendation_generated', 'ai');
-    }
-
-    return {
-      userId,
-      recommendations,
-      explainability: explainability || {
-        factors: [],
-        confidence: 0.1,
-        userSignalAge: 0,
-        signalsUsed: [],
-        modelVersion: 'rustacademy-recommender-v2',
-      },
-      generatedAt: new Date(),
-    };
-  }
-
   /**
    * Calls the AI provider with the global request timeout (Issue #408) and
    * falls back to a static response if the provider is unavailable, times
    * out, or errors — so a flaky upstream never surfaces as a 500 to callers.
+   *
+   * The user message is sent together with the versioned chat system prompt
+   * from configuration (#374). BA-079: the provider returns the normalized
+   * {@link ProviderChatResult} model, so only `.content` is consumed here.
    */
   private async generateChatResponse(message: string): Promise<string> {
     if (!this.aiProvider) {
       return this.fallbackResponse(message);
     }
 
+    const systemPrompt = this.promptTemplateService
+      ? this.promptTemplateService.getSystemPrompt('chat_tutor', {
+          version: this.configService?.get<string>('AI_PROMPT_TEMPLATE_VERSION'),
+        })
+      : 'You are a helpful Rust programming tutor.';
+
     try {
-      return await this.withTimeout(
+      const result: ProviderChatResult = await this.withTimeout(
         this.aiProvider.generateChatCompletion({
           messages: [
-            { role: 'system', content: 'You are a helpful Rust programming tutor.' },
+            { role: 'system', content: systemPrompt },
             { role: 'user', content: message },
           ],
         }),
         this.defaultTimeoutMs,
       );
+      return result.content;
     } catch (err) {
       this.logger.error('AI provider call failed, falling back to static response', err as Error);
       if (this.monitoringService) {
@@ -316,7 +261,7 @@ export class AiService {
   }
 
   async getHint(getHintDto: GetHintDto): Promise<AiHintResponse> {
-    const { challengeId, difficulty = 1 } = getHintDto;
+    const { challengeId, difficulty = 1, userId } = getHintDto;
 
     const challengeHints = this.hints.get(challengeId) || [];
 
@@ -334,11 +279,121 @@ export class AiService {
 
     hint.usedCount++;
 
+    // BA-081: Persist user-scoped hint usage so counts are durable and can
+    // support difficulty calibration across instances. Falls back to a
+    // process-local map when RedisService isn't injected.
+    await this.recordHintUsage(userId, challengeId, hint);
+
     return {
       hint: hint.hint,
       hintId: hint.id,
       difficulty: hint.difficulty,
     };
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // BA-081: Hint usage analytics
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Persist a hint request, deduplicated per `userId:hintId`.
+   *
+   * The in-memory map is the source of truth when no RedisService is
+   * injected (unit tests). When it is, every record is mirrored to Redis
+   * under `hint:usage:{userId}:{hintId}` and every hint keeps a set of the
+   * users who used it (`hint:users:{hintId}`) so unique-user counts survive
+   * restarts and are correct across instances.
+   */
+  private async recordHintUsage(
+    userId: string,
+    challengeId: string,
+    hint: Hint,
+  ): Promise<void> {
+    const recordKey = `${userId}:${hint.id}`;
+    const existing = this.hintUsage.get(recordKey);
+    const now = new Date();
+
+    const record: HintUsageRecord = existing
+      ? { ...existing, usedCount: existing.usedCount + 1, lastUsedAt: now }
+      : {
+          hintId: hint.id,
+          challengeId,
+          difficulty: hint.difficulty,
+          userId,
+          usedCount: 1,
+          firstUsedAt: now,
+          lastUsedAt: now,
+        };
+    this.hintUsage.set(recordKey, record);
+
+    if (this.redisService) {
+      await Promise.all([
+        this.redisService.set(
+          `${HINT_USAGE_KEY_PREFIX}${recordKey}`,
+          record,
+          HINT_USAGE_TTL_MS,
+        ),
+        this.redisService.sadd(`${HINT_USERS_KEY_PREFIX}${hint.id}`, userId),
+      ]);
+    }
+  }
+
+  /**
+   * BA-081: Aggregate hint usage for analytics. Combines the process-local
+   * map with any records persisted in Redis so results are correct even
+   * after a restart or across replicas.
+   */
+  async getHintUsageAnalytics(): Promise<HintUsageAnalytics> {
+    const records = await this.collectHintUsageRecords();
+
+    const usesByHint: Record<string, number> = {};
+    const usesByDifficulty: Record<number, number> = {};
+    const uniqueUserIds = new Set<string>();
+    let totalUses = 0;
+
+    for (const record of records) {
+      usesByHint[record.hintId] = (usesByHint[record.hintId] ?? 0) + record.usedCount;
+      usesByDifficulty[record.difficulty] =
+        (usesByDifficulty[record.difficulty] ?? 0) + record.usedCount;
+      uniqueUserIds.add(record.userId);
+      totalUses += record.usedCount;
+    }
+
+    return {
+      totalUses,
+      uniqueUsers: uniqueUserIds.size,
+      records,
+      usesByHint,
+      usesByDifficulty,
+    };
+  }
+
+  /**
+   * BA-081: Fetch every persisted hint usage record, merging the local map
+   * with Redis state (Redis wins on key collision since it may contain data
+   * from another instance).
+   */
+  private async collectHintUsageRecords(): Promise<HintUsageRecord[]> {
+    const merged = new Map<string, HintUsageRecord>(this.hintUsage);
+
+    if (this.redisService) {
+      const persistedKeys = await this.redisService.getKeys(
+        `${HINT_USAGE_KEY_PREFIX}*`,
+      );
+      for (const key of persistedKeys) {
+        const stored = (await this.redisService.get(key)) as
+          | HintUsageRecord
+          | null
+          | undefined;
+        if (stored && stored.hintId) {
+          merged.set(key.replace(HINT_USAGE_KEY_PREFIX, ''), stored);
+        }
+      }
+    }
+
+    return Array.from(merged.values()).sort(
+      (a, b) => b.lastUsedAt.getTime() - a.lastUsedAt.getTime(),
+    );
   }
 
   async preScore(dto: PreScoreDto): Promise<PreScoreResult> {
@@ -349,59 +404,6 @@ export class AiService {
         `Submission exceeds maximum length of ${MAX_PRE_SCORE_CODE_LENGTH} characters`,
       );
     }
-
-    
-  async getRecommendation(userId: string): Promise<AiRecommendationResponse> {
-    const snapshot = this.redisService
-      ? await this.redisService.getUserSnapshot(userId)
-      : null;
-
-    if (!snapshot) {
-      return {
-        userId,
-        recommendations: [],
-        explainability: {
-          factors: ['insufficient_data'],
-          confidence: 0.1,
-          userSignalAge: 0,
-          signalsUsed: [],
-          modelVersion: 'rustacademy-recommender-v2',
-        },
-        generatedAt: new Date(),
-      };
-    }
-
-    const explainability = this.redisService
-      ? await this.redisService.getRecommendationExplainability(userId)
-      : null;
-
-    const recommendedCourses = snapshot.recentCourses.length > 0
-      ? snapshot.recentCourses.slice(0, 3)
-      : ['rust-fundamentals', 'smart-contracts-101', 'stellar-basics'];
-
-    const recommendations = recommendedCourses.map((courseId, index) => ({
-      courseId,
-      score: Math.max(0, 1 - index * 0.2 - (snapshot.interactionCount > 0 ? 0 : 0.3)),
-      reason: explainability?.factors[index] || 'course_popularity',
-    }));
-
-    if (this.monitoringService) {
-      this.monitoringService.recordDomainEvent('recommendation_generated', 'ai');
-    }
-
-    return {
-      userId,
-      recommendations,
-      explainability: explainability || {
-        factors: [],
-        confidence: 0.1,
-        userSignalAge: 0,
-        signalsUsed: [],
-        modelVersion: 'rustacademy-recommender-v2',
-      },
-      generatedAt: new Date(),
-    };
-  }
 
     const lines = code.split('\n').filter((l) => l.trim().length > 0).length;
     const hasComments = code.includes('//') || code.includes('/*');
@@ -489,10 +491,7 @@ export class AiService {
     msg.isComplete = false;
 
     if (this.monitoringService) {
-      this.monitoringService.incrementCounter('chat_streaming_disconnects', 1, {
-        userId,
-        messageId,
-      });
+      this.monitoringService.recordDomainEvent('chat_streaming_disconnect', 'ai');
     }
 
     this.logger.warn(
@@ -518,11 +517,7 @@ export class AiService {
         `Cleaned up ${incompleteCount} incomplete messages for user ${userId}`,
       );
       if (this.monitoringService) {
-        this.monitoringService.incrementCounter(
-          'chat_incomplete_messages_cleaned',
-          incompleteCount,
-          { userId },
-        );
+        this.monitoringService.recordDomainEvent('chat_incomplete_messages_cleaned', 'ai');
       }
     }
     return incompleteCount;
@@ -575,10 +570,7 @@ export class AiService {
     this.chatHistory.set(userId, recentMessages);
 
     if (this.monitoringService) {
-      this.monitoringService.incrementCounter('chat_summary_generated', 1, {
-        userId,
-        compactedCount: String(excess),
-      });
+      this.monitoringService.recordDomainEvent('chat_summary_generated', 'ai');
     }
 
     this.logger.log(

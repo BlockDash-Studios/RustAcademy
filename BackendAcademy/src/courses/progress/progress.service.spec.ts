@@ -1,5 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { CourseService } from '../course.service';
+import { CourseEntity } from '../course.entity';
+import { CourseRevisionEntity } from '../course-revision.entity';
 import { CourseLevel } from '../interfaces/course-level.enum';
 import { RegisterCourseProgressDto } from './dto/register-course-progress.dto';
 import {
@@ -7,10 +9,61 @@ import {
   RecordTaskCompletionDto,
 } from './dto/record-completion.dto';
 import { RewardsService } from '../../rewards/rewards.service';
+import { TransactionManagerService } from '../../common/transaction-manager.service';
 import {
   CourseProgressStatus,
 } from './interfaces/progress-snapshot.interface';
 import { ProgressService } from './progress.service';
+
+/**
+ * Minimal in-memory mock that imitates the subset of the
+ * `Repository<T>` surface that `CourseService` relies on.
+ */
+class InMemoryRepository<T extends { id: string }> {
+  protected readonly rows: Map<string, T> = new Map();
+  constructor(protected readonly EntityCtor?: new (partial?: Partial<T>) => T) {}
+  create(partial: Partial<T> = {}): T {
+    if (this.EntityCtor) return new this.EntityCtor(partial);
+    return { ...(partial as T) };
+  }
+  async save(entity: T): Promise<T> {
+    if (!entity.id) (entity as T & { id: string }).id = crypto.randomUUID();
+    const now = new Date();
+    if ('createdAt' in entity && !(entity as { createdAt?: Date }).createdAt) (entity as { createdAt: Date }).createdAt = now;
+    if ('updatedAt' in entity) (entity as { updatedAt: Date }).updatedAt = now;
+    this.rows.set((entity as T & { id: string }).id, entity);
+    return entity;
+  }
+  async find(options: { where?: Partial<T> } = {}): Promise<T[]> {
+    const matches: T[] = [];
+    for (const row of this.rows.values()) {
+      const ok = Object.entries(options.where ?? {}).every(([k, v]) => (row as any)[k] === v);
+      if (ok) matches.push(row);
+    }
+    return matches;
+  }
+  async findOne(options: { where: Partial<T> }): Promise<T | null> {
+    for (const row of this.rows.values()) {
+      const ok = Object.entries(options.where).every(([k, v]) => (row as any)[k] === v);
+      if (ok) return row;
+    }
+    return null;
+  }
+  async remove(entity: T): Promise<T> {
+    this.rows.delete((entity as T & { id: string }).id);
+    return entity;
+  }
+  async count(options: { where?: Partial<T> } = {}): Promise<number> {
+    return (await this.find(options)).length;
+  }
+}
+
+class InMemoryCourseRepo extends InMemoryRepository<CourseEntity> {
+  constructor() { super(CourseEntity); }
+}
+class InMemoryRevisionRepo extends InMemoryRepository<CourseRevisionEntity> {
+  constructor() { super(CourseRevisionEntity); }
+}
 
 /**
  * Build a fresh CourseService and seed two known courses so tests can
@@ -18,12 +71,16 @@ import { ProgressService } from './progress.service';
  * courseService.create() because CreateCourseDto doesn't accept an id.
  */
 async function buildServices() {
+  const courseRepo = new InMemoryCourseRepo();
+  const revisionRepo = new InMemoryRevisionRepo();
   const courseService = new CourseService(
-    null as any,
-    null as any,
+    courseRepo as unknown as import('typeorm').Repository<CourseEntity>,
+    revisionRepo as unknown as import('typeorm').Repository<CourseRevisionEntity>,
     { recordActivity: jest.fn() } as unknown as RewardsService,
+    new TransactionManagerService(),
+    null as any,
   );
-  const service = new ProgressService(courseService);
+  const service = new ProgressService(courseService, new TransactionManagerService());
   const x = await courseService.create({
     title: 'Rust Basics',
     description: 'A starter course',
@@ -286,13 +343,15 @@ describe('ProgressService', () => {
     expect(snapshot.courses).toHaveLength(2);
   });
 
-  it('skips courses whose underlying course record was deleted', async () => {
+  it('includes soft-deleted courses in the snapshot since they still have progress data', async () => {
     await service.registerCourse(USER_A, { courseId: courseX, totalLessons: 1 });
     await courseService.remove(courseX);
 
     const snapshot = await service.getSnapshot(USER_A);
-    expect(snapshot.courses).toEqual([]);
-    expect(snapshot.overall.coursesInProgress).toBe(0);
+    // With soft-delete, the course is inactive but still in the DB,
+    // so its progress data is preserved in the snapshot.
+    expect(snapshot.courses).toHaveLength(1);
+    expect(snapshot.courses[0].courseId).toBe(courseX);
   });
 
   it('getCourseSnapshot() returns null for a course the learner never touched', async () => {
@@ -345,6 +404,75 @@ describe('ProgressService', () => {
     // courseX was touched (first), courseY was not touched (last).
     expect(orderedIds[0]).toBe(courseX);
     expect(orderedIds[orderedIds.length - 1]).toBe(courseY);
+  });
+
+  // ---------------------------------------------------------------------------
+  // #458: Monotonic progress — progress never regresses
+  // ---------------------------------------------------------------------------
+
+  it('progress is monotonic: completedAt never regresses once set', async () => {
+    await service.registerCourse(USER_A, {
+      courseId: courseX,
+      totalLessons: 1,
+      totalTasks: 1,
+    });
+
+    // Complete all requirements
+    await service.recordLessonCompletion(USER_A, courseX, {
+      lessonId: 'l1', xpEarned: 10,
+    });
+    await service.recordTaskCompletion(USER_A, courseX, {
+      taskId: 't1', xpEarned: 10,
+    });
+
+    const completedSnapshot = await service.getCourseSnapshot(USER_A, courseX);
+    const completedAt = completedSnapshot!.completedAt;
+    expect(completedAt).toBeInstanceOf(Date);
+
+    // Re-recording a lesson should not un-complete the course
+    await service.recordLessonCompletion(USER_A, courseX, {
+      lessonId: 'l1', xpEarned: 10,
+    });
+
+    const afterRetry = await service.getCourseSnapshot(USER_A, courseX);
+    expect(afterRetry!.completedAt).toBeInstanceOf(Date);
+    // completedAt should not have regressed
+    expect(afterRetry!.completedAt!.getTime()).toBeGreaterThanOrEqual(
+      completedAt!.getTime(),
+    );
+  });
+
+  it('lesson completions are idempotent: repeating the same lesson does not double-count', async () => {
+    await service.registerCourse(USER_A, { courseId: courseX, totalLessons: 2 });
+
+    await service.recordLessonCompletion(USER_A, courseX, {
+      lessonId: 'l1', xpEarned: 20,
+    });
+    await service.recordLessonCompletion(USER_A, courseX, {
+      lessonId: 'l1', xpEarned: 20,
+    });
+    await service.recordLessonCompletion(USER_A, courseX, {
+      lessonId: 'l1', xpEarned: 20,
+    });
+
+    const snap = await service.getCourseSnapshot(USER_A, courseX);
+    expect(snap!.lessonsCompleted).toBe(1);
+    expect(snap!.xpEarned).toBe(20);
+  });
+
+  it('task completions are idempotent: repeating the same task does not double-count', async () => {
+    await service.registerCourse(USER_A, { courseId: courseX, totalTasks: 2 });
+
+    await service.recordTaskCompletion(USER_A, courseX, {
+      taskId: 't1', xpEarned: 15,
+    });
+    await service.recordTaskCompletion(USER_A, courseX, {
+      taskId: 't1', xpEarned: 15,
+    });
+
+    const snap = await service.getCourseSnapshot(USER_A, courseX);
+    expect(snap!.tasksCompleted).toBe(1);
+    expect(snap!.xpEarned).toBe(15);
   });
 
   it('exposes firstCompletedLessonId hint from prior lesson completions', async () => {

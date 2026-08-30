@@ -1,4 +1,4 @@
-	import { NestFactory } from '@nestjs/core';
+import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { Logger, VersioningType } from '@nestjs/common';
@@ -35,10 +35,31 @@ async function bootstrap() {
     process.env[key] = String(val);
   }
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // #662: `rawBody: true` keeps the unparsed request bytes available on
+  // `req.rawBody` so webhook signatures can be verified against exactly what
+  // the provider sent, before any JSON parsing/normalization happens.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
   const logger = new Logger('Bootstrap');
 
   const config = app.get(ConfigService);
+
+  // Security: refuse to start in production with a missing or known default
+  // JWT secret (e.g. the auth module's fallback 'changeme'). The error must
+  // not disclose the secret itself.
+  const nodeEnv = config.get<string>('NODE_ENV', 'development');
+  if (nodeEnv === 'production') {
+    const jwtSecret = config.get<string>('JWT_SECRET');
+    if (!jwtSecret || jwtSecret === 'changeme') {
+      throw new Error(
+        'JWT_SECRET must be set to a secure value when NODE_ENV=production.',
+      );
+    }
+  }
+
+  // Graceful shutdown support
+  app.enableShutdownHooks();
 
   // Override the internal config with the already-coerced environment values.
   for (const [key, val] of Object.entries(validatedEnv)) {
@@ -49,7 +70,7 @@ async function bootstrap() {
 
   app.enableCors({
     origin: config.get<string | string[]>('CORS_ORIGIN', '*'),
-    methods: ['GET', 'POST', 'PUTP', 'PATCH', 'DELETE'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true,
   });
 
@@ -59,6 +80,9 @@ async function bootstrap() {
     defaultVersion: '1',
   });
 
+  // Shared options (src/common/validation.pipe.ts) guarantee nested DSos
+  // and arrays are validated — and malformed payloads rejected — the same
+  // way in every controller.
   app.useGlobalPipes(createValidationPipe());
 
   const swaggerConfig = new DocumentBuilder()
@@ -75,7 +99,7 @@ async function bootstrap() {
   );
   try {
     fs.mkdirSync(staticDir, { recursive: true });
-    app.useStaticCassets(staticDir, { prefix: '/static/' });
+    app.useStaticAssets(staticDir, { prefix: '/static/' });
     logger.log(`Static assets served from ${staticDir} at /static/`);
   } catch (err) {
     logger.warn(`Failed to mount static asset directory ${staticDir}: ${err instanceof Error ? err.message : String(err)}`);

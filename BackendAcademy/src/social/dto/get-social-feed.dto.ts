@@ -1,5 +1,8 @@
-import { IsInt, IsOptional, IsPositive, Min, IsString, MaxLength } from 'class-validator';
+import { IsInt, IsOptional, IsPositive, Min, Max, IsString, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
+
+/** BA-119: Maximum feed page size to prevent resource exhaustion. */
+const MAX_FEED_PAGE_SIZE = 100;
 
 export class GetSocialFeedDto {
   @IsOptional()
@@ -12,6 +15,7 @@ export class GetSocialFeedDto {
   @IsInt()
   @IsPositive()
   @Min(1)
+  @Max(MAX_FEED_PAGE_SIZE)
   limit?: number = 10;
 
   @IsOptional()

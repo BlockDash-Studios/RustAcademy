@@ -1,7 +1,27 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { OnboardingProgress } from './onboarding.entity';
 import { CreateOnboardingProgressDto } from './dto/create-onboarding-progress.dto';
 import { UpdateOnboardingProgressDto } from './dto/update-onboarding-progress.dto';
+
+/**
+ * BA-044 — Thrown when an update carries a stale version number. Signals an
+ * optimistic-concurrency conflict between concurrent devices; the caller
+ * should re-read the latest progress and retry (or prompt the user to merge).
+ */
+export class VersionConflictError extends ConflictException {
+  constructor(progressId: string, expectedVersion: number, actualVersion: number) {
+    super({
+      statusCode: 409,
+      error: 'VERSION_CONFLICT',
+      message:
+        `Onboarding progress ${progressId} has version ${actualVersion}, ` +
+        `but update was based on version ${expectedVersion}`,
+      progressId,
+      expectedVersion,
+      actualVersion,
+    });
+  }
+}
 
 /**
  * #355: A milestone checkpoint records when a specific onboarding
@@ -65,32 +85,118 @@ export class OnboardingService {
     );
   }
 
+  /**
+   * BA-044 — Durable, idempotent, conflict-aware update.
+   *
+   * When `expectedVersion` is supplied, the write is rejected with a
+   * `VersionConflictError` if the stored version differs, so two devices
+   * editing the same progress cannot silently clobber each other. When the
+   * incoming state is identical to the stored state, the update is a safe
+   * no-op (idempotent) and does not increment the version.
+   */
   async update(
     id: string,
-    dto: UpdateOnboardingProgressDto,
+    dto: UpdateOnboardingProgressDto & { expectedVersion?: number },
   ): Promise<OnboardingProgress | null> {
     const progress = this.progressMap.get(id);
     if (!progress) return null;
-    Object.assign(progress, dto, { updatedAt: new Date() });
+
+    // Optimistic concurrency: reject stale writes.
+    if (dto.expectedVersion !== undefined) {
+      if (dto.expectedVersion !== progress.version) {
+        throw new VersionConflictError(id, dto.expectedVersion, progress.version);
+      }
+    }
+
+    // Idempotency: if nothing observable changes, return the record unchanged.
+    const appliedStep = dto.completedSteps;
+    const alreadyApplied =
+      appliedStep === undefined ||
+      appliedStep.length === progress.completedSteps.length &&
+        appliedStep.every((s) => progress.completedSteps.includes(s));
+
+    const unchangedCurrentStep =
+      dto.currentStep === undefined || dto.currentStep === progress.currentStep;
+
+    if (
+      alreadyApplied &&
+      unchangedCurrentStep &&
+      dto.isComplete === undefined &&
+      dto.metadata === undefined
+    ) {
+      return progress;
+    }
+
+    // Merge completedSteps set-wise so a partial/duplicate update can't
+    // erase previously recorded steps.
+    if (dto.completedSteps !== undefined) {
+      const merged = new Set([
+        ...progress.completedSteps,
+        ...dto.completedSteps,
+      ]);
+      progress.completedSteps = Array.from(merged);
+    }
+    if (dto.currentStep !== undefined) {
+      progress.currentStep = dto.currentStep;
+    }
+    if (dto.isComplete !== undefined) {
+      progress.isComplete = dto.isComplete;
+      if (dto.isComplete) progress.completedAt = new Date();
+    }
+    if (dto.metadata !== undefined) {
+      progress.metadata = { ...progress.metadata, ...dto.metadata };
+    }
+    progress.updatedAt = new Date();
+    progress.version += 1;
     return progress;
   }
 
+  /**
+   * BA-044 — Idempotent, versioned step completion.
+   *
+   * Completing an already-completed step is a no-op (it is not added twice).
+   * A checkpoint is recorded and the optimistic-concurrency version advances
+   * on every durable change.
+   */
   async completeStep(
     id: string,
     step: string,
+    options?: { expectedVersion?: number },
   ): Promise<OnboardingProgress> {
     const progress = this.progressMap.get(id);
     if (!progress)
       throw new NotFoundException('Onboarding progress not found');
 
-    if (!progress.completedSteps.includes(step)) {
+    // Optimistic concurrency: reject stale writes for concurrent devices.
+    if (options?.expectedVersion !== undefined) {
+      if (options.expectedVersion !== progress.version) {
+        throw new VersionConflictError(id, options.expectedVersion, progress.version);
+      }
+    }
+
+    const isAlreadyDone = progress.completedSteps.includes(step);
+
+    // Idempotent: re-completing an already-done step advances nothing.
+    if (isAlreadyDone && progress.currentStep === step) {
+      const alreadyComplete =
+        progress.totalSteps > 0 &&
+        progress.completedSteps.length >= progress.totalSteps;
+      if (alreadyComplete === progress.isComplete) {
+        return progress;
+      }
+    }
+
+    if (!isAlreadyDone) {
       progress.completedSteps.push(step);
     }
     progress.currentStep = step;
     progress.updatedAt = new Date();
 
-    // #355: Record a checkpoint for this step completion
-    this.recordCheckpoint(id, step);
+    // #355: Record a checkpoint for this step completion (idempotently).
+    const checkpoints = this.checkpointsMap.get(id) ?? [];
+    if (!checkpoints.some((c) => c.stepName === step)) {
+      this.recordCheckpoint(id, step);
+    }
 
     if (
       progress.totalSteps > 0 &&
@@ -100,6 +206,7 @@ export class OnboardingService {
       progress.completedAt = new Date();
     }
 
+    progress.version += 1;
     return progress;
   }
 
@@ -243,5 +350,116 @@ export class OnboardingService {
       }
     }
     return removed;
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // BA-044: Durable persistence & conflict-aware recovery
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Serialises the entire onboarding state into a JSON-safe plain object.
+   * Consumers (e.g. a repository / DB adapter) can persist this and reload
+   * it via `importState()` so progress survives process restarts and is
+   * shared across devices.
+   */
+  exportState(): {
+    progress: Array<Record<string, unknown>>;
+    checkpoints: Array<{ progressId: string; checkpoints: OnboardingCheckpoint[] }>;
+  } {
+    return {
+      progress: Array.from(this.progressMap.values()).map((p) => ({
+        id: p.id,
+        userId: p.userId,
+        currentStep: p.currentStep,
+        completedSteps: [...p.completedSteps],
+        totalSteps: p.totalSteps,
+        isComplete: p.isComplete,
+        completedAt: p.completedAt?.toISOString() ?? null,
+        createdAt: p.createdAt.toISOString(),
+        updatedAt: p.updatedAt.toISOString(),
+        metadata: p.metadata,
+        version: p.version,
+      })),
+      checkpoints: Array.from(this.checkpointsMap.entries()).map(
+        ([progressId, items]) => ({
+          progressId,
+          checkpoints: items.map((c) => ({
+            stepName: c.stepName,
+            completedAt: c.completedAt,
+            metadata: c.metadata,
+          })),
+        }),
+      ),
+    };
+  }
+
+  /**
+   * Restores previously exported state. This is what a durable store calls
+   * on startup to reload progress that survived a restart.
+   */
+  importState(
+    state: ReturnType<OnboardingService['exportState']>,
+  ): number {
+    this.progressMap.clear();
+    this.checkpointsMap.clear();
+    this.snapshotsMap.clear();
+
+    const parsed: OnboardingProgress[] = state.progress.map((raw) => {
+      const record = new OnboardingProgress({
+        id: raw.id as string,
+        userId: raw.userId as string,
+        currentStep: raw.currentStep as string,
+        completedSteps: raw.completedSteps as string[],
+        totalSteps: raw.totalSteps as number,
+        isComplete: raw.isComplete as boolean,
+        completedAt: (raw.completedAt as string | null)
+          ? new Date(raw.completedAt as string)
+          : undefined,
+        createdAt: new Date(raw.createdAt as string),
+        updatedAt: new Date(raw.updatedAt as string),
+        metadata: raw.metadata as Record<string, any>,
+        version: raw.version as number,
+      });
+      return record;
+    });
+
+    for (const record of parsed) {
+      this.progressMap.set(record.id, record);
+      this.checkpointsMap.set(record.id, []);
+      this.snapshotsMap.set(record.id, []);
+    }
+
+    for (const group of state.checkpoints) {
+      this.checkpointsMap.set(
+        group.progressId,
+        group.checkpoints.map((c) => ({
+          stepName: c.stepName,
+          completedAt:
+            c.completedAt instanceof Date
+              ? c.completedAt
+              : new Date(c.completedAt as unknown as string),
+          metadata: c.metadata,
+        })),
+      );
+    }
+
+    return parsed.length;
+  }
+
+  /**
+   * Clears all in-memory state. Useful for test isolation and for a
+   * durable store to perform a full reset.
+   */
+  clearAll(): void {
+    this.progressMap.clear();
+    this.checkpointsMap.clear();
+    this.snapshotsMap.clear();
+  }
+
+  /**
+   * Returns the number of progress records currently held.
+   */
+  count(): number {
+    return this.progressMap.size;
   }
 }

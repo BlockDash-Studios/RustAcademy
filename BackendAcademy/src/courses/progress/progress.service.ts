@@ -130,6 +130,10 @@ export class ProgressService {
    * lesson id is a no-op for counters/xp but always refreshes the
    * lastActivityAt timestamp.
    *
+   * #458: Progress is monotonic — once a lesson is marked completed it
+   * can never be removed, and once the course is marked completed
+   * (`completedAt` is set) it can never regress to incomplete.
+   *
    * All state mutations are wrapped in a transactional atomic operation.
    * If any step fails the progress snapshot is restored to its prior
    * consistent state so callers never observe partially-applied progress.
@@ -156,6 +160,11 @@ export class ProgressService {
       }
       record.lastActivityAt = new Date();
       this.maybeMarkCompleted(record);
+
+      // #458: Progress is monotonic — never regress completedAt
+      if (prevCompletedAt && !record.completedAt) {
+        record.completedAt = prevCompletedAt;
+      }
 
       // Register rollback snapshot
       await tx.addOperation(async (): Promise<ProgressSnapshot> => ({
@@ -185,6 +194,10 @@ export class ProgressService {
   /**
    * Record a task completion for (user, course).
    *
+   * #458: Progress is monotonic — once a task is marked completed it
+   * can never be removed, and once the course is marked completed
+   * (`completedAt` is set) it can never regress to incomplete.
+   *
    * All state mutations are wrapped in a transactional atomic operation.
    * If any step fails the progress snapshot is restored to its prior
    * consistent state so callers never observe partially-applied progress.
@@ -211,6 +224,11 @@ export class ProgressService {
       }
       record.lastActivityAt = new Date();
       this.maybeMarkCompleted(record);
+
+      // #458: Progress is monotonic — never regress completedAt
+      if (prevCompletedAt && !record.completedAt) {
+        record.completedAt = prevCompletedAt;
+      }
 
       // Register rollback snapshot
       await tx.addOperation(async (): Promise<ProgressSnapshot> => ({

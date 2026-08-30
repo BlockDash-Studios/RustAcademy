@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { TutorProfileService } from './tutor-profile.service';
 import { TutorSpecialty } from './interfaces/tutor-specialty.enum';
 import { VerificationStatus } from './interfaces/verification-status.enum';
@@ -407,5 +407,105 @@ describe('TutorProfileService', () => {
     expect(after?.status).toBe(VerificationStatus.VERIFIED);
     expect(after?.isVerified).toBe(true);
     expect(after?.bio).toBe('Updated bio');
+  });
+
+  // -------------------- BA-042: hardened state machine --------------------
+
+  it('reject() moves a PENDING tutor to REJECTED and records reviewer + reason', async () => {
+    const profile = await service.create({
+      userId: 'user-r1',
+      bio: 'Applicant',
+      specialties: [TutorSpecialty.RUST_TESTING],
+    });
+    await service.requestVerification(profile.id, { note: 'apply' });
+
+    const rejected = await service.reject(profile.id, {
+      adminId: 'admin-rev',
+      note: 'Insufficient evidence',
+    });
+
+    expect(rejected.status).toBe(VerificationStatus.REJECTED);
+    expect(rejected.isVerified).toBe(false);
+    expect(rejected.verifiedBy).toBe('admin-rev');
+    expect(rejected.verificationNote).toBe('Insufficient evidence');
+  });
+
+  it('reject() is idempotent for an already-REJECTED tutor', async () => {
+    const profile = await service.create({
+      userId: 'user-r2',
+      bio: 'Applicant',
+      specialties: [TutorSpecialty.RUST_FUNDAMENTALS],
+    });
+    await service.requestVerification(profile.id, {});
+    await service.reject(profile.id, { adminId: 'admin-1', note: 'first' });
+
+    const second = await service.reject(profile.id, {
+      adminId: 'admin-2',
+      note: 'override',
+    });
+
+    // Idempotent: first rejection metadata is preserved.
+    expect(second.status).toBe(VerificationStatus.REJECTED);
+    expect(second.verifiedBy).toBe('admin-1');
+    expect(second.verificationNote).toBe('first');
+  });
+
+  it('reject() throws BadRequestException for an illegal (non-PENDING) transition', async () => {
+    const profile = await service.create({
+      userId: 'user-r3',
+      bio: 'Applicant',
+      specialties: [TutorSpecialty.ASYNC_RUST],
+    });
+    // Unverified -> rejected is not allowed.
+    await expect(service.reject(profile.id, { adminId: 'a' })).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('cannot verify from a REJECTED status without a new PENDING request', async () => {
+    const profile = await service.create({
+      userId: 'user-r4',
+      bio: 'Applicant',
+      specialties: [TutorSpecialty.WEB3_SOROBAN],
+    });
+    await service.requestVerification(profile.id, {});
+    await service.reject(profile.id, { adminId: 'a', note: 'no' });
+
+    // Direct verify from REJECTED should be allowed by the state machine
+    // (REJECTED -> VERIFIED is legal).
+    const verified = await service.verify(profile.id, {
+      adminId: 'admin-appeal',
+    });
+    expect(verified.status).toBe(VerificationStatus.VERIFIED);
+    expect(verified.verifiedBy).toBe('admin-appeal');
+  });
+
+  it('re-requesting verification from REJECTED moves back to PENDING', async () => {
+    const profile = await service.create({
+      userId: 'user-r5',
+      bio: 'Applicant',
+      specialties: [TutorSpecialty.CLI_APPLICATIONS],
+    });
+    await service.requestVerification(profile.id, {});
+    await service.reject(profile.id, { adminId: 'a', note: 'denied' });
+
+    const resubmitted = await service.requestVerification(profile.id, {
+      note: 'resubmission',
+    });
+
+    expect(resubmitted.status).toBe(VerificationStatus.PENDING);
+    expect(resubmitted.isVerified).toBe(false);
+  });
+
+  it('unverify() throws BadRequestException when the state machine forbids it', async () => {
+    const profile = await service.create({
+      userId: 'user-r6',
+      bio: 'Applicant',
+      specialties: [TutorSpecialty.MACROS_METAPROGRAMMING],
+    });
+    await service.requestVerification(profile.id, {});
+    // PENDING -> UNVERIFIED is allowed, so this should not throw.
+    const rolledBack = await service.unverify(profile.id);
+    expect(rolledBack.status).toBe(VerificationStatus.UNVERIFIED);
   });
 });

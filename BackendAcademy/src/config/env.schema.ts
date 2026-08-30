@@ -20,7 +20,7 @@ import * as Joi from 'joi';
  */
 
 /** Runtime environments understood by the application. */
-export const NODE_ENVIRONMENTS = ['development', 'production', 'test'] as const;
+export const NODE_ENVIRONMENTS = ['development', 'production', 'staging', 'test'] as const;
 
 export type NodeEnvironment = (typeof NODE_ENVIRONMENTS)[number];
 
@@ -138,6 +138,7 @@ function perEnvironment(
   return base.when('NODE_ENV', {
     switch: [
       { is: 'production', then: branches.production },
+      { is: 'staging', then: branches.production },
       { is: 'test', then: branches.test },
     ],
     otherwise: branches.development,
@@ -230,6 +231,17 @@ export const baseEnvSchema = Joi.object({
       'to boot without persistence configured.',
   ),
 
+  DB_SYNCHRONIZE: Joi.boolean()
+    .when('NODE_ENV', {
+      is: 'development',
+      then: Joi.boolean().default(true),
+      otherwise: Joi.boolean().valid(false).default(false),
+    })
+    .description(
+      'TypeORM schema synchronization. Enabled only in development; forced ' +
+        'to false in production-like environments — use migrations instead.',
+    ),
+
   REDIS_HOST: perEnvironment(Joi.string().hostname(), {
     production: Joi.string().required(),
     test: Joi.string().default('localhost'),
@@ -314,6 +326,31 @@ export const baseEnvSchema = Joi.object({
     .max(2)
     .default(0.7)
     .description('Sampling temperature for AI responses'),
+
+  // ── BA-078: AI provider retry policy ────────────────────────
+  /** Maximum retry attempts for transient AI provider failures (429/5xx). */
+  AI_RETRY_MAX_ATTEMPTS: Joi.number()
+    .integer()
+    .min(0)
+    .max(10)
+    .default(3)
+    .description('Maximum retry attempts after a transient AI provider failure.'),
+
+  /** Base backoff delay in ms before the first AI provider retry. */
+  AI_RETRY_BASE_DELAY_MS: Joi.number()
+    .integer()
+    .min(0)
+    .max(60_000)
+    .default(250)
+    .description('Base exponential-backoff delay in ms for AI provider retries.'),
+
+  /** Upper bound in ms for AI provider retry backoff. */
+  AI_RETRY_MAX_DELAY_MS: Joi.number()
+    .integer()
+    .min(1)
+    .max(300_000)
+    .default(5_000)
+    .description('Maximum backoff delay in ms for AI provider retries.'),
 
   /** Version identifier for the active chat prompt template set (#374). */
   AI_PROMPT_TEMPLATE_VERSION: Joi.string()
@@ -534,7 +571,11 @@ export const jobEnvSchema = Joi.object({
 // Notification delivery and preferences (#385)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Environment variables for notification delivery and preferences (#385).
+ */
 export const notificationEnvSchema = Joi.object({
+  /** When "true", user notification preferences are enforced before delivery */
   NOTIFICATION_ENFORCE_PREFERENCES: Joi.string()
     .valid('true', 'false')
     .default('true')
@@ -550,10 +591,9 @@ export const notificationEnvSchema = Joi.object({
     ),
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Migration safety and ordering (#397)
-// ─────────────────────────────────────────────────────────────────────────────
-
+/**
+ * Environment variables for migration safety and ordering.
+ */
 export const migrationEnvSchema = Joi.object({
   MIGRATION_LOCK_TIMEOUT: Joi.number()
     .integer()
@@ -584,84 +624,55 @@ export const migrationEnvSchema = Joi.object({
 });
 
 /**
- * The single composed schema handed to `ConfigModule.forRoot()`.
+ * Environment variables for the Stellar network configuration (BA-090).
  *
- * Deliberately free of schema-level `.options()` / `.unknown()` calls: every
- * knob lives in {@link ENV_VALIDATION_OPTIONS} so there is exactly one place
- * that decides how validation behaves.
+ * These variables let the wallet service validate addresses, issuer, asset
+ * codes, network passphrase, and Horizon consistently with the environment
+ * the backend was started in.
+ */
+export const stellarEnvSchema = Joi.object({
+  /** Stellar network the backend targets. */
+  STELLAR_NETWORK: Joi.string()
+    .valid('testnet', 'futurenet', 'mainnet', 'public', 'custom')
+    .default('testnet')
+    .description('Stellar network target.'),
+
+  /** Network passphrase that must match `STELLAR_NETWORK`. */
+  STELLAR_NETWORK_PASSPHRASE: Joi.string()
+    .valid(
+      'Test SDF Network ; September 2015',
+      'Public Global Stellar Network ; September 2015',
+      'Standalone Network ; February 2017',
+    )
+    .default('Test SDF Network ; September 2015')
+    .description(
+      'Stellar network passphrase. Must match the configured network.',
+    ),
+
+  /** Horizon server URL used to query balances and validate transactions. */
+  STELLAR_HORIZON_URL: Joi.string()
+    .uri()
+    .optional()
+    .description('Horizon server URL for Stellar queries.'),
+
+  /**
+   * Comma-separated `assetCode:issuer` allow-list for transactions,
+   * e.g. `XLM:native,USDC:GCGAC2ZAAYZLT...`. Native XLM uses `native`.
+   */
+  STELLAR_ALLOWED_ASSETS: Joi.string()
+    .optional()
+    .description('Allowed assetCode:issuer pairs (comma-separated).'),
+});
+
+/**
+ * Combined validation schema that includes base, contract, migration,
+ * notification, and stellar environment variables.
+ * Used by config.module.ts to validate all env vars at startup.
  */
 export const envValidationSchema = baseEnvSchema
   .concat(assetEnvSchema)
   .concat(contractEnvSchema)
   .concat(jobEnvSchema)
   .concat(migrationEnvSchema)
-  .concat(notificationEnvSchema);
-
-/**
- * Canonical validation options.
- *
- * - `abortEarly: false` — report every misconfigured variable in one pass so
- *   an operator fixes the whole environment in a single iteration.
- * - `convert: true` — coerce the string values that come from `process.env`
- *   into the declared types (numbers, booleans, …).
- * - `allowUnknown: true` — `process.env` always carries unrelated variables
- *   (`PATH`, `HOME`, CI injections). Unknown *application* variables are
- *   therefore ignored rather than fatal; this is asserted by the unit tests.
- * - `stripUnknown: false` — unknown values stay reachable through
- *   `ConfigService` for modules that read raw env vars directly.
- */
-export const ENV_VALIDATION_OPTIONS: Joi.ValidationOptions = {
-  abortEarly: false,
-  convert: true,
-  allowUnknown: true,
-  stripUnknown: false,
-};
-
-export type ValidatedEnv = Record<string, unknown> & {
-  NODE_ENV: NodeEnvironment;
-  PORT: number;
-  CORS_ORIGIN: string | string[];
-  DATABASE_URL: string;
-  REDIS_HOST: string;
-  REDIS_PORT: number;
-  JWT_SECRET: string;
-  ASSET_SIGNING_SECRET: string;
-};
-
-export type JobEnvConfig = {
-  MAX_JOB_RETRIES: number;
-  JOB_RETRY_DELAY_MS: number;
-  DLQ_TTL_SECONDS: number;
-  EXPORT_NOTIFICATION_ENABLED: boolean;
-  EXPORT_RETRY_MAX: number;
-  SIGNED_URL_TTL_SECONDS: number;
-};
-
-export type ContractEnvConfig = {
-  CERTIFICATE_BASE_URL: string;
-  CONTRACT_INGESTION_ENABLED: string;
-  CONTRACT_REGISTRY_REQUIRE_SCHEMA: string;
-  CONTRACT_EVENT_REPLAY_ENABLED: string;
-  CONTRACT_ADAPTER_MODE: string;
-  CONTRACT_NETWORK: string;
-  STELLAR_HORIZON_URL?: string;
-  CONTRACT_REGISTRY_MAX_ENTRIES: number;
-  CONTRACT_SCHEMA_VERSION: string;
-  CONTRACT_REPLAY_MAX_EVENTS: number;
-  CONTRACT_EVENT_RETENTION_DAYS: number;
-  MAX_ATTACHMENT_SIZE_BYTES: number;
-  ALLOWED_ATTACHMENT_TYPES?: string;
-  ATTACHMENT_SCANNING_ENABLED: string;
-  READINESS_PROBE_TIMEOUT_MS: number;
-  TASK_ORCHESTRATOR_MAX_RETRIES: number;
-  TASK_ORCHESTRATOR_BASE_BACKOFF_MS: number;
-  TASK_ORCHESTRATOR_MAX_BACKOFF_MS: number;
-};
-
-export function isFeatureEnabled(value: string | undefined): boolean {
-  return value === 'true';
-}
-
-export function isFeatureExplicitlyDisabled(value: string | undefined): boolean {
-  return value === 'false';
-}
+  .concat(notificationEnvSchema)
+  .concat(stellarEnvSchema);

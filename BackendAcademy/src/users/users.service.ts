@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { AuthSessionService } from '../auth/auth-session.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { SocialService } from '../social/social.service';
@@ -75,6 +76,7 @@ export class UsersService {
     private readonly onboardingService: OnboardingService,
     private readonly analyticsService: AnalyticsService,
     private readonly socialService: SocialService,
+    @Optional() private readonly authSessionService?: AuthSessionService,
   ) {}
 
   async updatePreferences(
@@ -120,6 +122,7 @@ export class UsersService {
       timestamp: new Date(),
     };
     this.privilegeChangeLog.push(event);
+    await this.authSessionService?.onPrivilegeChanged(userId);
     this.logger.warn(
       `User ${userId} privilege changed from ${previousRole} to ${newRole} by ${changedBy}`,
     );
@@ -177,6 +180,7 @@ export class UsersService {
    */
   async deleteAccount(userId: string): Promise<AccountDeletionResult> {
     this.logger.warn(`Cascade deleting account for user ${userId}`);
+    await this.authSessionService?.onAccountDeleted(userId);
 
     const result: AccountDeletionResult = {
       userId,
@@ -239,6 +243,13 @@ export class UsersService {
    * Records an asset upload against a user for ownership tracking.
    */
   recordAssetUpload(userId: string, assetId: string): void {
+  async onPasswordChanged(userId: string): Promise<void> {
+    await this.authSessionService?.onPasswordChanged(userId);
+  }
+
+  async onPasswordReset(userId: string): Promise<void> {
+    await this.authSessionService?.onPasswordReset(userId);
+  }
     if (!this.userUploads.has(userId)) {
       this.userUploads.set(userId, new Set());
     }

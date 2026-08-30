@@ -5,11 +5,36 @@ import {
   DeliveryContext,
 } from '../interfaces/notification-provider.interface';
 import { Notification } from '../interfaces/notifications.interface';
+import {
+  CircuitBreaker,
+  CircuitBreakerMetrics,
+  resilientCall,
+  RetryOptions,
+  TimeoutError,
+  CircuitOpenError,
+  HttpStatusError,
+} from './provider-resilience';
+
+/** Per-attempt timeout for push delivery calls (ms). */
+const PUSH_TIMEOUT_MS = 3_000;
+
+/** Retry configuration for push delivery. */
+const PUSH_RETRY: RetryOptions = {
+  maxAttempts: 3,
+  initialDelayMs: 200,
+  backoffFactor: 2,
+  maxDelayMs: 4_000,
+};
 
 /**
  * Push notification delivery adapter.
  *
  * Handles sending push notifications to user devices via FCM/APNs.
+ *
+ * Resilience (Issue #674):
+ *  - Per-attempt timeout of 3 s.
+ *  - Exponential-backoff retry (up to 3 attempts) for transient failures.
+ *  - Circuit breaker: opens after 5 consecutive failures; probes after 30 s.
  */
 @Injectable()
 export class PushNotificationProvider implements INotificationProvider {
@@ -17,34 +42,31 @@ export class PushNotificationProvider implements INotificationProvider {
   readonly providerName = 'Push Notification Provider';
   private readonly logger = new Logger(PushNotificationProvider.name);
 
+  private readonly circuitBreaker = new CircuitBreaker('push', {
+    failureThreshold: 5,
+    recoveryTimeoutMs: 30_000,
+    halfOpenProbes: 1,
+  });
+
+  /** Expose circuit metrics for the health endpoint. */
+  get circuitMetrics(): CircuitBreakerMetrics {
+    return this.circuitBreaker.metrics;
+  }
+
   async send(
     notification: Notification,
     context: DeliveryContext,
   ): Promise<DeliveryResult> {
     try {
-      // In production this would integrate with Firebase Cloud Messaging
-      // or Apple Push Notification service.
-      this.logger.log(
-        `[PUSH] To user: ${context.userId} | Title: "${notification.title}"`,
+      return await resilientCall(
+        () => this.doSend(notification, context),
+        this.circuitBreaker,
+        PUSH_TIMEOUT_MS,
+        PUSH_RETRY,
+        `push:${context.userId}`,
       );
-
-      // Simulate push delivery
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      return {
-        success: true,
-        message: `Push delivered to user ${context.userId}`,
-        deliveredAt: new Date(),
-      };
-    } catch (error) {
-      this.logger.error(
-        `[PUSH] Failed for user ${context.userId}: ${(error as Error).message}`,
-      );
-      return {
-        success: false,
-        message: `Push delivery failed: ${(error as Error).message}`,
-        deliveredAt: new Date(),
-      };
+    } catch (err) {
+      return this.buildErrorResult(err, context.userId);
     }
   }
 
@@ -64,7 +86,57 @@ export class PushNotificationProvider implements INotificationProvider {
   }
 
   async healthCheck(): Promise<boolean> {
-    this.logger.log('[PUSH] Health check OK');
-    return true;
+    const { state } = this.circuitBreaker.metrics;
+    const circuitOk = state !== 'OPEN';
+    this.logger.log(
+      `[PUSH] Health check: circuit=${state} healthy=${circuitOk}`,
+    );
+    return circuitOk;
+  }
+
+  // ── Internal delivery ─────────────────────────────────────────
+
+  private async doSend(
+    notification: Notification,
+    context: DeliveryContext,
+  ): Promise<DeliveryResult> {
+    // In production this would integrate with Firebase Cloud Messaging
+    // or Apple Push Notification service.
+    this.logger.log(
+      `[PUSH] To user: ${context.userId} | Title: "${notification.title}"`,
+    );
+
+    // Simulate push delivery
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+    return {
+      success: true,
+      message: `Push delivered to user ${context.userId}`,
+      deliveredAt: new Date(),
+    };
+  }
+
+  // ── Error handling ────────────────────────────────────────────
+
+  private buildErrorResult(
+    err: unknown,
+    userId: string,
+  ): DeliveryResult {
+    let message: string;
+    if (err instanceof CircuitOpenError) {
+      this.logger.warn(`[PUSH] Circuit open — skipping user ${userId}: ${err.message}`);
+      message = `Provider unavailable (circuit open): ${err.message}`;
+    } else if (err instanceof TimeoutError) {
+      this.logger.error(`[PUSH] Timeout for user ${userId}: ${err.message}`);
+      message = `Delivery timed out: ${err.message}`;
+    } else if (err instanceof HttpStatusError) {
+      this.logger.error(`[PUSH] HTTP ${err.status} for user ${userId}`);
+      message = `HTTP error ${err.status}`;
+    } else {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`[PUSH] Failed for user ${userId}: ${msg}`);
+      message = `Push delivery failed: ${msg}`;
+    }
+    return { success: false, message, deliveredAt: new Date() };
   }
 }

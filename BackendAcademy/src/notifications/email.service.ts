@@ -34,6 +34,80 @@ export interface EmailTemplateFields {
   [key: string]: string | undefined;
 }
 
+/**
+ * HTML entity map for escaping user-supplied values.
+ * Prevents XSS when interpolated into HTML templates.
+ */
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#x27;',
+  '/': '&#x2F;',
+};
+
+/**
+ * Escapes HTML special characters in a string to prevent XSS.
+ * Used when interpolating user-supplied values into HTML email templates.
+ *
+ * @param raw - The raw string value to escape
+ * @returns The escaped string safe for HTML insertion
+ */
+export function escapeHtml(raw: string): string {
+  return raw.replace(/[&<>"'/]/g, (ch) => HTML_ESCAPE_MAP[ch] || ch);
+}
+
+/**
+ * Escapes characters that are significant in plain-text email contexts.
+ * Specifically handles leading dots (which can be confused with SMTP
+ * command prefixes) and backslash-n sequences.
+ *
+ * @param raw - The raw string value to escape
+ * @returns The escaped string safe for plain-text insertion
+ */
+export function escapePlainText(raw: string): string {
+  // Escape leading dots (SMTP dot-stuffing safety)
+  return raw
+    .split('\n')
+    .map((line) => (line.startsWith('.') ? `.${line}` : line))
+    .join('\n');
+}
+
+/**
+ * Strips known-dangerous HTML constructs from a value before interpolation.
+ * This is a defence-in-depth measure; primary protection is escaping.
+ *
+ * Removes `<script>`, `<iframe>`, `<object>`, `<embed>`, and `javascript:` URIs.
+ *
+ * @param raw - The raw string value to sanitise
+ * @returns The sanitised string with dangerous constructs removed
+ */
+export function stripDangerousHtml(raw: string): string {
+  let clean = raw;
+  // Remove script tags (and their content)
+  clean = clean.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+  // Remove iframe, object, embed tags
+  clean = clean.replace(/<(iframe|object|embed)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+  clean = clean.replace(/<(iframe|object|embed)\b[^>]*\/?>/gi, '');
+  // Remove javascript: URIs
+  clean = clean.replace(/javascript\s*:/gi, '');
+  return clean;
+}
+
+/**
+ * Full sanitisation pipeline for a template field value.
+ * Applies stripping of dangerous constructs, then HTML escaping.
+ *
+ * @param value - The raw value to sanitise
+ * @returns The sanitised value safe for template interpolation
+ */
+export function sanitiseTemplateValue(value: string): string {
+  let clean = stripDangerousHtml(value);
+  clean = escapeHtml(clean);
+  return clean;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -43,6 +117,10 @@ export class EmailService {
    *
    * Missing personalization fields are replaced with sensible defaults
    * so the user never sees broken or blank content.
+   *
+   * Unknown or unrecognised placeholders are replaced with the
+   * placeholder token `[keyName]` so that the rendered content
+   * always remains readable.
    */
   async sendWelcomeEmail(
     email: string,
@@ -155,24 +233,29 @@ export class EmailService {
     this.logger.log(`Successfully sent submission graded email to ${email}`);
   }
 
-  // ── Template rendering with fallbacks (#387) ───────────────
+  // ── Template rendering with fallbacks and escaping (#387, Task 2) ──
 
   /**
    * Renders a template string by replacing {{key}} placeholders
-   * with values from the provided fields object. Any missing or
-   * empty fields are replaced with sensible defaults so the
-   * rendered content is never broken or blank.
+   * with values from the provided fields object.
    *
-   * This is the core fix for issue #387.
+   * Behaviour:
+   *  1. Values are sanitised: dangerous HTML constructs are stripped and
+   *     HTML special characters are escaped to prevent XSS.
+   *  2. Missing or empty fields fall back to the FALLBACKS map, then to
+   *     a visible `[keyName]` placeholder so the rendered content is
+   *     never broken or blank.
+   *  3. Unrecognised placeholders (keys not in FALLBACKS and not supplied)
+   *     are rendered as `[keyName]` — documented, predictable behaviour.
    */
   renderTemplate(
     template: string,
     fields: EmailTemplateFields = {},
   ): string {
     return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
-      const value = fields[key];
-      if (value !== undefined && value !== null && value !== '') {
-        return value;
+      const raw = fields[key];
+      if (raw !== undefined && raw !== null && raw !== '') {
+        return sanitiseTemplateValue(raw);
       }
       // Resolve to a safe fallback default
       const fallback = FALLBACKS[key] || `[${key}]`;

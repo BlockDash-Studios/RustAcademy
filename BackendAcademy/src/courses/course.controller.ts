@@ -47,22 +47,27 @@ export class CourseController {
     return this.courseService.findByLevel(level);
   }
 
-  @Get(':id')
-  async findById(@Param('id') id: string) {
-    return this.courseService.findById(id);
+  @Get(':slug')
+  async findBySlug(@Param('slug') slug: string) {
+    return this.courseService.findBySlugOrId(slug);
   }
 
   @Put(':id')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateCourseDto,
-  ): Promise<CourseEntity> {
+  ): Promise<CourseEntity | null> {
     return this.courseService.update(id, dto);
   }
 
   @Delete(':id')
   async remove(@Param('id') id: string) {
     return this.courseService.remove(id);
+  }
+
+  @Post(':id/restore')
+  async restore(@Param('id') id: string) {
+    return this.courseService.restoreCourse(id);
   }
 
   // ---------------------------------------------------------------------------
@@ -108,7 +113,7 @@ export class CourseController {
     @Param('id') id: string,
     @Param('version') version: string,
     @Body() dto: RestoreRevisionDto,
-  ): Promise<CourseEntity> {
+  ): Promise<CourseEntity | null> {
     return this.courseService.restoreRevision(
       id,
       Number(version),

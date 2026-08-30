@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { isFeatureEnabled } from '../config/env.schema';
 
@@ -53,9 +53,10 @@ export interface CompetitionResetLogEntry {
 }
 
 @Injectable()
-export class JobsService implements OnModuleInit {
+export class JobsService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(JobsService.name);
   private readonly schedules = new Map<string, CronSchedule>();
+  private heartbeatInterval: NodeJS.Timeout | null = null;
 
   /** #394: History of replay job executions */
   private readonly replayJobHistory: ReplayJobResult[] = [];
@@ -68,7 +69,7 @@ export class JobsService implements OnModuleInit {
 
     // #376: Start periodic heartbeat for readiness probes
     this.lastHeartbeat = new Date();
-    setInterval(() => {
+    this.heartbeatInterval = setInterval(() => {
       this.heartbeat();
     }, 30_000); // heartbeat every 30 seconds
 
@@ -490,6 +491,15 @@ export class JobsService implements OnModuleInit {
    */
   cancelWebhookRetry(webhookId: string): boolean {
     return this.pendingWebhookRetries.delete(webhookId);
+  }
+
+  onApplicationShutdown(signal?: string) {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    this.workerReady = false;
+    this.logger.log(`JobsService shut down gracefully (signal: ${signal}).`);
   }
 
   // ---------------------------------------------------------------------------

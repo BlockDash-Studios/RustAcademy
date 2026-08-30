@@ -37,6 +37,7 @@ export enum EventType {
   CONTRACT_REPLAY_STARTED = 'contract_replay_started',
   CONTRACT_REPLAY_COMPLETED = 'contract_replay_completed',
   // #386: Notification batching events
+  // #386: Notification delivery analytics
   NOTIFICATION_BATCH_FLUSHED = 'notification_batch_flushed',
   NOTIFICATION_DELIVERED = 'notification_delivered',
 }
@@ -64,6 +65,9 @@ export class AnalyticsService {
 
   /** #394: History of reconciliation results for analytics */
   private readonly reconciliationHistory: StateReconciliationResult[] = [];
+
+  /** All recognized event types, used to validate incoming payloads. */
+  private static readonly VALID_EVENT_TYPES = new Set(Object.values(EventType));
 
   constructor(
     private readonly redisService?: RedisService,

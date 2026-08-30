@@ -1,8 +1,21 @@
-import { Controller, Get, Query } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Query,
+  Post,
+  Body,
+  Param,
+  UseGuards,
+} from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 
 import { HorizonService } from "../transactions/horizon.service";
 import { SensitiveMutation } from "../auth/decorators/sensitive-mutation.decorator";
+import { PaymentsService } from "./payments.service";
+import { PayoutDto } from "./dto/payout.dto";
+import { Roles } from "../auth/decorators/roles.decorator";
+import { UserRole } from "../auth/enums/user-role.enum";
+import { RolesGuard } from "../auth/guards/roles.guard";
 
 type RecentPaymentsQuery = {
   address: string;
@@ -13,7 +26,30 @@ type RecentPaymentsQuery = {
 @ApiTags("payments")
 @Controller("payments")
 export class PaymentsController {
-  constructor(private readonly horizonService: HorizonService) {}
+  constructor(
+    private readonly horizonService: HorizonService,
+    private readonly paymentsService: PaymentsService,
+  ) {}
+
+  @Post("payout")
+  @Roles(UserRole.Admin)
+  @UseGuards(RolesGuard)
+  @SensitiveMutation("payments.payout.create")
+  @ApiOperation({ summary: "Create a payout" })
+  @ApiResponse({ status: 201, description: "Payout created" })
+  async createPayout(@Body() payoutDto: PayoutDto) {
+    return this.paymentsService.createPayout(payoutDto);
+  }
+
+  @Post("payout/:id/release")
+  @Roles(UserRole.Admin)
+  @UseGuards(RolesGuard)
+  @SensitiveMutation("payments.payout.release")
+  @ApiOperation({ summary: "Release a payout" })
+  @ApiResponse({ status: 200, description: "Payout released" })
+  async releasePayout(@Param("id") id: string) {
+    return this.paymentsService.releasePayout(id);
+  }
 
   // Read-only, but payment-sensitive: exposes an address's payment history,
   // which is a reconnaissance target for scraping/enumeration. Tagged

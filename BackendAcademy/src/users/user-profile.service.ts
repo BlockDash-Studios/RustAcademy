@@ -1,5 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { UserProfileEntity } from './user-profile.entity';
+import { CreateUserProfileDto } from './dto/create-user-profile.dto';
+import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
 
 /**
  * #352: Profile validation rules for display names and bios.
@@ -40,6 +42,43 @@ const BLOCKED_TERMS = [
   'official',
   'system',
 ];
+
+/**
+ * BA-040 — Fields that are considered "protected" / non-editable by a
+ * client. Any of these keys appearing in a create or update payload will be
+ * stripped before the value reaches the store, so a caller cannot escalate
+ * privileges or take ownership of a profile by supplying extra fields.
+ */
+const PROTECTED_FIELDS = new Set([
+  'id',
+  'userid',
+  'createdat',
+  'updatedat',
+  'role',
+  'roles',
+  'isverified',
+  'verified',
+  'verificationstatus',
+  'status',
+  'owner',
+  'ownerid',
+  'internal',
+]);
+
+/**
+ * Returns a copy of `input` with every protected field removed.
+ */
+function stripProtectedFields<T extends Record<string, unknown>>(
+  input: T,
+): Partial<T> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!PROTECTED_FIELDS.has(key.toLowerCase())) {
+      result[key] = value;
+    }
+  }
+  return result as Partial<T>;
+}
 
 @Injectable()
 export class UserProfileService {
@@ -133,12 +172,17 @@ export class UserProfileService {
     }
   }
 
-  async create(profile: Partial<UserProfileEntity>): Promise<UserProfileEntity> {
-    this.validateProfile(profile);
+  async create(dto: CreateUserProfileDto): Promise<UserProfileEntity> {
+    // BA-040: only editable fields survive; protected metadata cannot be forged.
+    const safe = stripProtectedFields({
+      ...dto,
+    } as Record<string, unknown>);
+
+    this.validateProfile(safe);
 
     const entity = new UserProfileEntity({
       id: crypto.randomUUID(),
-      ...profile,
+      ...(safe as Partial<UserProfileEntity>),
     });
     this.profiles.set(entity.id, entity);
     return entity;
@@ -156,15 +200,20 @@ export class UserProfileService {
     return Array.from(this.profiles.values()).find(p => p.userId === userId) || null;
   }
 
-  async update(id: string, updates: Partial<UserProfileEntity>): Promise<UserProfileEntity> {
+  async update(id: string, dto: UpdateUserProfileDto): Promise<UserProfileEntity> {
     const profile = this.profiles.get(id);
     if (!profile) {
       throw new BadRequestException({ statusCode: 404, message: 'Profile not found' });
     }
 
-    this.validateProfile({ ...profile, ...updates });
+    // BA-040: strip any protected field that a malicious payload injects.
+    const safe = stripProtectedFields({
+      ...dto,
+    } as Record<string, unknown>);
 
-    Object.assign(profile, updates, { updatedAt: new Date() });
+    this.validateProfile({ ...profile, ...safe });
+
+    Object.assign(profile, safe, { updatedAt: new Date() });
     return profile;
   }
 

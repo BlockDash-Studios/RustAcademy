@@ -76,14 +76,20 @@ jest.mock('@stellar/stellar-sdk', () => {
   };
 });
 
-import { BadRequestException } from '@nestjs/common';
+jest.mock('../supabase/supabase.service', () => ({
+  SupabaseService: class SupabaseService {},
+}));
+
+import { ConflictException } from '@nestjs/common';
 
 import { SorobanRpcService } from './soroban-rpc.service';
 import { TransactionsService } from './transaction.service';
+import { InvocationReplayService } from './invocation-replay.service';
 
 describe('TransactionsService', () => {
   let service: TransactionsService;
   let mockSorobanRpcService: jest.Mocked<Partial<SorobanRpcService>>;
+  let mockInvocationReplayService: jest.Mocked<Partial<InvocationReplayService>>;
 
   beforeEach(() => {
     mockSorobanRpcService = {
@@ -110,8 +116,16 @@ describe('TransactionsService', () => {
         },
       }),
     };
+    mockInvocationReplayService = {
+      claim: jest.fn().mockResolvedValue({ kind: 'claimed' }),
+      complete: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+    };
 
-    service = new TransactionsService(mockSorobanRpcService as unknown as SorobanRpcService);
+    service = new TransactionsService(
+      mockSorobanRpcService as unknown as SorobanRpcService,
+      mockInvocationReplayService as unknown as InvocationReplayService,
+    );
   });
 
   it('returns a simulation summary and idempotency key', async () => {
@@ -130,7 +144,7 @@ describe('TransactionsService', () => {
     }
   });
 
-  it('reuses the cached response for the same idempotency key', async () => {
+  it('returns a durable cached response for the same idempotency key', async () => {
     const payload = {
       contractId: 'C123',
       method: 'health_check',
@@ -139,7 +153,12 @@ describe('TransactionsService', () => {
       idempotencyKey: 'same-key',
     };
 
+    mockInvocationReplayService.claim!.mockResolvedValueOnce({ kind: 'claimed' });
     const first = await service.composeTransaction(payload);
+    mockInvocationReplayService.claim!.mockResolvedValueOnce({
+      kind: 'cached',
+      response: first,
+    });
     const second = await service.composeTransaction(payload);
 
     expect(second).toEqual(first);
@@ -147,6 +166,7 @@ describe('TransactionsService', () => {
   });
 
   it('rejects reusing an idempotency key with a different payload', async () => {
+    mockInvocationReplayService.claim!.mockResolvedValueOnce({ kind: 'claimed' });
     await service.composeTransaction({
       contractId: 'C123',
       method: 'health_check',
@@ -155,6 +175,7 @@ describe('TransactionsService', () => {
       idempotencyKey: 'same-key',
     });
 
+    mockInvocationReplayService.claim!.mockResolvedValueOnce({ kind: 'conflict' });
     await expect(
       service.composeTransaction({
         contractId: 'C123',
@@ -163,6 +184,8 @@ describe('TransactionsService', () => {
         sourceAccount: 'G123',
         idempotencyKey: 'same-key',
       }),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ConflictException);
+
+    expect(mockInvocationReplayService.complete).toHaveBeenCalledTimes(1);
   });
 });

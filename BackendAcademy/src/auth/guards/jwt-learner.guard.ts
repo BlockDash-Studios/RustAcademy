@@ -9,18 +9,14 @@ import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { JwtPayload } from '../interfaces/jwt-payload.interface';
 import { UserRole } from '../enums/user-role.enum';
+import { AuthSessionService } from '../auth-session.service';
 
-/**
- * Protects routes that require a valid learner JWT.
- *
- * Expects an `Authorization: Bearer <token>` header.
- * The token payload must contain `role: "learner"`.
- *
- * On success, attaches `request.user` with the decoded payload.
- */
 @Injectable()
 export class JwtLearnerGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly authSessionService: AuthSessionService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -33,9 +29,11 @@ export class JwtLearnerGuard implements CanActivate {
       });
     }
 
-    let payload: JwtPayload;
+    let payload: JwtPayload & { sessionId?: string };
     try {
-      payload = await this.jwtService.verifyAsync<JwtPayload>(token);
+      payload = await this.jwtService.verifyAsync<
+        JwtPayload & { sessionId?: string }
+      >(token);
     } catch {
       throw new UnauthorizedException({
         error: 'INVALID_TOKEN',
@@ -50,7 +48,25 @@ export class JwtLearnerGuard implements CanActivate {
       });
     }
 
-    // Attach decoded user identity for downstream handlers
+    if (!payload.sessionId) {
+      throw new UnauthorizedException({
+        error: 'MISSING_SESSION_ID',
+        message: 'Token does not contain session id',
+      });
+    }
+
+    try {
+      await this.authSessionService.validateSession(payload.sessionId);
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      throw new UnauthorizedException({
+        error: 'INVALID_SESSION',
+        message: 'Session is expired, revoked, or inactive',
+      });
+    }
+
     (request as Request & { user: JwtPayload }).user = payload;
     return true;
   }

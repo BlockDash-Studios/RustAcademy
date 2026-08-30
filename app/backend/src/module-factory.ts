@@ -11,6 +11,20 @@ export type AppImport =
   | ForwardReference<unknown>;
 
 /**
+ * Typed loader that encapsulates dynamic module composition behind a
+ * well-typed interface (Issue #336).
+ *
+ * AppModule should call `EnvironmentModuleLoader.getModules(config)` instead
+ * of calling `getDynamicModules` directly, so the composition logic is in one
+ * place and the env-config contract is explicit.
+ */
+export class EnvironmentModuleLoader {
+  static getModules(config: EnvConfig): AppImport[] {
+    return getDynamicModules(config);
+  }
+}
+
+/**
  * Returns the list of dynamic modules to be loaded based on the application configuration.
  * This factory ensures that module loading is deterministic and based on typed config.
  *

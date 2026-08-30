@@ -2,6 +2,7 @@ import { Injectable, Logger, UnauthorizedException, BadRequestException } from '
 import { AntiCheatResult } from './interfaces/anti-cheat.interface';
 import { CheckSubmissionDto } from './dto/check-submission.dto';
 import { randomUUID, createHash } from 'crypto';
+import { DatabaseService } from '../database/database.service';
 
 export interface ApiKeyRecord {
   id: string;
@@ -48,8 +49,13 @@ export class AntiCheatService {
   private readonly usageWindowMs = 60_000;
   /** Webhook delivery attempts keyed by webhookId. */
   private readonly webhookAttempts = new Map<string, WebhookDeliveryAttempt[]>();
-  /** Idempotency store: idempotencyKey → first-seen timestamp. */
+  /**
+   * Degraded in-memory idempotency fallback used when no DatabaseService is
+   * injected (Issue #663). The live path uses the durable store instead.
+   */
   private readonly webhookIdempotency = new Map<string, number>();
+
+  constructor(private readonly databaseService?: DatabaseService) {}
 
   async analyzeSubmission(dto: CheckSubmissionDto): Promise<AntiCheatResult> {
     this.logger.log(
@@ -217,10 +223,37 @@ export class AntiCheatService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns true if this idempotency key was already seen within the TTL window,
-   * meaning the payload is a replayed/duplicate webhook callback.
+   * Returns true if this idempotency key was already claimed within the TTL
+   * window, meaning the payload is a replayed/duplicate webhook callback.
+   *
+   * Issue #663 (BA-095): the claim is durable and carries a payload
+   * fingerprint plus a processing status, so replays are recognised across
+   * restarts and in-progress work is distinguished from completed work.
+   * When no DatabaseService is injected (isolated tests), the previous
+   * in-memory behaviour is kept as a degraded fallback.
    */
-  isWebhookReplayed(idempotencyKey: string, ttlMs = 3_600_000): boolean {
+  async isWebhookReplayed(
+    idempotencyKey: string,
+    payload?: string,
+    ttlMs = 3_600_000,
+  ): Promise<boolean> {
+    if (this.databaseService) {
+      const fingerprint = payload
+        ? createHash('sha256').update(payload).digest('hex')
+        : '';
+      const claim = await this.databaseService.claimWebhookIdempotency(
+        idempotencyKey,
+        fingerprint,
+        ttlMs,
+      );
+      if (!claim.claimed) {
+        this.logger.warn(
+          `Replayed webhook detected: ${idempotencyKey} (${claim.reason})`,
+        );
+      }
+      return !claim.claimed;
+    }
+
     const now = Date.now();
     const firstSeen = this.webhookIdempotency.get(idempotencyKey);
     if (firstSeen && now - firstSeen < ttlMs) {

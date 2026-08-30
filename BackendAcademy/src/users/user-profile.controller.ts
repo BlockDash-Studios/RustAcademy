@@ -10,13 +10,15 @@ import {
 } from '@nestjs/common';
 import { UserProfileService } from './user-profile.service';
 import { UserProfileEntity } from './user-profile.entity';
+import { CreateUserProfileDto } from './dto/create-user-profile.dto';
+import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
 
 @Controller('user-profiles')
 export class UserProfileController {
   constructor(private readonly profileService: UserProfileService) {}
 
   @Post()
-  async create(@Body() dto: Partial<UserProfileEntity>) {
+  async create(@Body() dto: CreateUserProfileDto) {
     return this.profileService.create(dto);
   }
 
@@ -38,9 +40,9 @@ export class UserProfileController {
   @Put(':id')
   async update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() updates: Partial<UserProfileEntity>,
+    @Body() dto: UpdateUserProfileDto,
   ) {
-    return this.profileService.update(id, updates);
+    return this.profileService.update(id, dto);
   }
 
   @Delete(':id')

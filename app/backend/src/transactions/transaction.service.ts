@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ConflictException,
   InternalServerErrorException,
 } from "@nestjs/common";
 import { createHash } from "crypto";
@@ -18,6 +19,7 @@ import { buildScVal } from "./utils/param-builder";
 import { SorobanRpcService } from "./soroban-rpc.service";
 import { mapSorobanError } from "../common/soroban-errors";
 import { SorobanErrorCode } from "../common/soroban-errors";
+import { InvocationReplayService } from "./invocation-replay.service";
 
 const STROOPS_PER_XLM = 10_000_000;
 const BASE_FEE = 100; // stroops
@@ -25,13 +27,10 @@ const BASE_FEE = 100; // stroops
 @Injectable()
 export class TransactionsService {
   private readonly logger = new Logger(TransactionsService.name);
-  private readonly idempotencyResponses = new Map<
-    string,
-    ComposeTransactionResponse | ComposeTransactionError
-  >();
-  private readonly idempotencyFingerprints = new Map<string, string>();
-
-  constructor(private readonly sorobanRpcService: SorobanRpcService) {}
+  constructor(
+    private readonly sorobanRpcService: SorobanRpcService,
+    private readonly invocationReplayService: InvocationReplayService,
+  ) {}
 
   async composeTransaction(
     dto: ComposeTransactionDto,
@@ -40,16 +39,21 @@ export class TransactionsService {
 
     const payloadFingerprint = this.buildFingerprint(dto);
     const idempotencyKey = dto.idempotencyKey ?? payloadFingerprint;
-    const fingerprintForKey = this.idempotencyFingerprints.get(idempotencyKey);
-    if (fingerprintForKey && fingerprintForKey !== payloadFingerprint) {
-      throw new BadRequestException(
+    const replay = await this.invocationReplayService.claim(
+      `${dto.sourceAccount}:${dto.networkPassphrase ?? "__default__"}`,
+      idempotencyKey,
+      payloadFingerprint,
+    );
+    if (replay.kind === "conflict") {
+      throw new ConflictException(
         "This idempotency key was already used with a different payload.",
       );
     }
-
-    const cached = this.idempotencyResponses.get(idempotencyKey);
-    if (cached) {
-      return cached;
+    if (replay.kind === "in_flight") {
+      throw new ConflictException("This invocation is already in progress.");
+    }
+    if (replay.kind === "cached") {
+      return replay.response as ComposeTransactionResponse | ComposeTransactionError;
     }
 
     const startTime = Date.now();
@@ -64,6 +68,10 @@ export class TransactionsService {
     try {
       account = await this.sorobanRpcService.getAccount(dto.sourceAccount);
     } catch (err) {
+      await this.invocationReplayService.release(
+        `${dto.sourceAccount}:${dto.networkPassphrase ?? "__default__"}`,
+        idempotencyKey,
+      );
       return {
         success: false,
         error: err.message,
@@ -76,6 +84,10 @@ export class TransactionsService {
     try {
       scParams = dto.params.map(buildScVal);
     } catch (err) {
+      await this.invocationReplayService.release(
+        `${dto.sourceAccount}:${dto.networkPassphrase ?? "__default__"}`,
+        idempotencyKey,
+      );
       throw new BadRequestException(`Invalid parameter: ${err.message}`);
     }
 
@@ -102,6 +114,10 @@ export class TransactionsService {
       simulationResult = await this.sorobanRpcService.simulateTransaction(tx);
     } catch (err) {
       this.logger.error("RPC simulation request failed", err);
+      await this.invocationReplayService.release(
+        `${dto.sourceAccount}:${dto.networkPassphrase ?? "__default__"}`,
+        idempotencyKey,
+      );
       throw new InternalServerErrorException(
         "Failed to reach Soroban RPC provider.",
       );
@@ -119,7 +135,10 @@ export class TransactionsService {
         userMessage: mapped.message,
         details: mapped.details,
       };
-      this.rememberResponse(idempotencyKey, payloadFingerprint, failedResponse);
+      await this.invocationReplayService.release(
+        `${dto.sourceAccount}:${dto.networkPassphrase ?? "__default__"}`,
+        idempotencyKey,
+      );
       return failedResponse;
     }
 
@@ -134,7 +153,10 @@ export class TransactionsService {
           restorePreamble: simulationResult.restorePreamble,
         },
       } as ComposeTransactionError;
-      this.rememberResponse(idempotencyKey, payloadFingerprint, restoreResponse);
+      await this.invocationReplayService.release(
+        `${dto.sourceAccount}:${dto.networkPassphrase ?? "__default__"}`,
+        idempotencyKey,
+      );
       return restoreResponse;
     }
 
@@ -203,7 +225,11 @@ export class TransactionsService {
         },
       },
     };
-    this.rememberResponse(idempotencyKey, payloadFingerprint, response);
+    await this.invocationReplayService.complete(
+      `${dto.sourceAccount}:${dto.networkPassphrase ?? "__default__"}`,
+      idempotencyKey,
+      response,
+    );
     return response;
   }
 
@@ -230,12 +256,4 @@ export class TransactionsService {
     return createHash("sha256").update(normalized).digest("hex");
   }
 
-  private rememberResponse(
-    idempotencyKey: string,
-    fingerprint: string,
-    response: ComposeTransactionResponse | ComposeTransactionError,
-  ): void {
-    this.idempotencyFingerprints.set(idempotencyKey, fingerprint);
-    this.idempotencyResponses.set(idempotencyKey, response);
-  }
 }

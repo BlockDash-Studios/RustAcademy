@@ -39,6 +39,40 @@ export interface AiHintResponse {
   difficulty: number;
 }
 
+/**
+ * BA-081: Durable, user-scoped record of a hint request.
+ *
+ * Keyed by `userId:hintId`, so a user requesting the same hint twice is
+ * tracked as a single record with an incremented `usedCount` rather than two
+ * separate rows. This is what lets analytics answer "how often is this hint
+ * used, by how many distinct users, and at what difficulty" without counting
+ * the same learner repeatedly.
+ */
+export interface HintUsageRecord {
+  hintId: string;
+  challengeId: string;
+  difficulty: number;
+  userId: string;
+  /** Number of times this user requested this hint. */
+  usedCount: number;
+  firstUsedAt: Date;
+  lastUsedAt: Date;
+}
+
+/**
+ * BA-081: Aggregated hint usage, queryable for calibration analytics.
+ */
+export interface HintUsageAnalytics {
+  totalUses: number;
+  uniqueUsers: number;
+  /** One entry per `userId:hintId`, deduplicated per user. */
+  records: HintUsageRecord[];
+  /** `hintId -> total uses across all users`. */
+  usesByHint: Record<string, number>;
+  /** `difficulty -> total uses across all users`. */
+  usesByDifficulty: Record<number, number>;
+}
+
 export interface AiChatRecord {
   id: string;
   userId: string;

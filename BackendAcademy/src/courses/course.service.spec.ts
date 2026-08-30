@@ -3,6 +3,7 @@ import { CourseService } from './course.service';
 import { CourseEntity } from './course.entity';
 import { CourseRevisionEntity } from './course-revision.entity';
 import { CourseLevel } from './interfaces/course-level.enum';
+import { TransactionManagerService } from '../common/transaction-manager.service';
 
 import { RewardsService } from '../rewards/rewards.service';
 
@@ -134,12 +135,75 @@ describe('CourseService', () => {
       courseRepo as unknown as import('typeorm').Repository<CourseEntity>,
       revisionRepo as unknown as import('typeorm').Repository<CourseRevisionEntity>,
       rewardsService,
-      undefined as any,
+      new TransactionManagerService(),
       undefined as any,
       undefined,
       searchIndexer as any,
       redisService as any,
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Soft-delete and restore lifecycle (#352)
+  // ---------------------------------------------------------------------------
+
+  it('soft-deletes a course by marking it inactive instead of removing the row', async () => {
+    const course = await service.create({
+      title: 'SoftDel',
+      description: 'Desc',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+    });
+
+    const removed = await service.remove(course.id);
+    expect(removed).toBe(true);
+
+    // Course is inactive but still findable by id
+    const fetched = await service.findById(course.id);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.isActive).toBe(false);
+
+    // Does NOT appear in active-only listings
+    const all = await service.findAll();
+    expect(all.map((c) => c.id)).not.toContain(course.id);
+
+    // Revision history is preserved
+    const revisions = await service.getRevisions(course.id);
+    expect(revisions.length).toBeGreaterThanOrEqual(2);
+    expect(revisions[revisions.length - 1].reason).toBe('update');
+    expect(revisions[revisions.length - 1].changeNote).toBe('Course soft-deleted');
+  });
+
+  it('restores a soft-deleted course and records a restore revision', async () => {
+    const course = await service.create({
+      title: 'Restorable',
+      description: 'Desc',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+    });
+
+    await service.remove(course.id);
+    const restored = await service.restoreCourse(course.id);
+
+    expect(restored).not.toBeNull();
+    expect(restored!.isActive).toBe(true);
+    expect(restored!.version).toBe(3); // create + soft-delete + restore
+
+    const all = await service.findAll();
+    expect(all.map((c) => c.id)).toContain(course.id);
+
+    const revisions = await service.getRevisions(course.id);
+    expect(revisions[revisions.length - 1].reason).toBe('restore');
+    expect(revisions[revisions.length - 1].changeNote).toBe('Course restored from soft-delete');
+  });
+
+  it('returns null when restoring a non-existent course', async () => {
+    const result = await service.restoreCourse('ghost-course');
+    expect(result).toBeNull();
   });
 
   // ---------------------------------------------------------------------------
@@ -166,6 +230,46 @@ describe('CourseService', () => {
     expect(revisions[0].version).toBe(1);
     expect(revisions[0].reason).toBe('create');
     expect(revisions[0].snapshot.title).toBe('Rust 101');
+  });
+
+  it('generates normalized unique slugs on create', async () => {
+    const first = await service.create({
+      title: 'Rust 101: Ownership & Borrowing!',
+      description: 'Intro to Rust',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-rust',
+      duration: 60,
+    });
+    const second = await service.create({
+      title: 'Rust 101 Ownership Borrowing',
+      description: 'Another course',
+      level: CourseLevel.BEGINNER,
+      order: 2,
+      learningPathId: 'path-rust',
+      duration: 60,
+    });
+
+    expect(first.slug).toBe('rust-101-ownership-borrowing');
+    expect(second.slug).toBe('rust-101-ownership-borrowing-2');
+    expect(await service.findBySlugOrId(first.slug)).toBe(first);
+  });
+
+  it('regenerates the slug when a title changes', async () => {
+    const course = await service.create({
+      title: 'Original Title',
+      description: 'Desc',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+    });
+
+    const updated = await service.update(course.id, { title: 'A New Title' });
+
+    expect(updated!.slug).toBe('a-new-title');
+    expect(await service.findBySlugOrId('original-title')).toBeNull();
+    expect(await service.findBySlugOrId('a-new-title')).toBe(updated);
   });
 
   it('returns only active courses from findAll()', async () => {
@@ -277,6 +381,84 @@ describe('CourseService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Taxonomy normalization (BA-047)
+  // ---------------------------------------------------------------------------
+
+  it('normalizes free-text fields on create', async () => {
+    const course = await service.create({
+      title: '  Rust   Basics  ',
+      description: '  An intro to Rust.  ',
+      level: 'INTERMEDIATE' as CourseLevel,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+    });
+
+    expect(course.title).toBe('Rust Basics');
+    expect(course.description).toBe('An intro to Rust.');
+    expect(course.level).toBe(CourseLevel.INTERMEDIATE);
+    expect(course.slug).toBe('rust-basics');
+  });
+
+  it('canonicalizes taxonomy arrays (trim, lowercase, dedupe, drop blanks) on create', async () => {
+    const course = await service.create({
+      title: 'Rust Basics',
+      description: 'An intro',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+      category: 'WASM',
+      categories: ['WASM', '  Rust ', 'Rust', '  '],
+      tags: [' Ownership ', 'ownership'],
+      prerequisites: ['  borrowed ', 'lifetimes'],
+      skills: ['Memory Safety', 'memory safety'],
+    });
+
+    expect(course.category).toBe('wasm');
+    expect(course.categories).toEqual(['wasm', 'rust']);
+    expect(course.tags).toEqual(['ownership']);
+    expect(course.prerequisites).toEqual(['borrowed', 'lifetimes']);
+    expect(course.skills).toEqual(['memory safety']);
+  });
+
+  it('normalizes taxonomy fields on update only when provided', async () => {
+    const course = await service.create({
+      title: 'Rust Basics',
+      description: 'An intro',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+      tags: [' original '],
+      prerequisites: ['stay'],
+    });
+
+    const updated = await service.update(course.id, { skills: [' WASM ', 'wasm'] });
+
+    // Fields that were not part of the update payload must be untouched.
+    expect(updated!.tags).toEqual(['original']);
+    expect(updated!.prerequisites).toEqual(['stay']);
+    // Provided taxonomy is canonicalized.
+    expect(updated!.skills).toEqual(['wasm']);
+  });
+
+  it('keeps the canonical title bound reflected in the persisted slug on update', async () => {
+    const course = await service.create({
+      title: 'Rust Basics',
+      description: 'An intro',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+    });
+
+    const updated = await service.update(course.id, { title: ' Rust   Advanced ' });
+    expect(updated!.title).toBe('Rust Advanced');
+    expect(updated!.slug).toBe('rust-advanced');
+  });
+
   // Revision lookup
   // ---------------------------------------------------------------------------
 
@@ -422,7 +604,7 @@ describe('CourseService', () => {
   // Removal preserves revision history
   // ---------------------------------------------------------------------------
 
-  it('removes the course but keeps its revision history queryable for audit', async () => {
+  it('soft-deletes a course and keeps its revision history queryable for audit', async () => {
     const course = await service.create({
       title: 'ToDelete',
       description: 'Desc',
@@ -434,15 +616,20 @@ describe('CourseService', () => {
 
     expect(await service.remove(course.id)).toBe(true);
 
-    // The course itself is gone
-    expect(await service.findById(course.id)).toBeNull();
-    // But the revision snapshot is preserved (the repo's `remove` only
-    // touches the course row).  This matches the production behaviour where
-    // revisions survive a course deletion for audit purposes.
+    // The course is inactive but still present (soft-delete)
+    const fetched = await service.findById(course.id);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.isActive).toBe(false);
+
+    // Revision history is preserved — both the initial create and
+    // the soft-delete revision exist.
     const revisions = await service.getRevisions(course.id);
-    expect(revisions).toHaveLength(1);
+    expect(revisions).toHaveLength(2);
     expect(revisions[0].snapshot.title).toBe('ToDelete');
+    expect(revisions[0].reason).toBe('create');
+    expect(revisions[1].reason).toBe('update');
+    expect(revisions[1].changeNote).toBe('Course soft-deleted');
     expect(await service.getRevisionByVersion(course.id, 1)).not.toBeNull();
-    expect(await service.getRevisionCount(course.id)).toBe(1);
+    expect(await service.getRevisionCount(course.id)).toBe(2);
   });
 });
