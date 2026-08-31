@@ -50,12 +50,12 @@ export class PaymentsController {
    * payment state). Transport-level replayed payloads are then rejected via
    * the idempotency key (Issue #411), and the parsed event is handed to
    * PaymentsService.processPaymentWebhookEvent, which validates the
-   * requested status transition against the payment's *current* stored
+   * requested status transition against the payment's * current* stored
    * status — this is what prevents duplicate/out-of-order callbacks from
    * corrupting payment state even when they aren't exact byte-for-byte
    * replays (Issue #412 follow-up).
    */
-  @Post('webhook')
+   Post('webhook')
   @HttpCode(HttpStatus.OK)
   async receiveWebhook(
     @Req() req: RawBodyRequest<Request>,
@@ -114,6 +114,16 @@ export class PaymentsController {
 
     const result = await this.paymentsService.processPaymentWebhookEvent(event);
 
+    // BA-092: Reserve (or release) funds atomically for in-flight payments.
+    // We only touch the reservation when the status transition itself was
+    // applied; duplicate/noop/rejected transitions must not alter the hold.
+    // Pending/processing states create a hold (included in available balance),
+    // while failed/refunded states release the hold. A successful capture is
+    // handled by PaymentsService when it finalizes the reservation.
+    if (result.outcome === 'applied') {
+      await this.reserveOrReleaseFunds(event);
+    }
+
     switch (result.outcome) {
       case 'applied':
         this.metricsService.recordDomainEvent('payment_status_transitioned', WEBHOOK_METRIC_SOURCE);
@@ -134,6 +144,22 @@ export class PaymentsController {
     }
   }
 
+  /**
+   * BA-092: Reserve funds before asynchronous payment confirmation.
+   *
+   * A pending/processing payment should hold the corresponding amount in the
+   * user's wallet so it cannot be double-spent. On terminal failure/refund,
+   * the hold is released. Successful payments are finalized by
+   * PaymentsService.processPaymentWebhookEvent, which consumes the hold.
+   */
+  private async reserveOrReleaseFunds(event: PaymentWebhookEvent): Promise<void> {
+    if (event.status === 'pending' || event.status === 'processing') {
+      await this.paymentsService.reserveFunds(event);
+    } else if (event.status === 'failed' || event.status === 'refunded') {
+      await this.paymentsService.releaseFunds(event);
+    }
+  }
+
   private toPaymentWebhookEvent(parsed: any): PaymentWebhookEvent {
     const required = [
       'eventId',
@@ -146,7 +172,7 @@ export class PaymentsController {
       'provider',
     ];
     for (const field of required) {
-      if (parsed?.[field] === undefined || parsed?.[field] === null) {
+      if (parsed?[field] === undefined || parsed?[field] === null) {
         throw new Error(`Missing required webhook field: ${field}`);
       }
     }
