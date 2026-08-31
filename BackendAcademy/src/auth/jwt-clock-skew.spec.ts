@@ -2,8 +2,15 @@ import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { JwtAdminGuard } from './guards/jwt-admin.guard';
+import { AuthSessionService } from './auth-session.service';
 import { UserRole } from './enums/user-role.enum';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
+
+function buildMockAuthSessionService() {
+  return {
+    validateSession: jest.fn().mockResolvedValue(undefined),
+  } as unknown as AuthSessionService;
+}
 
 /**
  * BA-023 — Token clock-skew policy.
@@ -116,10 +123,10 @@ describe('JWT clock skew policy (BA-023)', () => {
 
   describe('guards apply the same policy end-to-end', () => {
     it('allows an admin token that has just expired within the tolerance', async () => {
-      const token = jwtService.sign({ sub: 'u1', role: UserRole.ADMIN });
+      const token = jwtService.sign({ sub: 'u1', role: UserRole.ADMIN, sessionId: 'test-session' });
       jest.setSystemTime(new Date('2026-01-08T00:00:20.000Z'));
 
-      const guard = new JwtAdminGuard(jwtService);
+      const guard = new JwtAdminGuard(jwtService, buildMockAuthSessionService());
       const { context, request } = makeContextWithToken(token);
 
       await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -127,10 +134,10 @@ describe('JWT clock skew policy (BA-023)', () => {
     });
 
     it('rejects an admin token that expired beyond the tolerance', async () => {
-      const token = jwtService.sign({ sub: 'u1', role: UserRole.ADMIN });
+      const token = jwtService.sign({ sub: 'u1', role: UserRole.ADMIN, sessionId: 'test-session' });
       jest.setSystemTime(new Date('2026-01-08T00:01:30.000Z'));
 
-      const guard = new JwtAdminGuard(jwtService);
+      const guard = new JwtAdminGuard(jwtService, buildMockAuthSessionService());
       const { context } = makeContextWithToken(token);
 
       await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
@@ -139,10 +146,10 @@ describe('JWT clock skew policy (BA-023)', () => {
     });
 
     it('still enforces role checks within the allowed skew', async () => {
-      const token = jwtService.sign({ sub: 'u1', role: UserRole.LEARNER });
+      const token = jwtService.sign({ sub: 'u1', role: UserRole.LEARNER, sessionId: 'test-session' });
       jest.setSystemTime(new Date('2026-01-08T00:00:20.000Z'));
 
-      const guard = new JwtAdminGuard(jwtService);
+      const guard = new JwtAdminGuard(jwtService, buildMockAuthSessionService());
       const { context } = makeContextWithToken(token);
 
       await expect(guard.canActivate(context)).rejects.toBeInstanceOf(

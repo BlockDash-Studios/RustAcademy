@@ -12,8 +12,8 @@ import { randomUUID, createHash } from 'crypto';
 import { UserRole } from './enums/user-role.enum';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import {
-  AuthTokensResponse,
   RefreshTokenPayload,
+  AuthTokensResponse,
   Session,
 } from './interfaces/session.interface';
 import { RedisService } from '../redis/redis.service';
@@ -41,13 +41,8 @@ const DEFAULT_SESSION_POLICY: SessionPolicy = {
 @Injectable()
 export class AuthSessionService {
   private readonly logger = new Logger(AuthSessionService.name);
-
-  /**
-   * #350: Centralized session policy
-   */
   private readonly sessionPolicy: SessionPolicy;
   private readonly refreshLocks = new Map<string, Promise<void>>();
-
   private readonly accessSecret: string;
   private readonly refreshSecret: string;
 
@@ -158,7 +153,7 @@ export class AuthSessionService {
       }
     }
 
-    const session: Session & { lastUsedAt: Date } = {
+    const session: Session = {
       sessionId,
       userId,
       role,
@@ -175,11 +170,12 @@ export class AuthSessionService {
       isTrustedDevice: deviceHash
         ? await this.isTrustedDevice(userId, deviceHash)
         : undefined,
-      lastUsedAt: now,
     };
 
     await this.setSession(session);
-    if (deviceHash) await this.redis.sadd(`trustedDevices:${userId}`, deviceHash);
+    if (deviceHash) {
+      await this.redis.sadd(`trustedDevices:${userId}`, deviceHash);
+    }
 
     if (deviceHash && !(await this.isTrustedDevice(userId, deviceHash))) {
       this.logger.warn(`New device login for user ${userId}`);
@@ -344,6 +340,7 @@ export class AuthSessionService {
       const session = await this.getSession(sessionId);
       if (
         session &&
+        session.userId === userId &&
         !session.revoked &&
         !this.isSessionExpired(session, now) &&
         !this.isSessionIdle(session, now)
@@ -521,8 +518,10 @@ export class AuthSessionService {
       role,
       sessionId,
     };
+
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(accessPayload, {
+        secret: this.accessSecret,
         expiresIn: this.sessionPolicy.accessTokenTtl,
       }),
       this.jwtService.signAsync(refreshPayload, {

@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import { createHash } from 'crypto';
+import { DatabaseService } from '../database/database.service';
 
 export interface UserSnapshot {
   userId: string;
@@ -41,6 +43,14 @@ export class RedisService implements OnApplicationShutdown {
     course: ['course:', 'courses:', 'course-summary:', 'course-rating:', 'course-progress:'],
     lesson: ['lesson:', 'lessons:', 'lesson-progress:'],
   };
+
+  /**
+   * The DatabaseService dependency is optional so `new RedisService()` keeps
+   * working in isolated unit tests (see auth-session.service.spec). When
+   * present, webhook idempotency claims are delegated to the durable store
+   * (Issue #663 / BA-095).
+   */
+  constructor(private readonly databaseService?: DatabaseService) {}
 
   async getUserSnapshot(userId: string): Promise<UserSnapshot | null> {
     const snapshot = this.snapshots.get(userId);
@@ -160,9 +170,26 @@ export class RedisService implements OnApplicationShutdown {
   private readonly webhookIdempotency = new Map<string, number>();
 
   /**
-   * Returns true if this idempotency key was already seen within the TTL window.
+   * Returns true if this idempotency key was already claimed within the TTL
+   * window. Issue #663 (BA-095): delegates to the durable, fingerprint- and
+   * status-aware store in DatabaseService when available; falls back to the
+   * process-local map only when no DatabaseService is injected.
    */
-  async isWebhookIdempotent(idempotencyKey: string, ttlMs = 3_600_000): Promise<boolean> {
+  async isWebhookIdempotent(
+    idempotencyKey: string,
+    payload?: string,
+    ttlMs = 3_600_000,
+  ): Promise<boolean> {
+    if (this.databaseService) {
+      const fingerprint = payload ? createHash('sha256').update(payload).digest('hex') : '';
+      const claim = await this.databaseService.claimWebhookIdempotency(
+        idempotencyKey,
+        fingerprint,
+        ttlMs,
+      );
+      return !claim.claimed;
+    }
+
     const now = Date.now();
     const firstSeen = this.webhookIdempotency.get(idempotencyKey);
     if (firstSeen && now - firstSeen < ttlMs) {

@@ -39,13 +39,18 @@ describe('AuthSessionService security revocation', () => {
   });
 
   it('revokes every session after refresh-token reuse', async () => {
+    const now = Date.now();
     const sessionFactory = (sessionId: string): Session => ({
       sessionId,
       userId: 'user-1',
       role: UserRole.LEARNER,
       refreshTokenHash: 'hash-of-different-token',
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(now),
+      expiresAt: new Date(now + 60_000),
+      absoluteExpiresAt: new Date(now + 60_000 + 300_000),
+      idleExpiresAt: new Date(now + 86_400_000),
+      deliveryGraceSeconds: 300,
+      lastActivityAt: new Date(now),
       revoked: false,
     });
     const redis = (service as unknown as { redis: RedisService }).redis;
@@ -67,5 +72,58 @@ describe('AuthSessionService security revocation', () => {
 
     expect(await service.getActiveSessions('user-1')).toHaveLength(0);
     expect(revokeAllUserSessions).toHaveBeenCalledWith('user-1', 'token_reuse');
+  });
+
+  it('updates lastActivityAt on valid activity', async () => {
+    const now = Date.now();
+    const session: Session = {
+      sessionId: 'session-1',
+      userId: 'user-1',
+      role: UserRole.LEARNER,
+      refreshTokenHash: 'hash',
+      createdAt: new Date(now),
+      expiresAt: new Date(now + 60_000),
+      absoluteExpiresAt: new Date(now + 300_000),
+      idleExpiresAt: new Date(now + 86_400_000),
+      deliveryGraceSeconds: 300,
+      lastActivityAt: new Date(now),
+      revoked: false,
+    };
+    const redis = (service as unknown as { redis: RedisService }).redis;
+    await redis.set('session:session-1', JSON.stringify(session));
+    await redis.sadd('userSessions:user-1', 'session-1');
+
+    await service.validateSession('session-1');
+
+    const stored = JSON.parse(await redis.get('session:session-1') as string) as Session;
+    expect(stored.revoked).toBe(false);
+    expect(new Date(stored.lastActivityAt).getTime()).toBeGreaterThanOrEqual(now);
+  });
+
+  it('revokes idle sessions on validation', async () => {
+    const now = Date.now();
+    const session: Session = {
+      sessionId: 'session-1',
+      userId: 'user-1',
+      role: UserRole.LEARNER,
+      refreshTokenHash: 'hash',
+      createdAt: new Date(now - 100_000),
+      expiresAt: new Date(now + 60_000),
+      absoluteExpiresAt: new Date(now + 300_000),
+      idleExpiresAt: new Date(now - 10_000),
+      deliveryGraceSeconds: 300,
+      lastActivityAt: new Date(now - 90_000_000),
+      revoked: false,
+    };
+    const redis = (service as unknown as { redis: RedisService }).redis;
+    await redis.set('session:session-1', JSON.stringify(session));
+    await redis.sadd('userSessions:user-1', 'session-1');
+
+    await expect(service.validateSession('session-1')).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+
+    const stored = JSON.parse(await redis.get('session:session-1') as string) as Session;
+    expect(stored.revoked).toBe(true);
   });
 });

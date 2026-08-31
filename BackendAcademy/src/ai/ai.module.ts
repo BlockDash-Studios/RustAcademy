@@ -6,10 +6,35 @@ import { PromptTemplateService } from './prompt-template.service';
 import { ClaudeProvider } from './providers/claude.provider';
 import { OpenaiProvider } from './providers/openai.provider';
 
-function validateAiConfig(configService: ConfigService): void {
-  const provider = configService.get<string>('AI_PROVIDER');
-  if (provider && !['openai', 'claude', 'mock'].includes(provider)) {
+/**
+ * BA-076: Validate the AI configuration at startup, before any request
+ * arrives.
+ *
+ * Rules:
+ * - `AI_PROVIDER=openai` requires `OPENAI_API_KEY`.
+ * - `AI_PROVIDER=claude` requires `ANTHROPIC_API_KEY`.
+ * - `AI_PROVIDER=mock` (or unset) requires no credentials.
+ *
+ * Error messages are actionable and sanitized: they name the missing
+ * variable and the fix, but never echo credential values.
+ */
+export function validateAiConfig(configService: ConfigService): void {
+  const provider = configService.get<string>('AI_PROVIDER') ?? 'mock';
+
+  if (!['openai', 'claude', 'mock'].includes(provider)) {
     throw new Error(`Invalid AI_PROVIDER: ${provider}. Must be 'openai', 'claude', or 'mock'.`);
+  }
+
+  if (provider === 'openai' || provider === 'claude') {
+    const credentialsKey =
+      provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
+    const apiKey = configService.get<string>(credentialsKey);
+    if (!apiKey || apiKey.trim().length === 0) {
+      throw new Error(
+        `AI_PROVIDER is "${provider}" but ${credentialsKey} is not set. ` +
+          `Set ${credentialsKey} to your API key, or switch AI_PROVIDER to "mock" for local development.`,
+      );
+    }
   }
 
   const numericParams: Array<{ key: string; min: number; max: number; integer?: boolean }> = [
@@ -31,7 +56,7 @@ function validateAiConfig(configService: ConfigService): void {
       throw new Error(`AI config ${param.key} must be an integer, got "${raw}".`);
     }
     if (num < param.min || num > param.max) {
-      throw new Error(`AI config ${param.key} must be tween ${param.min} and ${param.max}, got "${raw}".`);
+      throw new Error(`AI config ${param.key} must be between ${param.min} and ${param.max}, got "${raw}".`);
     }
     process.env[param.key] = String(num);
   }
@@ -43,7 +68,7 @@ function validateAiConfig(configService: ConfigService): void {
     const lower = raw.toLowerCase();
     if (['true', '1', 'yes', 'y', 'on'].includes(lower)) {
       process.env[key] = 'true';
-    } else if (['false', '0', 'no' , 'n', 'off'].includes(lower)) {
+    } else if (['false', '0', 'no', 'n', 'off'].includes(lower)) {
       process.env[key] = 'false';
     } else {
       throw new Error(`AI config ${key} must be a boolean, got "${raw}".`);
@@ -65,7 +90,6 @@ const aiProviderFactory = {
 
 @Module({
   controllers: [AiController],
-  //ai controller
   providers: [AiService, PromptTemplateService, aiProviderFactory],
   exports: [AiService, PromptTemplateService],
 })

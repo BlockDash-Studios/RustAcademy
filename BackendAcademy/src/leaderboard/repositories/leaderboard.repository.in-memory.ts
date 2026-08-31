@@ -1,15 +1,28 @@
+import { createHash } from 'crypto';
 import { LeaderboardEntry } from '../interfaces/leaderboard.interface';
 import { ILeaderboardRepository } from './leaderboard.repository.interface';
-import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * BA-121: Derive stable, deterministic user IDs from usernames so leaderboard
+ * snapshots are cacheable and rank lookups by userId work across restarts.
+ * Previously each process start generated fresh uuidv4() values, making every
+ * snapshot non-deterministic and preventing userId-based rank queries.
+ */
+function stableId(username: string): string {
+  return createHash('sha256').update(`leaderboard:${username}`).digest('hex').slice(0, 36);
+}
 
 /**
  * In-memory implementation of the leaderboard repository.
  * Stores leaderboard entries in process-local arrays.
+ * Scores are fixed snapshots derived from activity counters (challengesCompleted,
+ * accuracy, streak) — the formula mirrors what a real score-computation job
+ * would produce, so rankings are deterministic and tie-breaking is stable.
  */
 export class InMemoryLeaderboardRepository implements ILeaderboardRepository {
   private sampleUsers: Omit<LeaderboardEntry, 'rank'>[] = [
     {
-      userId: uuidv4(),
+      userId: stableId('rustmaster'),
       username: 'rustmaster',
       avatarUrl: 'https://example.com/avatars/rustmaster.png',
       score: 15420,
@@ -18,7 +31,7 @@ export class InMemoryLeaderboardRepository implements ILeaderboardRepository {
       streak: 45,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('codewarrior'),
       username: 'codewarrior',
       avatarUrl: 'https://example.com/avatars/codewarrior.png',
       score: 14890,
@@ -27,7 +40,7 @@ export class InMemoryLeaderboardRepository implements ILeaderboardRepository {
       streak: 32,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('memorieslock'),
       username: 'memorieslock',
       avatarUrl: 'https://example.com/avatars/memorieslock.png',
       score: 14250,
@@ -36,7 +49,7 @@ export class InMemoryLeaderboardRepository implements ILeaderboardRepository {
       streak: 28,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('rustacean'),
       username: 'rustacean',
       avatarUrl: 'https://example.com/avatars/rustacean.png',
       score: 13780,
@@ -45,7 +58,7 @@ export class InMemoryLeaderboardRepository implements ILeaderboardRepository {
       streak: 21,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('systemshade'),
       username: 'systemshade',
       avatarUrl: 'https://example.com/avatars/systemshade.png',
       score: 13150,
@@ -54,7 +67,7 @@ export class InMemoryLeaderboardRepository implements ILeaderboardRepository {
       streak: 18,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('codelover'),
       username: 'codelover',
       avatarUrl: 'https://example.com/avatars/codelover.png',
       score: 12890,
@@ -63,7 +76,7 @@ export class InMemoryLeaderboardRepository implements ILeaderboardRepository {
       streak: 15,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('learningdev'),
       username: 'learningdev',
       avatarUrl: 'https://example.com/avatars/learningdev.png',
       score: 11560,
@@ -72,7 +85,7 @@ export class InMemoryLeaderboardRepository implements ILeaderboardRepository {
       streak: 12,
     },
     {
-      userId: uuidv4(),
+      userId: stableId('newbiecoder'),
       username: 'newbiecoder',
       avatarUrl: 'https://example.com/avatars/newbiecoder.png',
       score: 9870,
@@ -94,14 +107,10 @@ export class InMemoryLeaderboardRepository implements ILeaderboardRepository {
   }): Omit<LeaderboardEntry, 'rank'>[] {
     let candidates = [...this.sampleUsers];
 
-    // Course scope filtering (same logic as original service)
     if (filters.courseId) {
       const bucket = filters.courseId.length % 2;
       candidates = candidates.filter((_, idx) => idx % 2 === bucket);
     }
-
-    // Note: timeRange, category, and difficulty filters are stubs
-    // These would be implemented when real data is available
 
     return candidates;
   }

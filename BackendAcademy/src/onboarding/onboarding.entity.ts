@@ -11,6 +11,12 @@ export class OnboardingProgress {
   createdAt: Date;
   updatedAt: Date;
   metadata?: Record<string, any>;
+  /**
+   * BA-044 — Optimistic-concurrency version. Every durable write increments
+   * this counter; updates that supply a stale version are rejected so
+   * concurrent devices cannot silently clobber each other's progress.
+   */
+  version: number;
 
   constructor(partial: Partial<OnboardingProgress>) {
     Object.assign(this, partial);
@@ -20,5 +26,6 @@ export class OnboardingProgress {
     this.completedSteps = this.completedSteps || [];
     this.totalSteps = this.totalSteps || 0;
     this.isComplete = this.isComplete ?? false;
+    this.version = this.version ?? 0;
   }
 }

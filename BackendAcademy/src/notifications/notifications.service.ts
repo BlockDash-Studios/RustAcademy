@@ -23,6 +23,20 @@ export interface BatchConfig {
 }
 
 /**
+ * Configuration for notification deduplication.
+ *
+ * A deterministic event key prevents duplicates within the configured
+ * window. Retries and scheduled jobs that produce the same event key
+ * will only result in a single delivered notification.
+ */
+export interface DedupConfig {
+  /** How long (in ms) a previously seen event key is remembered. Default: 5 minutes. */
+  windowMs: number;
+  /** Whether deduplication is enabled. */
+  enabled: boolean;
+}
+
+/**
  * Result of a batch delivery operation.
  */
 export interface BatchDeliveryResult {
@@ -44,11 +58,21 @@ export class NotificationsService {
   /** Pending low-priority notifications awaiting batch flush */
   private pendingBatch: Notification[] = [];
   private batchTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Lock to prevent concurrent batch flushes (Task 3) */
+  private flushing = false;
 
   private batchConfig: BatchConfig = {
     maxBatchSize: 10,
     batchWindowMs: 30_000,
     enabled: false,
+  };
+
+  // ── Deduplication state (Task 1) ─────────────────────────
+  /** Maps event keys to their last-seen timestamp (ms since epoch). */
+  private dedupWindow: Map<string, number> = new Map();
+  private dedupConfig: DedupConfig = {
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    enabled: true,
   };
 
   // ── Default localized notification templates ────────────────
@@ -183,9 +207,101 @@ export class NotificationsService {
     return { ...this.batchConfig };
   }
 
+  // ── Deduplication configuration (Task 1) ──────────────────
+
+  /**
+   * Configures the deduplication window and toggle.
+   *
+   * @example
+   * service.configureDedup({ windowMs: 10 * 60 * 1000 }); // 10 min window
+   * service.configureDedup({ enabled: false }); // disable dedup
+   */
+  configureDedup(config: Partial<DedupConfig>): void {
+    this.dedupConfig = { ...this.dedupConfig, ...config };
+    this.logger.log(
+      `Dedup config updated: enabled=${this.dedupConfig.enabled}, windowMs=${this.dedupConfig.windowMs}`,
+    );
+  }
+
+  getDedupConfig(): DedupConfig {
+    return { ...this.dedupConfig };
+  }
+
+  // ── Deduplication internals (Task 1) ──────────────────────
+
+  /**
+   * Purges expired entries from the dedup window to prevent unbounded growth.
+   */
+  private purgeExpiredDedupKeys(): void {
+    if (!this.dedupConfig.enabled) return;
+    const now = Date.now();
+    for (const [key, timestamp] of this.dedupWindow) {
+      if (now - timestamp >= this.dedupConfig.windowMs) {
+        this.dedupWindow.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Returns true if the given event key has already been seen within the
+   * deduplication window.  If it hasn't, the key is recorded for future
+   * checks.  This is idempotent: a duplicate call with the same key within
+   * the window returns true without side-effects beyond the initial record.
+   *
+   * Provider retries that carry the same event key are therefore safe —
+   * only the first attempt gets through.
+   */
+  private isDuplicate(eventKey: string): boolean {
+    if (!this.dedupConfig.enabled || !eventKey) return false;
+
+    this.purgeExpiredDedupKeys();
+
+    const now = Date.now();
+    const lastSeen = this.dedupWindow.get(eventKey);
+    if (lastSeen !== undefined && now - lastSeen < this.dedupConfig.windowMs) {
+      this.logger.debug(
+        `Dedup: rejecting duplicate event key "${eventKey}" (seen ${now - lastSeen}ms ago, window ${this.dedupConfig.windowMs}ms)`,
+      );
+      return true;
+    }
+
+    // Record the key so subsequent calls within the window are rejected
+    this.dedupWindow.set(eventKey, now);
+    return false;
+  }
+
+  /**
+   * Returns the number of event keys currently tracked in the dedup window.
+   * Useful for monitoring and testing.
+   */
+  getDedupWindowSize(): number {
+    this.purgeExpiredDedupKeys();
+    return this.dedupWindow.size;
+  }
+
   // ── Notification CRUD ────────────────────────────────────
 
   create(createNotificationDto: CreateNotificationDto): Notification {
+    // Task 1: deterministic deduplication via event keys
+    const eventKey = createNotificationDto.eventKey;
+    if (eventKey && this.isDuplicate(eventKey)) {
+      this.logger.warn(
+        `Notification suppressed (duplicate event key "${eventKey}")`,
+      );
+      // Return a sentinel-like notification that callers can inspect.
+      // The notification is NOT persisted — preventing duplicate delivery.
+      return {
+        id: '__duplicate__',
+        userId: createNotificationDto.userId,
+        type: createNotificationDto.type,
+        title: createNotificationDto.title,
+        message: createNotificationDto.message,
+        isRead: true,
+        createdAt: new Date(),
+        eventKey,
+      };
+    }
+
     const newNotification: Notification = {
       id: Math.random().toString(36).substring(2, 9),
       ...createNotificationDto,
@@ -278,20 +394,32 @@ export class NotificationsService {
     return this.deliverImmediately(notification, context);
   }
 
+  /**
+   * Type guard: converts a BatchDeliveryResult into DeliveryResult[].
+   * Used by enqueueForBatch to return a uniform type to callers of deliver().
+   */
+  private batchToResults(batch: BatchDeliveryResult): DeliveryResult[] {
+    return batch.results;
+  }
+
   private async deliverImmediately(
     notification: Notification,
     context: DeliveryContext,
   ): Promise<DeliveryResult[]> {
-    const enabledProviders = (this.providers || []).filter((p) =>
+    const availableProviders = (this.providers || []).filter((p) =>
       typeof (p as any).isEnabled === 'function' ? (p as any).isEnabled() : true,
     );
 
-    if (enabledProviders.length === 0) {
+    if (availableProviders.length === 0) {
       this.logger.warn(
         'No notification providers registered — notification stored only',
       );
       return [];
     }
+
+    const enabledProviders = this.getEnabledProviders(context.userId).filter((p) =>
+      availableProviders.includes(p),
+    );
 
     const results = await Promise.allSettled(
       enabledProviders.map((provider) =>
@@ -314,7 +442,7 @@ export class NotificationsService {
     });
   }
 
-  // ── Batching (#386) ──────────────────────────────────────
+  // ── Batching — concurrency-safe (Task 3) ─────────────────
 
   private async enqueueForBatch(
     notification: Notification,
@@ -347,18 +475,25 @@ export class NotificationsService {
     ];
   }
 
+  /**
+   * Atomically claims the current pending batch and flushes it through
+   * all enabled providers.
+   *
+   * Concurrency safety (Task 3):
+   *  - A boolean `flushing` lock prevents two concurrent flushes from
+   *    operating on the same batch snapshot.
+   *  - The batch is swapped atomically (copy + clear) before any async
+   *    provider calls, so enqueued notifications that arrive during the
+   *    flush are captured in a fresh `pendingBatch` array.
+   *  - If a flush is already in progress, the caller receives an empty
+   *    result rather than duplicating delivery work.
+   */
   async flushBatch(context?: DeliveryContext): Promise<BatchDeliveryResult> {
-    if (this.batchTimer) {
-      clearTimeout(this.batchTimer);
-      this.batchTimer = null;
-    }
-
-    const batch = [...this.pendingBatch];
-    this.pendingBatch = [];
-
-    this.notifications.push(...batch);
-
-    if (batch.length === 0) {
+    // Task 3: concurrency guard
+    if (this.flushing) {
+      this.logger.debug(
+        'Batch flush already in progress — skipping duplicate flush',
+      );
       return {
         batchId: '',
         totalCount: 0,
@@ -369,47 +504,82 @@ export class NotificationsService {
       };
     }
 
-    this.logger.log(`Flushing batch of ${batch.length} notifications`);
+    this.flushing = true;
 
-    const ctx = context || {
-      userId: 'batch',
-      priority: NotificationPriority.LOW,
-    };
-    const allResults: DeliveryResult[] = [];
-    const enabledProviders = (this.providers || []).filter((p) =>
-      typeof (p as any).isEnabled === 'function' ? (p as any).isEnabled() : true,
-    );
+    try {
+      if (this.batchTimer) {
+        clearTimeout(this.batchTimer);
+        this.batchTimer = null;
+      }
 
-    if (enabledProviders.length > 0) {
-      for (const provider of enabledProviders) {
-        if (provider.sendBatch) {
-          const results = await provider.sendBatch(batch, ctx);
-          allResults.push(...results);
-        } else {
-          for (const notification of batch) {
-            const result = await provider.send(notification, ctx);
-            allResults.push(result);
+      // Atomically claim the batch: snapshot and replace with empty array
+      const batch = [...this.pendingBatch];
+      this.pendingBatch = [];
+
+      this.notifications.push(...batch);
+
+      if (batch.length === 0) {
+        return {
+          batchId: '',
+          totalCount: 0,
+          successCount: 0,
+          failureCount: 0,
+          results: [],
+          flushedAt: new Date(),
+        };
+      }
+
+      this.logger.log(`Flushing batch of ${batch.length} notifications`);
+
+      const ctx = context || {
+        userId: 'batch',
+        priority: NotificationPriority.LOW,
+      };
+      const allResults: DeliveryResult[] = [];
+
+      const availableProviders = (this.providers || []).filter((p) =>
+        typeof (p as any).isEnabled === 'function' ? (p as any).isEnabled() : true,
+      );
+
+      const enabledProviders = (
+        ctx.userId === 'batch'
+          ? availableProviders
+          : this.getEnabledProviders(ctx.userId)
+      ).filter((p) => availableProviders.includes(p));
+
+      if (enabledProviders.length > 0) {
+        for (const provider of enabledProviders) {
+          if (provider.sendBatch) {
+            const results = await provider.sendBatch(batch, ctx);
+            allResults.push(...results);
+          } else {
+            for (const notification of batch) {
+              const result = await provider.send(notification, ctx);
+              allResults.push(result);
+            }
           }
         }
       }
+
+      const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const successCount = allResults.filter((r) => r.success).length;
+      const failureCount = allResults.filter((r) => !r.success).length;
+
+      this.logger.log(
+        `Batch ${batchId}: ${successCount} succeeded, ${failureCount} failed`,
+      );
+
+      return {
+        batchId,
+        totalCount: batch.length,
+        successCount,
+        failureCount,
+        results: allResults,
+        flushedAt: new Date(),
+      };
+    } finally {
+      this.flushing = false;
     }
-
-    const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const successCount = allResults.filter((r) => r.success).length;
-    const failureCount = allResults.filter((r) => !r.success).length;
-
-    this.logger.log(
-      `Batch ${batchId}: ${successCount} succeeded, ${failureCount} failed`,
-    );
-
-    return {
-      batchId,
-      totalCount: batch.length,
-      successCount,
-      failureCount,
-      results: allResults,
-      flushedAt: new Date(),
-    };
   }
 
   getPendingBatchCount(): number {

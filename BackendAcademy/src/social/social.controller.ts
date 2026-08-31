@@ -40,13 +40,21 @@ export class SocialController {
   }
 
   @Get('feed')
-  getFeed(@Query() dto: GetSocialFeedDto): SocialFeedResponse {
-    return this.socialService.getFeed(dto);
+  getFeed(
+    @Query() dto: GetSocialFeedDto,
+    @Query('requesterId') requesterId?: string,
+    @Query('requesterRole') requesterRole?: string,
+  ): SocialFeedResponse {
+    return this.socialService.getFeed(dto, requesterId, requesterRole);
   }
 
   @Get('discovery')
-  getDiscovery(@Query() dto: GetSocialFeedDto): SocialFeedResponse {
-    return this.socialService.getFeed(dto);
+  getDiscovery(
+    @Query() dto: GetSocialFeedDto,
+    @Query('requesterId') requesterId?: string,
+    @Query('requesterRole') requesterRole?: string,
+  ): SocialFeedResponse {
+    return this.socialService.getFeed(dto, requesterId, requesterRole);
   }
 
   @Get('posts/:postId')
@@ -59,9 +67,10 @@ export class SocialController {
   moderatePost(
     @Param('postId') postId: string,
     @Query('moderatorId') moderatorId: string,
+    @Query('moderatorRole') moderatorRole: string,
     @Body() dto: UpdateModerationDto,
   ): SocialPost {
-    return this.socialService.moderatePost(postId, moderatorId, dto);
+    return this.socialService.moderatePost(postId, moderatorId, dto, moderatorRole);
   }
 
   @Post('posts/:postId/flag')
@@ -96,8 +105,12 @@ export class SocialController {
 
   @Delete('posts/:postId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  deletePost(@Param('postId') postId: string): void {
-    this.socialService.deletePost(postId);
+  deletePost(
+    @Param('postId') postId: string,
+    @Query('requesterId') requesterId?: string,
+    @Query('requesterRole') requesterRole?: string,
+  ): void {
+    this.socialService.deletePost(postId, requesterId, requesterRole);
   }
 
   @Post('users/:userId/follow/:targetUserId')

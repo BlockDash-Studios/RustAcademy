@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { ShareCodeSnippetDto } from './dto/share-code-snippet.dto';
+import { PageOptions } from './repositories/chat.repository.interface';
 
 @Controller('chat')
 export class ChatController {
@@ -14,8 +15,15 @@ export class ChatController {
   }
 
   @Get('rooms')
-  findAllRooms() {
-    return this.chatService.findAllRooms();
+  findAllRooms(
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const options: PageOptions = {
+      limit: limit ? Number(limit) : undefined,
+      cursor,
+    };
+    return this.chatService.findAllRooms(options);
   }
 
   @Get('rooms/:roomId')
@@ -29,8 +37,16 @@ export class ChatController {
   }
 
   @Get('rooms/:roomId/messages')
-  findMessagesByRoom(@Param('roomId') roomId: string) {
-    return this.chatService.findMessagesByRoom(roomId);
+  findMessagesByRoom(
+    @Param('roomId') roomId: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const options: PageOptions = {
+      limit: limit ? Number(limit) : undefined,
+      cursor,
+    };
+    return this.chatService.findMessagesByRoom(roomId, options);
   }
 
   @Post('messages/share-code')

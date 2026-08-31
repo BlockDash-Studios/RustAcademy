@@ -7,6 +7,7 @@ import { JobQueueService } from "../job-queue/job-queue.service";
 import { JobRepository } from "../job-queue/job.repository";
 import { CursorRepository } from "../ingestion/cursor.repository";
 import { SorobanRpcService } from "../transactions/soroban-rpc.service";
+import { StellarIngestionService } from "../ingestion/stellar-ingestion.service";
 
 @Injectable()
 export class HealthService {
@@ -22,6 +23,7 @@ export class HealthService {
     private readonly jobRepository: JobRepository,
     private readonly cursorRepository: CursorRepository,
     private readonly sorobanRpcService: SorobanRpcService,
+    private readonly stellarIngestionService: StellarIngestionService,
   ) {}
 
   /**
@@ -280,6 +282,33 @@ export class HealthService {
     }
   }
 
+  async checkStellarIngestion(): Promise<{
+    status: "up" | "down";
+    details?: string;
+  }> {
+    const { isRunning, contractId } = this.stellarIngestionService.getStatus();
+
+    if (!isRunning) {
+      return {
+        status: "down",
+        details: "Stellar ingestion service is not running",
+      };
+    }
+
+    if (!contractId) {
+      return {
+        status: "down",
+        details:
+          "Stellar ingestion service is not configured with a contract ID",
+      };
+    }
+
+    return {
+      status: "up",
+      details: `Stellar ingestion service is running for contract ${contractId}`,
+    };
+  }
+
   /**
    * Checks if database migrations are applied by querying the schema_migrations table.
    * This is a Supabase/PostgreSQL specific check.
@@ -348,19 +377,34 @@ export class HealthService {
    * Performs deep dependency checks for /ready.
    */
   async getReadinessStatus() {
-    const [supabase, env, migrations, queue, horizon, sorobanRpc, ingestion] =
-      await Promise.all([
-        this.checkSupabase(),
-        Promise.resolve(this.checkEnvironment()),
-        this.checkMigrations(),
-        this.checkQueue(),
-        this.checkHorizon(),
-        this.checkSorobanRpc(),
-        this.checkIngestionLag(),
-      ]);
+    const [
+      supabase,
+      env,
+      migrations,
+      queue,
+      horizon,
+      sorobanRpc,
+      ingestion,
+      stellarIngestion,
+    ] = await Promise.all([
+      this.checkSupabase(),
+      Promise.resolve(this.checkEnvironment()),
+      this.checkMigrations(),
+      this.checkQueue(),
+      this.checkHorizon(),
+      this.checkSorobanRpc(),
+      this.checkIngestionLag(),
+      this.checkStellarIngestion(),
+    ]);
 
     // Critical dependencies: database, migrations, queue, horizon
-    const criticalChecks = [supabase, migrations, queue, horizon];
+    const criticalChecks = [
+      supabase,
+      migrations,
+      queue,
+      horizon,
+      stellarIngestion,
+    ];
     const ready = criticalChecks.every((check) => check.status === "up");
 
     return {
@@ -414,6 +458,15 @@ export class HealthService {
           lagSeconds: ingestion.lagSeconds,
           lastSuccess: ingestion.lastSuccess,
           error: ingestion.status === "down" ? ingestion.details : undefined,
+        },
+        {
+          name: "stellar_ingestion",
+          status: stellarIngestion.status,
+          details: stellarIngestion.details,
+          error:
+            stellarIngestion.status === "down"
+              ? stellarIngestion.details
+              : undefined,
         },
       ],
     };

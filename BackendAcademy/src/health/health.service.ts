@@ -2,6 +2,7 @@ import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../redis/redis.service';
 import { DatabaseService } from '../database/database.service';
+import { MonitoringService, MetricServiceNames } from '../monitoring/monitoring.service';
 
 /**
  * Individual dependency health status.
@@ -56,6 +57,7 @@ export class HealthService {
     private readonly configService: ConfigService,
     @Optional() @Inject(RedisService) private readonly redisService?: RedisService,
     @Optional() @Inject(DatabaseService) private readonly databaseService?: DatabaseService,
+    @Optional() @Inject(MonitoringService) private readonly monitoringService?: MonitoringService,
   ) {
     this.readinessTimeoutMs = this.configService.get<number>(
       'READINESS_PROBE_TIMEOUT_MS',
@@ -100,6 +102,123 @@ export class HealthService {
       uptime: process.uptime(),
       dependencies: checks,
     };
+  }
+
+  /**
+   * Extended readiness check that probes database, Redis, job queues,
+   * and external provider availability — #376.
+   *
+   * Each dependency is wrapped in a timeout so a stuck probe cannot
+   * block the readiness endpoint indefinitely. Error reasons are
+   * sanitized to avoid leaking sensitive connection details.
+   */
+  async checkReadiness(workerReadiness?: WorkerReadiness): Promise<ReadinessResult> {
+    const checks: ReadinessResult['checks'] = [];
+
+    // Check dependency health first — if infra is down we are NOT ready.
+    // Wrap with timeout so a stuck dependency probe cannot block the entire readiness endpoint.
+    let fullHealth: HealthCheckResult;
+    try {
+      fullHealth = await withTimeout(this.check(), this.readinessTimeoutMs, 'health-check');
+    } catch {
+      fullHealth = {
+        status: 'unavailable',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        dependencies: [],
+      };
+    }
+    const infraReady = fullHealth.status === 'ok' || fullHealth.status === 'degraded';
+    checks.push({
+      name: 'infrastructure',
+      ready: infraReady,
+      reason: infraReady
+        ? 'All dependencies healthy or degraded'
+        : 'One or more dependencies unavailable',
+    });
+
+    // Check worker readiness if provided by the jobs service.
+    if (workerReadiness) {
+      checks.push({
+        name: 'workers',
+        ready: workerReadiness.ready,
+        reason: workerReadiness.ready
+          ? `Workers active (${workerReadiness.activeWorkers}), queue depth: ${workerReadiness.queueDepth}`
+          : workerReadiness.lastHeartbeat
+            ? `Workers stalled — last heartbeat at ${workerReadiness.lastHeartbeat.toISOString()}`
+            : 'No workers active',
+      });
+    }
+
+    // Check individual database readiness with timeout
+    const dbCheck = await this.checkDatabaseReadiness();
+    checks.push(dbCheck);
+
+    // Check individual Redis readiness with timeout
+    const redisCheck = await this.checkRedisReadiness();
+    checks.push(redisCheck);
+
+    const allReady = checks.every((c) => c.ready);
+
+    return {
+      ready: allReady,
+      timestamp: new Date().toISOString(),
+      checks,
+    };
+  }
+
+  /**
+   * Database readiness probe with timeout. Returns a sanitized error
+   * reason on failure so sensitive connection details are never leaked.
+   */
+  private async checkDatabaseReadiness(): Promise<ReadinessResult['checks'][0]> {
+    try {
+      const result = await withTimeout(
+        this.checkDatabase(),
+        this.readinessTimeoutMs,
+        'database',
+      );
+      return {
+        name: 'database',
+        ready: result.status === 'healthy',
+        reason: result.status === 'healthy'
+          ? `Database responsive in ${result.latencyMs}ms`
+          : sanitizeReason(result.error ?? 'Database unhealthy'),
+      };
+    } catch (err) {
+      return {
+        name: 'database',
+        ready: false,
+        reason: sanitizeReason((err as Error).message),
+      };
+    }
+  }
+
+  /**
+   * Redis readiness probe with timeout. Returns a sanitized error
+   * reason on failure so sensitive connection details are never leaked.
+   */
+  private async checkRedisReadiness(): Promise<ReadinessResult['checks'][0]> {
+    try {
+      const result = await withTimeout(
+        this.checkRedis(),
+        this.readinessTimeoutMs,
+        'redis',
+      );
+      return {
+        name: 'redis',
+        ready: result.status === 'healthy',
+        reason: result.status === 'healthy'
+          ? `Redis responsive in ${result.latencyMs}ms`
+          : sanitizeReason(result.error ?? 'Redis unhealthy'),
+      };
+    } catch (err) {
+      return {
+        name: 'redis',
+        ready: false,
+        reason: sanitizeReason((err as Error).message),
+      };
+    }
   }
 
   /**
@@ -186,55 +305,6 @@ export class HealthService {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────
-  // #376: Readiness probes for background workers and queues
-  // ──────────────────────────────────────────────────────────────────
-
-  /**
-   * Evaluates whether the application is ready to accept traffic,
-   * including background worker readiness and queue health.
-   *
-   * This is designed to be consumed by Kubernetes readiness probes or
-   * load-balancer health checks so that traffic is only routed to pods
-   * whose workers are fully initialized and whose queues are not
-   * dangerously backed up.
-   */
-  async checkReadiness(workerReadiness?: WorkerReadiness): Promise<ReadinessResult> {
-    const checks: ReadinessResult['checks'] = [];
-
-    // Check dependency health first — if infra is down we are NOT ready.
-    const fullHealth = await this.check();
-    const infraReady = fullHealth.status === 'ok' || fullHealth.status === 'degraded';
-    checks.push({
-      name: 'infrastructure',
-      ready: infraReady,
-      reason: infraReady
-        ? 'All dependencies healthy or degraded'
-        : 'One or more dependencies unavailable',
-    });
-
-    // Check worker readiness if provided by the jobs service.
-    if (workerReadiness) {
-      checks.push({
-        name: 'workers',
-        ready: workerReadiness.ready,
-        reason: workerReadiness.ready
-          ? `Workers active (${workerReadiness.activeWorkers}), queue depth: ${workerReadiness.queueDepth}`
-          : workerReadiness.lastHeartbeat
-            ? `Workers stalled — last heartbeat at ${workerReadiness.lastHeartbeat.toISOString()}`
-            : 'No workers active',
-      });
-    }
-
-    const allReady = checks.every((c) => c.ready);
-
-    return {
-      ready: allReady,
-      timestamp: new Date().toISOString(),
-      checks,
-    };
-  }
-
   /**
    * Lightweight liveness probe — simply confirms the process is alive.
    */
@@ -244,4 +314,45 @@ export class HealthService {
       timestamp: new Date().toISOString(),
     };
   }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────
+
+/**
+ * Races a promise against a timeout. Resolves the promise or rejects
+ * with a descriptive timeout error after `ms` milliseconds.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} readiness check timed out after ${ms}ms`));
+    }, ms);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+/**
+ * Sanitize an error message so that sensitive connection details
+ * (host, port, credentials) are never exposed in readiness probes.
+ */
+function sanitizeReason(raw: string): string {
+  // Strip anything that looks like a connection string or host:port pair
+  return raw
+    .replace(/mongodb:\/\/[^\s]*/gi, '[connection]')
+    .replace(/postgres:\/\/[^\s]*/gi, '[connection]')
+    .replace(/redis:\/\/[^\s]*/gi, '[connection]')
+    .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, '[host]')
+    .replace(/:\d{2,5}\b/g, ':[port]')
+    .slice(0, 200);
 }

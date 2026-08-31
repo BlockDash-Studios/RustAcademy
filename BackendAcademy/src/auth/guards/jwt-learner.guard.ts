@@ -23,26 +23,49 @@ export class JwtLearnerGuard implements CanActivate {
     const token = this.extractBearerToken(request);
 
     if (!token) {
-      throw new UnauthorizedException({ error: 'MISSING_TOKEN', message: 'Authorization header with Bearer token is required' });
+      throw new UnauthorizedException({
+        error: 'MISSING_TOKEN',
+        message: 'Authorization header with Bearer token is required',
+      });
     }
 
     let payload: JwtPayload & { sessionId?: string };
     try {
-      payload = await this.jwtService.verifyAsync<JwtPayload & { sessionId?: string }>(token);
+      payload = await this.jwtService.verifyAsync<
+        JwtPayload & { sessionId?: string }
+      >(token);
     } catch {
-      throw new UnauthorizedException({ error: 'INVALID_TOKEN', message: 'Token is invalid or has expired' });
+      throw new UnauthorizedException({
+        error: 'INVALID_TOKEN',
+        message: 'Token is invalid or has expired',
+      });
     }
 
     if (payload.role !== UserRole.LEARNER) {
-      throw new ForbiddenException({ error: 'LEARNER_ROLE_REQUIRED', message: 'Only learners are allowed to access this resource' });
+      throw new ForbiddenException({
+        error: 'LEARNER_ROLE_REQUIRED',
+        message: 'Only learners are allowed to access this resource',
+      });
     }
 
     if (!payload.sessionId) {
-      throw new UnauthorizedException({ error: 'MISSING_SESSION_ID', message: 'Token does not contain session id' });
+      throw new UnauthorizedException({
+        error: 'MISSING_SESSION_ID',
+        message: 'Token does not contain session id',
+      });
     }
 
-    // Enforce session expiration independently of JWT verification.
-    await this.sessionService.validateSession(payload.sessionId);
+    try {
+      await this.sessionService.validateSession(payload.sessionId);
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      throw new UnauthorizedException({
+        error: 'INVALID_SESSION',
+        message: 'Session is expired, revoked, or inactive',
+      });
+    }
 
     (request as Request & { user: JwtPayload }).user = payload;
     return true;

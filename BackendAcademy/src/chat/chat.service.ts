@@ -1,17 +1,43 @@
-import { HttpException, HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
+import {
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { ChatRoom, Message } from './interfaces/chat.interface';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { ShareCodeSnippetDto } from './dto/share-code-snippet.dto';
 import { ChatRateLimiter } from './chat-rate-limit';
 import { SecurityService } from '../security/security.service';
+import {
+  ChatPage,
+  IChatRepository,
+  PageOptions,
+} from './repositories/chat.repository.interface';
+import { InMemoryChatRepository } from './repositories/chat.repository.in-memory';
 
+/**
+ * Chat service (#655).
+ *
+ * Storage is delegated to an {@link IChatRepository} that keeps rooms and
+ * messages in **bounded** storage with retention, eviction, and pagination —
+ * process-local arrays no longer grow without limit. This service layer adds
+ * the business rules on top:
+ * - Rate limiting per sender (shared across messages and code snippets).
+ * - Prompt sanitisation for long content (#371).
+ * - **Authorization**: posting to a room requires the room to exist and the
+ *   sender to be listed in the room's `participants`; reading a room's
+ *   messages requires the room to exist.
+ */
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
-  private rooms: ChatRoom[] = [];
-  private messages: Message[] = [];
   private readonly rateLimiter = new ChatRateLimiter();
+  private readonly repository: IChatRepository;
 
   /**
    * Length above which outgoing chat messages are run through the prompt
@@ -22,7 +48,10 @@ export class ChatService {
 
   constructor(
     @Optional() private readonly securityService?: SecurityService,
-  ) {}
+    @Optional() repository?: IChatRepository,
+  ) {
+    this.repository = repository ?? new InMemoryChatRepository();
+  }
 
   createRoom(createRoomDto: CreateRoomDto): ChatRoom {
     const newRoom: ChatRoom = {
@@ -30,19 +59,19 @@ export class ChatService {
       ...createRoomDto,
       createdAt: new Date(),
     };
-    this.rooms.push(newRoom);
-    return newRoom;
+    return this.repository.createRoom(newRoom);
   }
 
-  findAllRooms(): ChatRoom[] {
-    return this.rooms;
+  findAllRooms(options: PageOptions = {}): ChatPage<ChatRoom> {
+    return this.repository.findAllRooms(options);
   }
 
   findRoomById(roomId: string): ChatRoom | undefined {
-    return this.rooms.find((r) => r.id === roomId);
+    return this.repository.findRoomById(roomId);
   }
 
   createMessage(createMessageDto: CreateMessageDto): Message {
+    this.assertCanPost(createMessageDto.roomId, createMessageDto.senderId);
     this.enforceRateLimit(createMessageDto.senderId);
     const sanitisedContent = this.sanitiseIfNeeded(createMessageDto.content);
     const newMessage: Message = {
@@ -51,11 +80,11 @@ export class ChatService {
       content: sanitisedContent.content,
       createdAt: new Date(),
     };
-    this.messages.push(newMessage);
-    return newMessage;
+    return this.repository.createMessage(newMessage);
   }
 
   shareCodeSnippet(shareCodeSnippetDto: ShareCodeSnippetDto): Message {
+    this.assertCanPost(shareCodeSnippetDto.roomId, shareCodeSnippetDto.senderId);
     this.enforceRateLimit(shareCodeSnippetDto.senderId);
     const sanitisedContent = this.sanitiseIfNeeded(shareCodeSnippetDto.content);
     const newMessage: Message = {
@@ -70,12 +99,14 @@ export class ChatService {
       createdAt: new Date(),
     };
 
-    this.messages.push(newMessage);
-    return newMessage;
+    return this.repository.createMessage(newMessage);
   }
 
-  findMessagesByRoom(roomId: string): Message[] {
-    return this.messages.filter((m) => m.roomId === roomId);
+  findMessagesByRoom(roomId: string, options: PageOptions = {}): ChatPage<Message> {
+    if (!this.repository.findRoomById(roomId)) {
+      throw new NotFoundException(`Chat room ${roomId} not found`);
+    }
+    return this.repository.findMessagesByRoom(roomId, options);
   }
 
   /**
@@ -87,11 +118,7 @@ export class ChatService {
    * or cleaned up by the `cleanupIncompleteMessages` method.
    */
   markStreamingDisconnect(messageId: string): boolean {
-    const msg = this.messages.find((m) => m.id === messageId);
-    if (!msg) return false;
-    (msg as any).streamingComplete = false;
-    (msg as any).streamingAbortedAt = new Date();
-    return true;
+    return this.repository.markStreamingDisconnect(messageId);
   }
 
   /**
@@ -99,11 +126,32 @@ export class ChatService {
    * were abandoned due to streaming disconnects.
    */
   cleanupIncompleteMessages(): number {
-    const before = this.messages.length;
-    this.messages = this.messages.filter(
-      (m) => (m as any).streamingComplete !== false,
-    );
-    return before - this.messages.length;
+    return this.repository.cleanupIncompleteMessages();
+  }
+
+  /**
+   * #655: Prunes rooms/messages that have exceeded their retention window.
+   * Called lazily by the repository on every read/write; exposed here for
+   * maintenance/cleanup jobs.
+   */
+  pruneExpired(now?: Date): void {
+    this.repository.pruneExpired(now);
+  }
+
+  /**
+   * #655: Authorization rule for posting — the room must exist and the
+   * sender must be one of its participants.
+   */
+  private assertCanPost(roomId: string, senderId: string): void {
+    const room = this.repository.findRoomById(roomId);
+    if (!room) {
+      throw new NotFoundException(`Chat room ${roomId} not found`);
+    }
+    if (!room.participants.includes(senderId)) {
+      throw new ForbiddenException(
+        `Sender ${senderId} is not a participant of room ${roomId}`,
+      );
+    }
   }
 
   /**

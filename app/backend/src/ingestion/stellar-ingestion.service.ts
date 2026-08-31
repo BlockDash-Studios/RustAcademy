@@ -13,6 +13,10 @@ import {
   SorobanEventParser,
   RawHorizonContractEvent,
 } from "./soroban-event.parser";
+import {
+  ContractAdapterError,
+  ContractAdapterErrorCode,
+} from "../common/errors/contract-adapter.error";
 import { CursorRepository } from "./cursor.repository";
 import { EscrowEventRepository } from "./escrow-event.repository";
 import { JobQueueService } from "../job-queue/job-queue.service";
@@ -172,10 +176,15 @@ export class StellarIngestionService implements OnModuleInit, OnModuleDestroy {
       onmessage: (record: unknown) => {
         void this.handleRecord(record as RawHorizonContractEvent, streamId);
       },
+
       onerror: (err: unknown) => {
         this.logger.error(`Stream error for ${streamId}: ${String(err)}`);
         this.stopCurrentStream();
         this.scheduleReconnect(contractId);
+        throw new ContractAdapterError(
+          ContractAdapterErrorCode.StreamError,
+          String(err),
+        );
       },
     }) as () => void;
 
@@ -217,6 +226,10 @@ export class StellarIngestionService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`SSE error for ${streamId}: ${String(err)}`);
       es.close();
       this.scheduleReconnect(contractId);
+      throw new ContractAdapterError(
+        ContractAdapterErrorCode.StreamError,
+        String(err),
+      );
     };
 
     return () => es.close();
@@ -283,6 +296,10 @@ export class StellarIngestionService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`Stream error for ${streamId}: ${String(err)}`);
         this.stopCurrentStream();
         this.scheduleReconnect(contractId);
+        throw new ContractAdapterError(
+          ContractAdapterErrorCode.StreamError,
+          String(err),
+        );
       },
     }) as () => void;
 
@@ -366,6 +383,17 @@ export class StellarIngestionService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ---------------------------------------------------------------------------
+  // Public status
+  // ---------------------------------------------------------------------------
+
+  getStatus(): { isRunning: boolean; contractId: string | null } {
+    return {
+      isRunning: !!this.stopStream,
+      contractId: this.currentContractId,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Event processing
   // ---------------------------------------------------------------------------
 
@@ -373,23 +401,30 @@ export class StellarIngestionService implements OnModuleInit, OnModuleDestroy {
     raw: RawHorizonContractEvent,
     streamId: string,
   ): Promise<void> {
-    const event = this.parser.parse(raw);
+    try {
+      const event = this.parser.parse(raw);
 
-    if (!event) {
-      // Unrecognised or non- RustAcademy event; still advance cursor.
+      if (!event) {
+        // Unrecognised or non- RustAcademy event; still advance cursor.
+        await this.safeUpdateCursor(streamId, raw.paging_token, raw.ledger);
+        return;
+      }
+
+      this.logger.debug(
+        `Processing ${event.eventType} paging_token=${event.pagingToken}`,
+      );
+
+      await this.persistEvent(event);
       await this.safeUpdateCursor(streamId, raw.paging_token, raw.ledger);
-      return;
+
+      // Emit for other services / notification layer
+      this.eventEmitter.emit(`stellar.${event.eventType}`, event);
+    } catch (err) {
+      throw new ContractAdapterError(
+        ContractAdapterErrorCode.ParseError,
+        `Failed to parse event: ${String(err)}`,
+      );
     }
-
-    this.logger.debug(
-      `Processing ${event.eventType} paging_token=${event.pagingToken}`,
-    );
-
-    await this.persistEvent(event);
-    await this.safeUpdateCursor(streamId, raw.paging_token, raw.ledger);
-
-    // Emit for other services / notification layer
-    this.eventEmitter.emit(`stellar.${event.eventType}`, event);
   }
 
   private async persistEvent(event: RustAcademyContractEvent): Promise<void> {

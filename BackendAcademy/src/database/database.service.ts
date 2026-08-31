@@ -43,6 +43,20 @@ export interface RedemptionRecord {
  */
 export type PaymentStatus = 'pending' | 'processing' | 'succeeded' | 'failed' | 'refunded';
 
+/**
+ * Every payment status, in declaration order. Exported so transition tests
+ * and callers can enumerate the full state space without re-listing it.
+ *
+ * #661 (BA-093): used by the exhaustive state-transition test suite.
+ */
+export const PAYMENT_STATUSES: PaymentStatus[] = [
+  'pending',
+  'processing',
+  'succeeded',
+  'failed',
+  'refunded',
+];
+
 export interface PaymentRecord {
   id: string;
   orderId: string;
@@ -69,6 +83,72 @@ export interface PaymentTransitionResult {
   payment?: PaymentRecord;
 }
 
+/**
+ * Lifecycle of a webhook idempotency key — Issue #663 (BA-095).
+ *
+ * Unlike the previous process-local replay maps, claims are stored in the
+ * database layer and carry a payload fingerprint plus an explicit
+ * processing status, so a restart (or another replica) cannot lose the
+ * claim and in-progress work is distinguishable from completed work.
+ */
+export type WebhookIdempotencyStatus = 'in_progress' | 'completed' | 'failed';
+
+export interface WebhookIdempotencyRecord {
+  idempotencyKey: string;
+  /** SHA-256 fingerprint of the raw webhook payload. */
+  payloadFingerprint: string;
+  status: WebhookIdempotencyStatus;
+  firstReceivedAt: Date;
+  expiresAt: Date;
+  updatedAt: Date;
+}
+
+export type WebhookIdempotencyClaim =
+  | { claimed: true; record: WebhookIdempotencyRecord }
+  | {
+      claimed: false;
+      reason: 'already_in_progress' | 'already_processed' | 'key_conflict';
+      record: WebhookIdempotencyRecord;
+    };
+
+/**
+ * Durable outbox record for outbound webhook delivery — Issue #666 (BA-098).
+ *
+ * Outbound events are persisted *before* delivery is attempted, retries are
+ * resumed from `nextRetryAt` instead of a process-local queue, and terminal
+ * failures stay inspectable via {@link getTerminalWebhookFailures}.
+ */
+export type WebhookOutboxStatus =
+  | 'pending'
+  | 'sending'
+  | 'retrying'
+  | 'delivered'
+  | 'failed';
+
+export interface WebhookOutboxRecord {
+  id: string;
+  url: string;
+  body: string;
+  signature: string;
+  idempotencyKey: string;
+  maxRetries: number;
+  status: WebhookOutboxStatus;
+  /** Number of delivery attempts made so far (starts at 0). */
+  attempts: number;
+  nextRetryAt: Date | null;
+  lastError?: string;
+  lastStatusCode?: number;
+  createdAt: Date;
+  updatedAt: Date;
+  deliveredAt?: Date;
+  terminalAt?: Date;
+}
+
+export type NewWebhookOutboxRecord = Pick<
+  WebhookOutboxRecord,
+  'id' | 'url' | 'body' | 'signature' | 'idempotencyKey' | 'maxRetries'
+>;
+
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(DatabaseService.name);
@@ -76,20 +156,51 @@ export class DatabaseService implements OnModuleInit, OnApplicationShutdown {
   private redemptions: RedemptionRecord[] = [];
   private payments: Map<string, PaymentRecord> = new Map();
   private migrationsApplied: string[] = [];
+  /** Durable webhook idempotency claims — Issue #663 (BA-095). */
+  private webhookIdempotency: Map<string, WebhookIdempotencyRecord> = new Map();
+  /** Durable webhook delivery outbox — Issue #666 (BA-098). */
+  private webhookOutbox: Map<string, WebhookOutboxRecord> = new Map();
 
   constructor(private readonly transactionManager: TransactionManagerService) {}
 
   /**
    * Explicit state machine for payment status transitions. A status that
    * does not appear as a key has no legal outgoing transitions (terminal).
+   *
+   * #661 (BA-093): this is the single, centralized source of truth for legal
+   * transitions. Both the webhook ingress path
+   * ({@link PaymentsService.processPaymentWebhookEvent}) and any internal
+   * status update route through {@link updatePaymentStatus}, which consults
+   * these rules, so illegal regressions and terminal-state changes are
+   * rejected everywhere.
    */
-  private static readonly ALLOWED_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
+  static readonly ALLOWED_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
     pending: ['processing', 'succeeded', 'failed'],
     processing: ['succeeded', 'failed'],
     succeeded: ['refunded'],
     failed: [],
     refunded: [],
   };
+
+  /**
+   * Returns whether transitioning from `from` to `to` is legal under the
+   * centralized payment state machine (#661 / BA-093). A no-op
+   * (`from === to`) is considered legal because callers treat it as an
+   * idempotent no-op rather than a transition.
+   */
+  static isLegalPaymentTransition(from: PaymentStatus, to: PaymentStatus): boolean {
+    if (from === to) return true;
+    const allowed = DatabaseService.ALLOWED_TRANSITIONS[from] ?? [];
+    return allowed.includes(to);
+  }
+
+  /**
+   * Returns whether a status is terminal (has no legal outgoing transitions),
+   * so any further change from it must be rejected (#661 / BA-093).
+   */
+  static isTerminalPaymentStatus(status: PaymentStatus): boolean {
+    return (DatabaseService.ALLOWED_TRANSITIONS[status] ?? []).length === 0;
+  }
 
   onModuleInit() {
     this.seedSampleCoupons();
@@ -418,9 +529,237 @@ export class DatabaseService implements OnModuleInit, OnApplicationShutdown {
     return { success: true, transitioned: true, payment };
   }
 
+  // ---------------------------------------------------------------------
+  // Durable webhook idempotency — Issue #663 (BA-095)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Atomically claims an idempotency key for webhook processing.
+   *
+   * The claim is durable (stored in the database layer rather than a
+   * process-local map), fingerprint-bound to the payload, and carries an
+   * explicit processing status so in-progress work can be told apart from
+   * completed work:
+   *
+   * - same key + same fingerprint while `in_progress`  → already_in_progress
+   * - same key + same fingerprint while `completed`   → already_processed
+   * - same key + different fingerprint                → key_conflict
+   * - same key + same fingerprint while `failed`      → re-claimed (retry)
+   * - expired key                                     → re-claimed
+   * - unknown key                                     → claimed
+   */
+  async claimWebhookIdempotency(
+    idempotencyKey: string,
+    payloadFingerprint: string,
+    ttlMs = 3_600_000,
+  ): Promise<WebhookIdempotencyClaim> {
+    const now = new Date();
+    const existing = this.webhookIdempotency.get(idempotencyKey);
+
+    if (existing && existing.expiresAt > now) {
+      if (existing.payloadFingerprint !== payloadFingerprint) {
+        return { claimed: false, reason: 'key_conflict', record: existing };
+      }
+      if (existing.status === 'in_progress') {
+        return { claimed: false, reason: 'already_in_progress', record: existing };
+      }
+      if (existing.status === 'completed') {
+        return { claimed: false, reason: 'already_processed', record: existing };
+      }
+      // `failed` falls through: the same payload may legitimately be retried.
+    }
+
+    const record: WebhookIdempotencyRecord = {
+      idempotencyKey,
+      payloadFingerprint,
+      status: 'in_progress',
+      firstReceivedAt: existing ? existing.firstReceivedAt : now,
+      expiresAt: new Date(now.getTime() + ttlMs),
+      updatedAt: now,
+    };
+    this.webhookIdempotency.set(idempotencyKey, record);
+    return { claimed: true, record };
+  }
+
+  /**
+   * Marks a webhook idempotency claim as successfully processed.
+   */
+  async completeWebhookIdempotency(idempotencyKey: string): Promise<void> {
+    const record = this.webhookIdempotency.get(idempotencyKey);
+    if (record) {
+      record.status = 'completed';
+      record.updatedAt = new Date();
+    }
+  }
+
+  /**
+   * Marks a webhook idempotency claim as failed (processing errored), which
+   * allows a subsequent retry of the same payload to re-claim the key.
+   */
+  async failWebhookIdempotency(idempotencyKey: string): Promise<void> {
+    const record = this.webhookIdempotency.get(idempotencyKey);
+    if (record) {
+      record.status = 'failed';
+      record.updatedAt = new Date();
+    }
+  }
+
+  /**
+   * Returns the current claim for an idempotency key, expiring stale
+   * records on read.
+   */
+  async getWebhookIdempotency(
+    idempotencyKey: string,
+  ): Promise<WebhookIdempotencyRecord | null> {
+    const record = this.webhookIdempotency.get(idempotencyKey);
+    if (!record) return null;
+    if (record.expiresAt <= new Date()) {
+      this.webhookIdempotency.delete(idempotencyKey);
+      return null;
+    }
+    return record;
+  }
+
+  // ---------------------------------------------------------------------
+  // Durable webhook delivery outbox — Issue #666 (BA-098)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Persists an outbound webhook *before* delivery is attempted so the
+   * event cannot be lost on process failure.
+   */
+  async enqueueWebhookDelivery(
+    input: NewWebhookOutboxRecord,
+  ): Promise<WebhookOutboxRecord> {
+    const now = new Date();
+    const existing = this.webhookOutbox.get(input.id);
+    if (existing) return existing;
+    const record: WebhookOutboxRecord = {
+      ...input,
+      status: 'pending',
+      attempts: 0,
+      nextRetryAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.webhookOutbox.set(record.id, record);
+    return record;
+  }
+
+  /**
+   * Atomically claims due outbox records for delivery: pending records and
+   * retrying records whose `nextRetryAt` has passed are flipped to
+   * `sending` so concurrent workers cannot deliver the same event twice.
+   */
+  async claimDueWebhookDeliveries(
+    limit = 10,
+    now = new Date(),
+  ): Promise<WebhookOutboxRecord[]> {
+    const due: WebhookOutboxRecord[] = [];
+    for (const record of this.webhookOutbox.values()) {
+      if (due.length >= limit) break;
+      const claimable =
+        (record.status === 'pending' || record.status === 'retrying') &&
+        (record.nextRetryAt === null || record.nextRetryAt <= now);
+      if (claimable) {
+        record.status = 'sending';
+        record.updatedAt = now;
+        due.push(record);
+      }
+    }
+    return due;
+  }
+
+  /**
+   * Records a successful delivery attempt. The record becomes terminal
+   * (`delivered`) and stays inspectable.
+   */
+  async completeWebhookDelivery(
+    id: string,
+    statusCode: number,
+  ): Promise<WebhookOutboxRecord | null> {
+    const record = this.webhookOutbox.get(id);
+    if (!record) return null;
+    const now = new Date();
+    record.status = 'delivered';
+    record.attempts += 1;
+    record.lastStatusCode = statusCode;
+    record.lastError = undefined;
+    record.nextRetryAt = null;
+    record.deliveredAt = now;
+    record.terminalAt = now;
+    record.updatedAt = now;
+    return record;
+  }
+
+  /**
+   * Records a failed delivery attempt. While attempts remain the record is
+   * rescheduled (`retrying` + `nextRetryAt`); when attempts are exhausted
+   * it becomes a terminal `failed` record that stays inspectable.
+   */
+  async recordWebhookDeliveryFailure(
+    id: string,
+    options: { statusCode?: number; error?: string; retryDelayMs?: number },
+  ): Promise<{ record: WebhookOutboxRecord; terminal: boolean } | null> {
+    const record = this.webhookOutbox.get(id);
+    if (!record) return null;
+    const now = new Date();
+    record.attempts += 1;
+    record.lastStatusCode = options.statusCode;
+    record.lastError = options.error;
+    record.updatedAt = now;
+
+    if (record.attempts >= record.maxRetries) {
+      record.status = 'failed';
+      record.terminalAt = now;
+      record.nextRetryAt = null;
+    } else {
+      record.status = 'retrying';
+      record.nextRetryAt = new Date(
+        now.getTime() + (options.retryDelayMs ?? 1_000),
+      );
+    }
+    return { record, terminal: record.status === 'failed' };
+  }
+
+  /**
+   * Returns a single outbox record by id.
+   */
+  async getWebhookOutboxRecord(id: string): Promise<WebhookOutboxRecord | null> {
+    return this.webhookOutbox.get(id) ?? null;
+  }
+
+  /**
+   * Lists outbox records, optionally filtered by status.
+   */
+  async listWebhookOutbox(filter?: {
+    status?: WebhookOutboxStatus;
+    limit?: number;
+  }): Promise<WebhookOutboxRecord[]> {
+    let records = Array.from(this.webhookOutbox.values());
+    if (filter?.status) {
+      records = records.filter((r) => r.status === filter.status);
+    }
+    records.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return filter?.limit ? records.slice(0, filter.limit) : records;
+  }
+
+  /**
+   * Returns terminal outbox failures (exhausted retries) for inspection.
+   */
+  async getTerminalWebhookFailures(limit = 50): Promise<WebhookOutboxRecord[]> {
+    const failed = Array.from(this.webhookOutbox.values()).filter(
+      (r) => r.status === 'failed',
+    );
+    failed.sort((a, b) => (b.terminalAt?.getTime() ?? 0) - (a.terminalAt?.getTime() ?? 0));
+    return failed.slice(0, limit);
+  }
+
   onApplicationShutdown(signal?: string) {
     this.coupons.clear();
     this.redemptions = [];
+    this.webhookIdempotency.clear();
+    this.webhookOutbox.clear();
     this.logger.log(`DatabaseService shut down gracefully (signal: ${signal}).`);
   }
 }

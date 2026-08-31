@@ -36,7 +36,12 @@ async function bootstrap() {
     process.env[key] = String(val);
   }
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // #662: `rawBody: true` keeps the unparsed request bytes available on
+  // `req.rawBody` so webhook signatures can be verified against exactly what
+  // the provider sent, before any JSON parsing/normalization happens.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
   const logger = new Logger('Bootstrap');
 
   const config = app.get(ConfigService);
