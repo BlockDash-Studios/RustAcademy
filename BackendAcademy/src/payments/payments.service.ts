@@ -504,6 +504,31 @@ export class PaymentsService {
   }
 
   /**
+   * BA-092: Atomically reserve wallet funds before a payment is confirmed.
+   *
+   * The reservation is keyed by `reservationId` (use the payment id) so
+   * pending webhook deliveries and retries cannot reserve the same balance
+   * more than once. The database layer excludes active reservations from
+   * available-balance calculations.
+   */
+  async reserveFunds(input: {
+    reservationId: string;
+    userId: string;
+    amount: number;
+    assetCode: string;
+  }): Promise<{ success: boolean; reason?: string }> {
+    return this.databaseService.reserveFunds(input);
+  }
+
+  /**
+   * BA-092: Release a previously reserved amount when a payment reaches a
+   * terminal failure state. Releasing an unknown reservation is a no-op.
+   */
+  async releaseFunds(reservationId: string): Promise<void> {
+    await this.databaseService.releaseFunds(reservationId);
+  }
+
+  /**
    * Processes a validated, signature-checked payment webhook event.
    *
    * Two independent safeguards protect payment state here:
@@ -591,6 +616,22 @@ export class PaymentsService {
       };
     }
 
+    if (event.status === 'pending') {
+      const reserved = await this.reserveFunds({
+        reservationId: event.paymentId,
+        userId: event.userId,
+        amount: event.amount,
+        assetCode: event.assetCode,
+      });
+      if (!reserved.success) {
+        return {
+          outcome: 'rejected',
+          paymentId: event.paymentId,
+          reason: reserved.reason ?? 'fund reservation failed',
+        };
+      }
+    }
+
     if (!result.transitioned) {
       // Legal but a no-op (payment already in the requested status under a
       // different event id) — do not re-run side effects.
@@ -599,6 +640,10 @@ export class PaymentsService {
         paymentId: event.paymentId,
         reason: result.reason ?? 'no state change',
       };
+    }
+
+    if (event.status === 'failed') {
+      await this.releaseFunds(event.paymentId);
     }
 
     // Only a genuine, first-time transition into `succeeded` grants a
