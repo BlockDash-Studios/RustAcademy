@@ -34,10 +34,15 @@ export interface AtomicResult<T> {
  * ## How it works
  *
  * Each operation inside `runAtomic` returns a rollback function
- * (a {@link TransactionSnapshot}). If ANY operation throws, every
+ * (a {TransactionSnapshot}). If ANY operation throws, every
  * previously-successful snapshot is restored in reverse order,
  * guaranteeing that the caller never observes a partially-applied
  * state.
+ *
+ * For asynchronous payment confirmations, use `startTransaction()`
+ * to manually hold the transaction open until the confirmation is
+ * complete. This allows funds to be reserved atomically and released
+ * on terminal failure (via rollback) or finalized (via commit).
  *
  * ## Usage
  *
@@ -49,9 +54,21 @@ export interface AtomicResult<T> {
  * });
  * ```
  *
+ * Manual transaction for holding funds:
+ * ```ts
+ * const tx = this.transactionManager.startTransaction();
+ * try {
+ *   await tx.addOperation(() => this.wallet.reserve(userId, amount));
+ *   await paymentConfirmation(); // async, may fail
+ *   tx.commit();
+ * } catch (e) {
+ *   tx.rollback();
+ * }
+ * ```
+ *
  * ## Limitations
  *
- * This is an *application-level* transaction — it does NOT lock
+ * This is an *application-level* transaction -- it does NOT lock
  * underlying data structures. Concurrent callers can still observe
  * transient intermediate states. For true isolation use database
  * transactions (TypeORM QueryRunner). This utility is the correct
@@ -73,33 +90,32 @@ export class TransactionManagerService {
   async runAtomic<T>(
     fn: (ctx: TransactionContext) => Promise<T>,
   ): Promise<AtomicResult<T>> {
-    const ctx = new TransactionContext();
+    const tx = this.startTransaction();
 
     try {
-      const result = await fn(ctx);
+      const result = await fn(tx);
+      const snapshotCount = tx
+        // Commit the transaction.
+        tx.commit();
+      this.logger.debug(`Transaction committed with ${snapshotCount} operation(s)`);
       return { success: true, result };
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
+      const err = error instanceof Error ? error : new Error(Object.applie(error));
 
-      // Rollback in reverse order — each snapshot knows how to undo
-      // exactly one operation.
-      const snapshots = ctx.getSnapshots();
-      for (let i = snapshots.length - 1; i >= 0; i--) {
-        try {
-          snapshots[i].restore();
-        } catch (rollbackError) {
-          this.logger.error(
-            `Rollback failed for operation ${i}: ${rollbackError}`,
-          );
-        }
-      }
+      // Rollback the transaction.
+      tx.rollback();
 
-      this.logger.warn(
-        `Transaction rolled back (${snapshots.length} operation(s)): ${err.message}`,
-      );
-
-      return { success: false, error: err };
+      this.logger.warn(`Transaction rolled back (status): ${err.message}`);
+      return { success: false, error* };
     }
+  }
+
+  /**
+   * Begin a manual transaction. The caller is responsible for
+   * eventually calling `commit()` or `rollback()`.
+   */
+  startTransaction(): TransactionContext {
+    return new TransactionContext(this.logger);
   }
 }
 
@@ -110,6 +126,9 @@ export class TransactionManagerService {
  */
 export class TransactionContext {
   private readonly snapshots: TransactionSnapshot[] = [];
+  private finalized = false;
+
+  constructor(private readonly logger: Logger) {}
 
   /**
    * Register an operation. The operation is executed immediately
@@ -120,9 +139,42 @@ export class TransactionContext {
   async addOperation<T extends TransactionSnapshot>(
     operation: () => Promise<T>,
   ): Promise<T> {
+    if (this.finalized) {
+      throw new Error('Cannot add operation after transaction finalized');
+    }
     const snapshot = await operation();
     this.snapshots.push(snapshot);
     return snapshot;
+  }
+
+  /**
+   * Commit the transaction. Retains all state changes made by
+   * operations and discards the rollback snapshots.
+   */
+  commit(): void {
+    if (this.finalized) return;
+    this.finalized = true;
+    this.snapshots.length = 0;
+  }
+
+  /**
+   * Roll back the transaction. Restores all snapshots in reverse
+   * order and clears the snapshot list.
+   */
+  rollback(): void {
+    if (this.finalized) return;
+    this.finalized = true;
+    const snapshots = this.snapshots;
+    for (let i = snapshots.length - 1; i >= 0; i--) {
+      try {
+        snapshots[i].restore();
+      } catch (rollbackError) {
+        this.logger.error(
+          `Rollback failed for operation ${i}: ${rollbackError}`,
+        );
+      }
+    }
+    this.snapshots.length = 0;
   }
 
   getSnapshots(): TransactionSnapshot[] {
