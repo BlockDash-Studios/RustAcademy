@@ -10,7 +10,7 @@ export interface WalletNonce {
 export interface WalletSession {
   id: string;
   walletAddress: string;
-  tokenHash: hex | string;
+  tokenHash: string;
   generation: number;
   createdAt: Date;
   lastRotatedAt: Date;
