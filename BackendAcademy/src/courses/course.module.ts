@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CourseController } from './course.controller';
 import { CourseService } from './course.service';
@@ -12,17 +12,19 @@ import { TransactionManagerService } from '../common/transaction-manager.service
 import { ConfigModule } from '@nestjs/config';
 import { SearchModule } from '../search/search.module';
 import { RedisModule } from '../redis/redis.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
     ConfigModule,
+    AuthModule,
     TypeOrmModule.forFeature([
       CourseEntity,
       CourseRevisionEntity,
       CourseRatingEntity,
     ]),
     RewardsModule,
-    SearchModule,
+    forwardRef(() => SearchModule),
     RedisModule,
   ],
   controllers: [CourseController],

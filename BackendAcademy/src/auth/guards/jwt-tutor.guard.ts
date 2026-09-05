@@ -50,7 +50,7 @@ export class JwtTutorGuard implements CanActivate {
 
     if (payload.role !== UserRole.TUTOR) {
       throw new ForbiddenException({
-        error: 'TUTIOR_ROLE_REQUIRED',
+        error: 'TUTOR_ROLE_REQUIRED',
         message: 'Only tutors are allowed to access this resource',
       });
     }

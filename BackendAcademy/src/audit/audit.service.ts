@@ -1,4 +1,4 @@
-﻿import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { CorrelationLoggerService } from '../logging/logger.service';
 
 export interface AuditEvent {

@@ -15,7 +15,7 @@ import { AuthSessionService } from '../auth-session.service';
 export class JwtLearnerGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
-    private readonly authSessionService: AuthSessionService,
+    private readonly sessionService: AuthSessionService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -56,7 +56,7 @@ export class JwtLearnerGuard implements CanActivate {
     }
 
     try {
-      await this.authSessionService.validateSession(payload.sessionId);
+      await this.sessionService.validateSession(payload.sessionId);
     } catch (error) {
       if (error instanceof UnauthorizedException) {
         throw error;

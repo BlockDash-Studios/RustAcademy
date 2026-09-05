@@ -406,14 +406,20 @@ export class NotificationsService {
     notification: Notification,
     context: DeliveryContext,
   ): Promise<DeliveryResult[]> {
-    if (!this.providers || this.providers.length === 0) {
+    const availableProviders = (this.providers || []).filter((p) =>
+      typeof (p as any).isEnabled === 'function' ? (p as any).isEnabled() : true,
+    );
+
+    if (availableProviders.length === 0) {
       this.logger.warn(
         'No notification providers registered — notification stored only',
       );
       return [];
     }
 
-    const enabledProviders = this.getEnabledProviders(context.userId);
+    const enabledProviders = this.getEnabledProviders(context.userId).filter((p) =>
+      availableProviders.includes(p),
+    );
 
     const results = await Promise.allSettled(
       enabledProviders.map((provider) =>
@@ -448,7 +454,8 @@ export class NotificationsService {
     );
 
     if (this.pendingBatch.length >= this.batchConfig.maxBatchSize) {
-      return this.batchToResults(await this.flushBatch(context));
+      const batchRes = await this.flushBatch(context);
+      return batchRes.results;
     }
 
     if (!this.batchTimer && this.batchConfig.batchWindowMs > 0) {
@@ -530,9 +537,15 @@ export class NotificationsService {
       };
       const allResults: DeliveryResult[] = [];
 
-      const enabledProviders = ctx.userId === 'batch'
-        ? (this.providers ?? [])
-        : this.getEnabledProviders(ctx.userId);
+      const availableProviders = (this.providers || []).filter((p) =>
+        typeof (p as any).isEnabled === 'function' ? (p as any).isEnabled() : true,
+      );
+
+      const enabledProviders = (
+        ctx.userId === 'batch'
+          ? availableProviders
+          : this.getEnabledProviders(ctx.userId)
+      ).filter((p) => availableProviders.includes(p));
 
       if (enabledProviders.length > 0) {
         for (const provider of enabledProviders) {

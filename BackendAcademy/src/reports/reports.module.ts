@@ -10,5 +10,6 @@ import { ReportsService } from './reports.service';
   imports: [AnalyticsModule, RewardsModule, SubmissionsModule, CourseModule],
   controllers: [ReportsController],
   providers: [ReportsService],
+  exports: [ReportsService],
 })
 export class ReportsModule {}

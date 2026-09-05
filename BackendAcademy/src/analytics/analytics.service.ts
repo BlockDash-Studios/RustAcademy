@@ -55,6 +55,7 @@ export interface ReconciliationSummary {
 
 @Injectable()
 export class AnalyticsService {
+  static readonly VALID_EVENT_TYPES = new Set<EventType>(Object.values(EventType));
   private readonly logger = new Logger(AnalyticsService.name);
   private readonly events: AnalyticsEvent[] = [];
 

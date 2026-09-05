@@ -24,14 +24,26 @@ Global()
   imports: [
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        url: config.get<string>('DATABASE_URL'),
-        autoLoadEntities: true,
-        // Schema changes in deployed environments must go through migrations.
-        synchronize: shouldSynchronizeScchema(config.get<string>('NODE_ENV', 'development')),
-        ssl: config.get('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
-      }),
+      useFactory: (config: ConfigService) => {
+        const isTest = (config.get<string>('NODE_ENV') ?? process.env.NODE_ENV) === 'test';
+        if (isTest) {
+          return {
+            type: 'sqljs' as any,
+            driver: require('sql.js'),
+            autoLoadEntities: false,
+            synchronize: false,
+          };
+        }
+        const dbUrl = config.get<string>('DATABASE_URL');
+        return {
+          type: 'postgres' as any,
+          url: dbUrl,
+          autoLoadEntities: true,
+          // Schema changes in deployed environments must go through migrations.
+          synchronize: shouldSynchronizeSchema(config.get<string>('NODE_ENV', 'development')),
+          ssl: config.get('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
+        };
+      },
       inject: [ConfigService],
     }),
   ],

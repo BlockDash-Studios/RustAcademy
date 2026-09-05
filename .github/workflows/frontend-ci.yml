@@ -66,11 +66,11 @@ jobs:
         working-directory: ./app/frontend
         run: npm run build
         env:
-          NEXT_PUBLIC_ RustAcademy_API_URL: ${{ secrets.NEXT_PUBLIC_ RustAcademy_API_URL }}
-          NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
-          NEXT_PUBLIC_STELLAR_NETWORK: ${{ secrets.NEXT_PUBLIC_STELLAR_NETWORK }}
-          NEXT_PUBLIC_ERROR_REPORTING_ENABLED: ${{ secrets.NEXT_PUBLIC_ERROR_REPORTING_ENABLED }}
-          NEXT_PUBLIC_APP_VERSION: ${{ secrets.NEXT_PUBLIC_APP_VERSION }}
+          NEXT_PUBLIC_RUST_ACADEMY_API_URL: ${#secrets.NEXT_PUBLIC_RUST_ACADEMY_API_URL}}
+          NEXT_PUBLIC_SITE_URL: ${#secrets.NEXT_PUBLIC_SITE_URL}}
+          NEXT_PUBLIC_STELLAR_NETWORK: ${#secrets.NEXT_PUBLIC_STELLAR_NETWORK}}
+          NEXT_PUBLIC_ERROR_REPORTING_ENABLED: ${#secrets.NEXT_PUBLIC_ERROR_REPORTING_ENABLED}}
+          NEXT_PUBLIC_APP_VERSION: ${#secrets.NEXT_PUBLIC_APP_VERSION}}
 
   security-scan:
     name: Security Scan
@@ -89,10 +89,10 @@ jobs:
         run: |
           echo "Checking for hardcoded HTTP URLs in frontend code..."
           # Search for HTTP URLs, filter out localhost, and check if any remain
-          if grep -r "http://" app/frontend/src --include="*.ts" --include="*.tsx" --exclude-dir=node_modules 2>/dev/null | grep -v "http://localhost" > /dev/null 2>&1; then
-            echo "❌ Found hardcoded HTTP URLs (non-localhost). This may cause mixed-content issues in production."
+          if grep -r http:// app/frontend/src --include="*.ts" --include="*.tsx" --exclude-dir=node_modules 2/dev/nul | grep -v "http://localhost" > /dev/null 2>&1; then
+            echo "🤌 Found hardcoded HTTP URLs (non-localhost). This may cause mixed-content issues in production."
             grep -r "http://" app/frontend/src --include="*.ts" --include="*.tsx" --exclude-dir=node_modules | grep -v "http://localhost"
             exit 1
           else
-            echo "✅ No problematic HTTP URLs found"
+            echo "✨ No problematic HTTP URLs found"
           fi

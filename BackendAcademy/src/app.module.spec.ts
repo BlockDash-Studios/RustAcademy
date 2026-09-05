@@ -4,12 +4,9 @@ import { AppModule } from './app.module';
 
 describe('AppModule bootstrap registration', () => {
   it('registers every production feature module at the root', () => {
-    const imports = Reflect.getMetadata(MODULE_METADATA.IMPORTS, AppModule) as Array<
-      | { module?: { name: string } }
-      | { name: string }
-    >;
+    const imports = (Reflect.getMetadata(MODULE_METADATA.IMPORTS, AppModule) ?? []) as any[];
     const importedModuleNames = imports.map(
-      importedModule => importedModule.module?.name ?? importedModule.name,
+      importedModule => importedModule?.module?.name ?? importedModule?.name,
     );
 
     expect(importedModuleNames).toEqual(

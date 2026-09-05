@@ -29,6 +29,7 @@ import {
   ApiOperation,
   ApiParam,
   ApiProduces,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -86,7 +87,7 @@ function buildUploadOptions(assetsService: AssetsService): MulterOptions {
       fields: 10,
       parts: 12,
     },
-    fileFilter: (_req, file, cb) => {
+    fileFilter: (_req: any, file: any, cb: any) => {
       const declared = (file.mimetype || '').toLowerCase();
       const isAllowed = ALLOWED_MIME_TYPES.some(({ mime, prefix }) =>
         prefix ? declared.startsWith(mime) : declared === mime,
@@ -125,15 +126,11 @@ function buildUploadOptions(assetsService: AssetsService): MulterOptions {
   };
 }
 
-@ApiTags('assets')
+@ApiTags('Assets')
 @Controller('assets')
 @UseFilters(MulterExceptionFilter)
 export class AssetsController {
-  private readonly uploadInterceptor: NestInterceptor;
-
-  constructor(private readonly assetsService: AssetsService) {
-    this.uploadInterceptor = new FileInterceptor('file', buildUploadOptions(assetsService));
-  }
+  constructor(private readonly assetsService: AssetsService) {}
 
   /**
    * `GET /assets` — list all stored assets, optionally sorted.
@@ -202,7 +199,7 @@ export class AssetsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(this.uploadInterceptor)
+  @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -220,7 +217,7 @@ export class AssetsController {
   @ApiResponse({ status: 400, description: 'Invalid asset payload.' })
   @ApiResponse({ status: 413, description: 'Asset exceeds maximum size.' })
   async upload(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: any,
     @Body() dto: UploadAssetDto,
   ): Promise<Asset> {
     if (!file) {

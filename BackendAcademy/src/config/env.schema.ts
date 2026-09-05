@@ -275,6 +275,13 @@ export const baseEnvSchema = Joi.object({
     .default('1h')
     .description('JWT lifetime, e.g. "30m", "1h", "7d".'),
 
+  JWT_CLOCK_SKEW_SECONDS: Joi.number()
+    .integer()
+    .min(0)
+    .max(120)
+    .default(30)
+    .description('Maximum allowed clock skew in seconds for token exp/nbf checks'),
+
   API_KEY_SECRET: perEnvironment(secretString().allow(''), {
     production: Joi.string()
       .invalid('', ...FORBIDDEN_PRODUCTION_SECRETS)

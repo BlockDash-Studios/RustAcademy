@@ -194,6 +194,6 @@ export class SocialController {
     @Query('cursor') cursor?: string,
     @Query('limit') limit = 10,
   ): SocialFeedResponse {
-    return this.socialService.getPostsByHashtag(tag, cursor, Number(limit));
+    return this.socialService.getPostsByHashtag(tag, cursor, Number(limit) || 10);
   }
 }

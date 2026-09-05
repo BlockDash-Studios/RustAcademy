@@ -1,5 +1,5 @@
-import { Module } from '@nestjs/common';
-import { CourseModule } from '../courses';
+import { forwardRef, Module } from '@nestjs/common';
+import { CourseModule } from '../courses/course.module';
 import { UsersModule } from '../users/users.module';
 import { UserProfileModule } from '../users/user-profile.module';
 import { SocialModule } from '../social/social.module';
@@ -10,7 +10,12 @@ import { InMemorySearchRepository } from './in-memory-search.repository';
 import { SEARCH_REPOSITORY } from './search.constants';
 
 @Module({
-  imports: [CourseModule, UsersModule, UserProfileModule, SocialModule],
+  imports: [
+    forwardRef(() => CourseModule),
+    UsersModule,
+    UserProfileModule,
+    SocialModule,
+  ],
   controllers: [SearchController],
   providers: [
     SearchService,

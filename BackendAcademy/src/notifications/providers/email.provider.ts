@@ -230,7 +230,7 @@ export class EmailNotificationProvider implements INotificationProvider {
     text: string,
     context: DeliveryContext,
   ): string {
-    const fields: Record<string, string | undefined> = {
+    const fields: Record<string, any> = {
       name: context.name,
       email: context.email,
       ...(context.personalization || {}),

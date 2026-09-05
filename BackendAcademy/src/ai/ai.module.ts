@@ -21,6 +21,10 @@ import { OpenaiProvider } from './providers/openai.provider';
 export function validateAiConfig(configService: ConfigService): void {
   const provider = configService.get<string>('AI_PROVIDER') ?? 'mock';
 
+  if (!['openai', 'claude', 'mock'].includes(provider)) {
+    throw new Error(`Invalid AI_PROVIDER: ${provider}. Must be 'openai', 'claude', or 'mock'.`);
+  }
+
   if (provider === 'openai' || provider === 'claude') {
     const credentialsKey =
       provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';

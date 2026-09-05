@@ -54,10 +54,10 @@ export class AiService {
 
   constructor(
     @Optional() @Inject(AI_PROVIDER) private aiProvider?: AiProvider,
-    private configService?: ConfigService,
-    private readonly analyticsService?: AnalyticsService,
-    private readonly redisService?: RedisService,
-    private readonly monitoringService?: MonitoringService,
+    @Optional() private configService?: ConfigService,
+    @Optional() private readonly analyticsService?: AnalyticsService,
+    @Optional() private readonly redisService?: RedisService,
+    @Optional() private readonly monitoringService?: MonitoringService,
     @Optional() private readonly promptTemplateService?: PromptTemplateService,
     @Optional() private readonly securityService?: SecurityService,
   ) {

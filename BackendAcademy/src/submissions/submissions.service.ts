@@ -139,7 +139,7 @@ export class SubmissionsService {
     fileUrl?: string;
     fileSize?: number;
     fileType?: string;
-  }): string {
+  }): any {
     const { learnerId, taskId, content, fileUrl, fileSize, fileType } =
       payload;
 
@@ -174,6 +174,14 @@ export class SubmissionsService {
       'submissions',
     );
     return submission;
+  }
+
+  findAll(): any[] {
+    return this.submissions;
+  }
+
+  findOne(id: string): any {
+    return this.submissions.find((s) => s.id === id);
   }
 
   // ── Attachment validation — #365 ─────────────────────────────

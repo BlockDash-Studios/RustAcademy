@@ -1,7 +1,7 @@
 import { Controller, Get, Param, ValidationPipe, UsePipes } from '@nestjs/common';
 import { JobsService } from './jobs.service';
 
-@Controller('api/jobs')
+@Controller('jobs')
 export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
 

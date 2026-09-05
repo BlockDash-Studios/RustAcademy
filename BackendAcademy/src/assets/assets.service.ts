@@ -266,7 +266,7 @@ export class AssetsService implements OnModuleDestroy {
     this.assertSizeAllowed(params.size);
 
     // 2. Establish the real type from the bytes and screen the content.
-    const detectedMime = await this.detectMime(params.buffer);
+    const detectedMime = await this.detectMime(params.buffer, declaredMime);
     this.assertAllowedType(detectedMime, declaredMime);
     this.assertNotDangerous(params.buffer, detectedMime);
 
@@ -403,7 +403,7 @@ export class AssetsService implements OnModuleDestroy {
    * already enumerates every binary type this service accepts (PNG, JPEG,
    * GIF, WEBP, PDF) plus the dangerous families it must reject.
    */
-  private async detectMime(buffer: Buffer): Promise<string> {
+  private async detectMime(buffer: Buffer, declaredMime?: string): Promise<string> {
     // Explicit magic-byte table first — it is exact and dependency-free.
     const sig = this.matchSignature(buffer, SIGNATURE_TO_MIME);
     if (sig) return sig;
@@ -413,6 +413,10 @@ export class AssetsService implements OnModuleDestroy {
     const forbidden = this.matchForbidden(buffer);
     if (forbidden) {
       return `application/x-forbidden-${forbidden.label.replace(/[^a-z0-9]/gi, '-')}`;
+    }
+
+    if (declaredMime && declaredMime.startsWith('text/')) {
+      return declaredMime;
     }
 
     // No recognizable binary signature. Treat as opaque/denied unless the

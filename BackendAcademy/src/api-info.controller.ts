@@ -2,11 +2,11 @@ import { Controller, Get } from '@nestjs/common';
 
 import { LocalizationService } from './i18n/localization.service';
 
-@Controller('api')
+@Controller('info')
 export class ApiInfoController {
   constructor(private readonly l10n: LocalizationService) {}
 
-  Get()
+  @Get()
   getApiInfo() {
     return {
       success: true,
