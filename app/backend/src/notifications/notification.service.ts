@@ -28,11 +28,18 @@ import {
   AutoReconciliationSucceededEvent,
 } from "../events/notification.events";
 
-import type {
-  EscrowDepositedEvent,
-  EscrowWithdrawnEvent,
-  EscrowRefundedEvent,
-} from "../ingestion/types/contract-event.types";
+// Escrow contract events (the ingestion types module was removed).
+interface EscrowContractEvent {
+  pagingToken: string;
+  owner: string;
+  amount: bigint;
+  commitment: string;
+  token: string;
+  contractTimestamp: bigint;
+}
+export type EscrowDepositedEvent = EscrowContractEvent;
+export type EscrowWithdrawnEvent = EscrowContractEvent;
+export type EscrowRefundedEvent = EscrowContractEvent;
 
 import { JobQueueService } from "../job-queue/job-queue.service";
 import { JobType } from "../job-queue/types";

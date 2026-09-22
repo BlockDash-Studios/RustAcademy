@@ -1,5 +1,5 @@
-// Sentry instrumentation MUST be imported before everything else
-import "./sentry/instrument";
+// Load .env before any module reads process.env (validation runs at import time).
+import "dotenv/config";
 
 import "reflect-metadata";
 
@@ -24,7 +24,6 @@ import {
 import { GlobalHttpExceptionFilter } from "./common/filters/global-http-exception.filter";
 import { mapValidationErrors } from "./common/utils/validation-error.mapper";
 import { ErrorCode } from "./common/errors";
-import { SentryExceptionFilter, SentryService } from "./sentry";
 import { MetricsService } from "./metrics/metrics.service";
 import { CorrelationContextService } from "./common/correlation/correlation-context.service";
 import {
@@ -143,14 +142,8 @@ async function bootstrap() {
   const correlationContext = app.get(CorrelationContextService);
   app.useGlobalInterceptors(new LoggingInterceptor(correlationContext));
 
-  // Register Sentry exception filter FIRST so it captures errors,
-  // then the existing HTTP exception filter handles the response.
-  const sentryService = app.get(SentryService);
   const metricsService = app.get(MetricsService);
-  app.useGlobalFilters(
-    new SentryExceptionFilter(sentryService, configService),
-    new GlobalHttpExceptionFilter(configService, metricsService),
-  );
+  app.useGlobalFilters(new GlobalHttpExceptionFilter(configService, metricsService));
 
   // Swagger setup
   const swaggerConfig = new DocumentBuilder()

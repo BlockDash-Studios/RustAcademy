@@ -16,8 +16,6 @@ import { SupabaseModule } from "./supabase/supabase.module";
 import { UsernamesModule } from "./usernames/usernames.module";
 import { MetricsModule } from "./metrics/metrics.module";
 import { AnalyticsModule } from "./analytics/analytics.module";
-import { LinksModule } from "./links/links.module";
-import { ScamAlertsModule } from "./scam-alerts/scam-alerts.module";
 import { TransactionsModule } from "./transactions/transactions.module";
 import { PaymentsModule } from "./payments/payments.module";
 import { MetricsMiddleware } from "./metrics/metrics.middleware";
@@ -25,27 +23,14 @@ import { MetricsInterceptor } from "./metrics/metrics.interceptor";
 import { CorrelationIdMiddleware } from "./common/middleware/correlation-id.middleware";
 import { CorrelationContextModule } from "./common/correlation/correlation-context.module";
 import { OrganizationContextMiddleware } from "./common/middleware/organization-context.middleware";
-import { ShadowTrafficMiddleware } from "./environment-parity/shadow-traffic.middleware";
-import { IngestionModule } from "./ingestion/ingestion.module";
-import { IngestionBootstrapService } from "./ingestion/ingestion-bootstrap.service";
 import { ApiKeysModule } from "./api-keys/api-keys.module";
-import { MarketplaceModule } from "./marketplace/marketplace.module";
-import { SentryModule } from "./sentry";
-import { FiatRampsModule } from "./fiat-ramps/fiat-ramps.module";
-import { RefundsModule } from "./refunds/refunds.module";
-import { ExportsModule } from "./exports/exports.module";
 import { JobQueueModule } from "./job-queue/job-queue.module";
 import { AuditModule } from "./audit/audit.module";
-import { FeatureFlagsModule } from "./feature-flags/feature-flags.module";
-import { PrivacyModule } from "./privacy/privacy.module";
 import { ContractsModule } from "./contracts/contracts.module";
 import { SorobanToolingModule } from "./soroban-tooling/soroban-tooling.module";
 import { CustomThrottlerGuard } from "./auth/guards/custom-throttler.guard";
 import { OrganizationRoleGuard } from "./auth/guards/organization-role.guard";
 import { throttlerModuleProfiles } from "./config/rate-limit.config";
-import { EnvironmentParityModule } from "./environment-parity/environment-parity.module";
-import { IndexerLagModule } from "./indexer-lag";
-import { SupportBundleModule } from "./support-bundle/support-bundle.module";
 import { getDynamicModules } from "./module-factory";
 import { ChatModule } from "./chat/chat.module";
 
@@ -58,9 +43,8 @@ const validatedEnv = validateEnv(process.env);
 @Module({
   imports: [
     CorrelationContextModule,
-    SentryModule,
     AppConfigModule,
-    // ScheduleModule registered once here — shared by NotificationsModule and ReconciliationModule
+    // ScheduleModule registered once here — shared by NotificationsModule
     ScheduleModule.forRoot(),
     EventEmitterModule.forRoot({
       wildcard: true,
@@ -74,30 +58,17 @@ const validatedEnv = validateEnv(process.env);
     UsernamesModule,
     MetricsModule,
     AnalyticsModule,
-    LinksModule,
-    ScamAlertsModule,
     TransactionsModule,
     PaymentsModule,
-    IngestionModule,
     ApiKeysModule,
-    MarketplaceModule,
-    FiatRampsModule,
-    RefundsModule,
-    ExportsModule,
     JobQueueModule,
     AuditModule,
     ContractsModule,
-    FeatureFlagsModule,
-    PrivacyModule,
     SorobanToolingModule,
-    EnvironmentParityModule,
-    IndexerLagModule,
-    SupportBundleModule,
     ChatModule,
     ...getDynamicModules(validatedEnv),
   ],
   providers: [
-    ...(validatedEnv.INGESTION_ENABLED ? [IngestionBootstrapService] : []),
     {
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,
@@ -119,7 +90,6 @@ export class AppModule implements NestModule {
         MetricsMiddleware,
         CorrelationIdMiddleware,
         OrganizationContextMiddleware,
-        ShadowTrafficMiddleware,
       )
       .forRoutes("*");
   }

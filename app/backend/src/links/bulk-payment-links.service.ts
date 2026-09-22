@@ -1,6 +1,5 @@
 import { Injectable, Logger, BadRequestException } from "@nestjs/common";
 import { LinksService } from "./links.service";
-import { FeatureFlagsService } from "../feature-flags/feature-flags.service";
 import {
   BulkPaymentLinkItemDto,
   BulkPaymentLinkResponseItemDto,
@@ -16,7 +15,6 @@ export class BulkPaymentLinksService {
 
   constructor(
     private readonly linksService: LinksService,
-    private readonly featureFlagsService: FeatureFlagsService,
   ) {}
 
   /**
@@ -27,7 +25,6 @@ export class BulkPaymentLinksService {
   async generateBulkLinks(
     items: BulkPaymentLinkItemDto[],
   ): Promise<BulkPaymentLinkResponseDto> {
-    await this.featureFlagsService.assertActionEnabled("bulk_link_generation");
     const startTime = Date.now();
 
     // Validate batch size

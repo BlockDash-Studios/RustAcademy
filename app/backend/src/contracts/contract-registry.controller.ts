@@ -21,7 +21,6 @@ import {
   PublishContractRegistryDto,
   RollbackContractRegistryDto,
 } from './dto/contract-registry.dto';
-import { ContractWritePolicyService } from '../feature-flags/contract-write-policy.service';
 
 interface ApiKeyRequest extends Request {
   apiKey?: Request['apiKey'];
@@ -39,7 +38,6 @@ interface ApiKeyRequest extends Request {
 export class ContractRegistryController {
   constructor(
     private readonly contractRegistryService: ContractRegistryService,
-    private readonly contractWritePolicyService: ContractWritePolicyService,
   ) {}
 
   @Get('registry')
@@ -73,17 +71,6 @@ export class ContractRegistryController {
   })
   async publish(@Body() body: PublishContractRegistryDto, @Req() req: ApiKeyRequest) {
     const actorId = req.apiKey?.id;
-    
-    // Check contract write policy before allowing registry publish
-    await this.contractWritePolicyService.assertWritePermission({
-      userId: actorId,
-      operation: 'contract_registry.publish',
-      additionalContext: {
-        deploymentId: body.deploymentId,
-        contractCount: body.contracts.length,
-        contractNames: body.contracts.map(c => c.name),
-      },
-    });
 
     return this.contractRegistryService.publish(body, actorId ?? 'api');
   }
@@ -97,16 +84,6 @@ export class ContractRegistryController {
   })
   async rollback(@Body() body: RollbackContractRegistryDto, @Req() req: ApiKeyRequest) {
     const actorId = req.apiKey?.id;
-    
-    // Check contract write policy before allowing registry rollback
-    await this.contractWritePolicyService.assertWritePermission({
-      userId: actorId,
-      operation: 'contract_registry.rollback',
-      contractName: body.name,
-      additionalContext: {
-        targetVersion: body.version,
-      },
-    });
 
     return this.contractRegistryService.rollback(body, actorId ?? 'api');
   }

@@ -5,9 +5,7 @@ import { AppConfigService } from "../config/app-config.service";
 import { sanitizeErrorMessage } from "../common/utils/redaction.util";
 import { JobQueueService } from "../job-queue/job-queue.service";
 import { JobRepository } from "../job-queue/job.repository";
-import { CursorRepository } from "../ingestion/cursor.repository";
 import { SorobanRpcService } from "../transactions/soroban-rpc.service";
-import { StellarIngestionService } from "../ingestion/stellar-ingestion.service";
 
 @Injectable()
 export class HealthService {
@@ -21,9 +19,7 @@ export class HealthService {
     private readonly config: AppConfigService,
     private readonly jobQueueService: JobQueueService,
     private readonly jobRepository: JobRepository,
-    private readonly cursorRepository: CursorRepository,
     private readonly sorobanRpcService: SorobanRpcService,
-    private readonly stellarIngestionService: StellarIngestionService,
   ) {}
 
   /**
@@ -242,74 +238,6 @@ export class HealthService {
   }
 
   /**
-   * Checks ingestion/indexer lag by comparing cursor timestamp with current time.
-   */
-  async checkIngestionLag(): Promise<{
-    status: "up" | "down";
-    lagSeconds?: number;
-    details?: string;
-    lastSuccess?: string;
-  }> {
-    try {
-      // Get the most recent cursor for any contract stream
-      const streamId = "contract:*"; // Generic check for any contract
-      const cursor = await this.cursorRepository.getCursor(streamId);
-
-      if (!cursor) {
-        return {
-          status: "up",
-          lagSeconds: 0,
-          details: "No ingestion cursor found (service may not be active)",
-          lastSuccess: new Date().toISOString(),
-        };
-      }
-
-      // Calculate lag based on cursor update time
-      // For a more accurate check, we would need to track the last cursor update timestamp
-      // For now, we'll check if we can read cursors successfully
-      return {
-        status: "up",
-        lagSeconds: 0,
-        lastSuccess: new Date().toISOString(),
-      };
-    } catch (err) {
-      const safeMessage = sanitizeErrorMessage((err as Error).message);
-      this.logger.warn(`Ingestion lag check failed: ${safeMessage}`);
-      return {
-        status: "down",
-        details: safeMessage,
-      };
-    }
-  }
-
-  async checkStellarIngestion(): Promise<{
-    status: "up" | "down";
-    details?: string;
-  }> {
-    const { isRunning, contractId } = this.stellarIngestionService.getStatus();
-
-    if (!isRunning) {
-      return {
-        status: "down",
-        details: "Stellar ingestion service is not running",
-      };
-    }
-
-    if (!contractId) {
-      return {
-        status: "down",
-        details:
-          "Stellar ingestion service is not configured with a contract ID",
-      };
-    }
-
-    return {
-      status: "up",
-      details: `Stellar ingestion service is running for contract ${contractId}`,
-    };
-  }
-
-  /**
    * Checks if database migrations are applied by querying the schema_migrations table.
    * This is a Supabase/PostgreSQL specific check.
    */
@@ -384,8 +312,6 @@ export class HealthService {
       queue,
       horizon,
       sorobanRpc,
-      ingestion,
-      stellarIngestion,
     ] = await Promise.all([
       this.checkSupabase(),
       Promise.resolve(this.checkEnvironment()),
@@ -393,8 +319,6 @@ export class HealthService {
       this.checkQueue(),
       this.checkHorizon(),
       this.checkSorobanRpc(),
-      this.checkIngestionLag(),
-      this.checkStellarIngestion(),
     ]);
 
     // Critical dependencies: database, migrations, queue, horizon
@@ -403,7 +327,6 @@ export class HealthService {
       migrations,
       queue,
       horizon,
-      stellarIngestion,
     ];
     const ready = criticalChecks.every((check) => check.status === "up");
 
@@ -452,22 +375,6 @@ export class HealthService {
           lastSuccess: sorobanRpc.lastSuccess,
           error: sorobanRpc.status === "down" ? sorobanRpc.details : undefined,
         },
-        {
-          name: "ingestion",
-          status: ingestion.status,
-          lagSeconds: ingestion.lagSeconds,
-          lastSuccess: ingestion.lastSuccess,
-          error: ingestion.status === "down" ? ingestion.details : undefined,
-        },
-        {
-          name: "stellar_ingestion",
-          status: stellarIngestion.status,
-          details: stellarIngestion.details,
-          error:
-            stellarIngestion.status === "down"
-              ? stellarIngestion.details
-              : undefined,
-        },
       ],
     };
   }
@@ -478,10 +385,9 @@ export class HealthService {
    * Suitable for caching and public consumption.
    */
   async getPublicStatus() {
-    const [horizon, sorobanRpc, ingestion] = await Promise.all([
+    const [horizon, sorobanRpc] = await Promise.all([
       this.checkHorizon(),
       this.checkSorobanRpc(),
-      this.checkIngestionLag(),
     ]);
 
     // Determine overall status based on critical external dependencies
@@ -497,24 +403,9 @@ export class HealthService {
     // Get network info (safe to expose)
     const network = this.config.network || "unknown";
 
-    // Try to get last ledger from ingestion cursor (default to 0 if not available)
-    let lastLedger = 0;
-    try {
-      const cursor = await this.cursorRepository.getCursor("contract:*");
-      if (cursor) {
-        // Cursor format is typically "startLedger-endLedger" or just a ledger number
-        const parts = cursor.split("-");
-        lastLedger = parseInt(parts[parts.length - 1], 10) || 0;
-      }
-    } catch {
-      // Silently fail - not critical for public status
-      lastLedger = 0;
-    }
-
     return {
       status: overallStatus,
       network,
-      lastLedger,
       timestamp: new Date().toISOString(),
       version: this.version,
       components: [
@@ -526,10 +417,6 @@ export class HealthService {
         {
           name: "soroban_rpc",
           status: sorobanRpc.status === "up" ? "operational" : "down",
-        },
-        {
-          name: "ingestion",
-          status: ingestion.status === "up" ? "operational" : "degraded",
         },
       ],
     };
