@@ -3,6 +3,7 @@ import { ApiTags } from '@nestjs/swagger';
 
 @ApiTags('health')
 @Controller('health')
+//controller for health check endpoint
 export class HealthController {
   @Get()
   getHealth() {
