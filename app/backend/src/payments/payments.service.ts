@@ -1,28 +1,18 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  InternalServerErrorException,
-} from "@nestjs/common";
-import { InjectRepository } from "@nestjs/typeorm";
+import { Injectable, NotFoundException, ConflictException, InternalServerErrorException } from "@nestjs/common";
 import { PayoutRepository } from "./payout.repository";
 import { PayoutDto } from "./dto/payout.dto";
 import { Payout, PayoutStatus } from "./entities/payout.entity";
 
 @Injectable()
 export class PaymentsService {
-  constructor(
-    @InjectRepository(PayoutRepository)
-    private payoutRepository: PayoutRepository,
-  ) {}
+  constructor(private payoutRepository: PayoutRepository) {}
 
   async createPayout(payoutDto: PayoutDto): Promise<Payout> {
     // TODO: Add balance check
     // TODO: Add duplicate check
 
     try {
-      const payout = this.payoutRepository.create(payoutDto);
-      await this.payoutRepository.save(payout);
+      const payout = await this.payoutRepository.create(payoutDto);
       return payout;
     } catch (error) {
       throw new InternalServerErrorException("Error creating payout");
@@ -45,8 +35,8 @@ export class PaymentsService {
     // TODO: Implement payout release logic
 
     payout.status = PayoutStatus.Released;
-    await this.payoutRepository.save(payout);
+    const updated = await this.payoutRepository.save(payout);
 
-    return payout;
+    return updated;
   }
 }

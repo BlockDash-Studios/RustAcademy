@@ -19,9 +19,6 @@ import {
 import { HorizonService } from "./horizon.service";
 
 import { ApiKeyGuard } from "../auth/guards/api-key.guard";
-import { TESTNET_CONTRACT_WRITES_FLAG } from "../feature-flags/contract-write-kill-switch.constants";
-import { NetworkSafetyGuard } from "../feature-flags/network-safety.guard";
-import { RequiresFlag } from "../feature-flags/requires-flag.decorator";
 import { ComposeTransactionDto } from "./dto/compose-transaction.dto";
 import { TransactionsService } from "./transaction.service";
 
@@ -79,8 +76,6 @@ export class TransactionsController {
   }
   @Post("compose")
   @HttpCode(HttpStatus.OK)
-  @UseGuards(NetworkSafetyGuard)
-  @RequiresFlag(TESTNET_CONTRACT_WRITES_FLAG)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   async compose(@Body() dto: ComposeTransactionDto) {
     return this.transactionService.composeTransaction(dto);
@@ -88,8 +83,6 @@ export class TransactionsController {
 
   @Post("build")
   @HttpCode(HttpStatus.OK)
-  @UseGuards(NetworkSafetyGuard)
-  @RequiresFlag(TESTNET_CONTRACT_WRITES_FLAG)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
     summary: "Build unsigned Soroban transaction XDR with simulation summary",

@@ -3,12 +3,6 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 import { AppConfigService } from "../config";
 import {
-  EscrowDbStatus,
-  EscrowRecord,
-  PaymentDbStatus,
-  PaymentRecord,
-} from "../reconciliation/types/reconciliation.types";
-import {
   SupabaseAuthError,
   SupabaseError,
   SupabaseNetworkError,
@@ -16,6 +10,49 @@ import {
   SupabaseTimeoutError,
   SupabaseUniqueConstraintError,
 } from "./supabase.errors";
+
+// Payment/escrow DB row statuses (the reconciliation types module was removed).
+export enum PaymentDbStatus {
+  Pending = "pending",
+  Paid = "paid",
+  Failed = "failed",
+  Refunded = "refunded",
+}
+
+export enum EscrowDbStatus {
+  Pending = "pending",
+  Active = "active",
+  Claimed = "claimed",
+  Withdrawn = "withdrawn",
+  Refunded = "refunded",
+  Irreconcilable = "irreconcilable",
+}
+
+export interface EscrowRecord {
+  id: string;
+  status: EscrowDbStatus | string;
+  commitment?: string;
+  owner?: string;
+  amount?: string;
+  token?: string;
+  reconciliation_note?: string | null;
+  updated_at?: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+export interface PaymentRecord {
+  id: string;
+  status: PaymentDbStatus | string;
+  commitment?: string;
+  sender_public_key?: string;
+  receiver_public_key?: string;
+  amount_usd?: number;
+  reconciliation_note?: string | null;
+  updated_at?: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
 
 export interface SearchProfileResult {
   id: string;
