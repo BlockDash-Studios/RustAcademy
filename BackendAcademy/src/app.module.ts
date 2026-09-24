@@ -5,6 +5,8 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthController } from './health/health.controller';
+import { GamificationModule } from './gamification/gamification.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -16,6 +18,8 @@ import { HealthController } from './health/health.controller';
         limit: Number(process.env.THROTTLE_LIMIT ?? 100),
       },
     ]),
+    GamificationModule,
+    ChatModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
