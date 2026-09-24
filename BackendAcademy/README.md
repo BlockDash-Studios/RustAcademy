@@ -22,9 +22,21 @@ pnpm install
 pnpm --filter @rustacademy/backend-academy dev
 ```
 
+With Postgres available at `DATABASE_URL`, initialize the local schema with:
+
+```bash
+pnpm --filter @rustacademy/backend-academy db:migrate
+pnpm --filter @rustacademy/backend-academy db:seed
+```
+
+Use `pnpm --filter @rustacademy/backend-academy db:reset` to drop and recreate the local tables.
+
 ## Scripts
 
 - `pnpm dev` — start in watch mode
 - `pnpm build` — production build
 - `pnpm test` — run unit tests
 - `pnpm test:e2e` — run e2e tests
+- `pnpm db:migrate` — apply database migrations
+- `pnpm db:seed` — apply idempotent seed data
+- `pnpm db:reset` — reset and migrate the local database
