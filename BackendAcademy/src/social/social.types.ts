@@ -103,3 +103,69 @@ export interface ChallengePayout {
   votes: number;
   queuedAt: string;
 }
+
+/** Content kinds a moderation report can target (BE-093). */
+export type ModerationTargetKind = 'post' | 'comment';
+
+/** Moderation state of a piece of content (BE-093). */
+export type ModerationState = 'visible' | 'hidden' | 'removed';
+
+/** A flag raised against a post or comment (BE-093). */
+export interface ContentReport {
+  reportId: string;
+  targetKind: ModerationTargetKind;
+  targetId: string;
+  reporterId: string;
+  reason: 'spam' | 'abuse' | 'harassment' | 'other';
+  details: string;
+  status: 'open' | 'resolved';
+  createdAt: string;
+}
+
+/**
+ * One entry in the moderation audit trail (BE-093).
+ *
+ * The trail is append-only: entries are never edited or deleted, so it can
+ * still answer "who hid this, when, and on whose decision" after the report
+ * that caused it has been resolved.
+ */
+export interface ModerationAuditEntry {
+  auditId: string;
+  targetKind: ModerationTargetKind;
+  targetId: string;
+  action: 'reported' | 'hidden' | 'restored' | 'removed';
+  /** Who caused the entry: the reporter, or the resolver that decided. */
+  actorId: string;
+  at: string;
+  /** Report this entry belongs to, when it came from one. */
+  reportId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** What a resolver decided about reported content (BE-093). */
+export type ModerationVerdictOutcome = 'restore' | 'remove';
+
+/** A decision on a reported item (BE-093). */
+export interface ModerationVerdict {
+  reportId: string;
+  outcome: ModerationVerdictOutcome;
+  /** Governance signer or moderator id that decided. */
+  decidedBy: string;
+  decidedAt?: string;
+}
+
+/**
+ * A source that can decide reported content (BE-093).
+ *
+ * BE-093 ships the hook surface instead of a governance client so the two can
+ * be developed independently: the future on-chain `governance` voting module
+ * registers a hook and `ContentModerationService.adjudicate` asks each hook in
+ * turn until one answers. A hook that abstains returns `undefined`, which
+ * leaves the content hidden and the report queued.
+ */
+export interface ContentVerdictHook {
+  /** Stable name, stored on the audit entry the verdict produces. */
+  name: string;
+  resolve(report: ContentReport): ModerationVerdict | undefined;
+}
+
