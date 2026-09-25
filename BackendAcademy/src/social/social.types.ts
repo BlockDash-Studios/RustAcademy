@@ -33,3 +33,23 @@ export interface RankedFeedItem extends FeedItem {
   /** True when the author is no longer followed but the item predates unfollow. */
   historical: boolean;
 }
+
+/**
+ * A project showcase post (BE-089).
+ *
+ * Carries the three external references a showcase is defined by, and is stored
+ * with `kind: 'showcase'` so feed rendering can flag it.
+ */
+export interface ShowcasePost {
+  itemId: string;
+  authorId: string;
+  kind: 'showcase';
+  title: string;
+  /** Absolute https URL of the source repository. */
+  repoUrl: string;
+  /** Absolute https URL of the live demo. */
+  demoUrl: string;
+  /** Soroban contract id (`C…` strkey), checksum-validated on create. */
+  contractId: string;
+  createdAt: string;
+}
