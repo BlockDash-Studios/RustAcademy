@@ -7,6 +7,7 @@ import { AppService } from './app.service';
 import { HealthController } from './health/health.controller';
 import { GamificationModule } from './gamification/gamification.module';
 import { ChatModule } from './chat/chat.module';
+import { SocialModule } from './social/social.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ChatModule } from './chat/chat.module';
     ]),
     GamificationModule,
     ChatModule,
+    SocialModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
