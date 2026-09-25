@@ -69,3 +69,37 @@ export interface TrendingHashtag {
   /** Raw occurrence count, undecayed, for display alongside the score. */
   postCount: number;
 }
+
+/** Weekly challenge lifecycle states (BE-091). */
+export type ChallengeState = 'open' | 'voting' | 'closed';
+
+export interface Challenge {
+  challengeId: string;
+  title: string;
+  /** Bonus pot in stroops (1 XLM = 10_000_000 stroops), the indivisible unit. */
+  potStroops: bigint;
+  state: ChallengeState;
+  createdAt: string;
+}
+
+export interface ChallengeSubmission {
+  challengeId: string;
+  submissionId: string;
+  userId: string;
+  submittedAt: string;
+}
+
+/**
+ * A payout request produced when a challenge closes (BE-091).
+ *
+ * This service does not move funds - BE-053 owns payment and drains the queue.
+ */
+export interface ChallengePayout {
+  challengeId: string;
+  winningSubmissionIds: string[];
+  /** submissionId → stroops awarded. Sums to exactly the pot. */
+  awards: Record<string, bigint>;
+  /** Vote count the winners tied on; 0 when nobody voted. */
+  votes: number;
+  queuedAt: string;
+}
