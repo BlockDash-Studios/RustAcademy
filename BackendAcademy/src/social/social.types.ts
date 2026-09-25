@@ -53,3 +53,19 @@ export interface ShowcasePost {
   contractId: string;
   createdAt: string;
 }
+
+/** One indexed appearance of a hashtag in a post (BE-090). */
+export interface HashtagOccurrence {
+  tag: string;
+  postId: string;
+  occurredAt: string;
+}
+
+/** A hashtag with its time-decayed trend score (BE-090). */
+export interface TrendingHashtag {
+  tag: string;
+  /** Sum of `0.5 ** (ageHours / halfLife)` over every occurrence. */
+  score: number;
+  /** Raw occurrence count, undecayed, for display alongside the score. */
+  postCount: number;
+}

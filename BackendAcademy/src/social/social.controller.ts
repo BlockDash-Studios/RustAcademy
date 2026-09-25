@@ -1,7 +1,19 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { CreateShowcaseDto } from './dto/create-showcase.dto';
 import { FollowDto } from './dto/follow.dto';
+import { IndexPostDto } from './dto/index-post.dto';
 import { FollowService } from './follow.service';
+import { HashtagService } from './hashtag.service';
 import { ShowcaseService } from './showcase.service';
 
 /** REST surface for the social feed (backlog area H). */
@@ -10,6 +22,7 @@ export class SocialController {
   constructor(
     private readonly followService: FollowService,
     private readonly showcaseService: ShowcaseService,
+    private readonly hashtagService: HashtagService,
   ) {}
 
   // ── Follow graph (BE-088) ───────────────────────────────────────────────
@@ -55,5 +68,22 @@ export class SocialController {
   @Get('users/:userId/showcases')
   listShowcases(@Param('userId') userId: string) {
     return { userId, showcases: this.showcaseService.listByAuthor(userId) };
+  }
+
+  // ── Hashtags and trending (BE-090) ──────────────────────────────────────
+
+  @Post('hashtags/index')
+  indexPost(@Body() dto: IndexPostDto) {
+    return { postId: dto.postId, tags: this.hashtagService.indexPost(dto.postId, dto.text) };
+  }
+
+  @Get('hashtags/trending')
+  getTrending(@Query('limit', new ParseIntPipe({ optional: true })) limit?: number) {
+    return { trending: this.hashtagService.getTrending(limit ?? 5) };
+  }
+
+  @Get('hashtags/:tag/posts')
+  getTaggedPosts(@Param('tag') tag: string) {
+    return { tag, postIds: this.hashtagService.getPosts(tag) };
   }
 }
