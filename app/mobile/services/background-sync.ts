@@ -7,9 +7,14 @@ import { fetchTransactions } from "./transactions";
 import { getWalletSession } from "./wallet-session";
 import type { TransactionItem } from "../types/transaction";
 
+// How often background sync should run, when triggered by the OS's own
+// background-task scheduler rather than an explicit foreground/manual sync.
 export type SyncFrequency = "battery-saver" | "balanced" | "frequent";
+// What triggered a given sync attempt, used for logging/branching logic
+// (e.g. background syncs respect the "enabled" setting; others don't).
 export type SyncReason = "app-launch" | "foreground" | "manual" | "background";
 
+// User-configurable sync preferences, persisted to AsyncStorage.
 export interface BackgroundSyncSettings {
   enabled: boolean;
   badgeEnabled: boolean;
@@ -17,6 +22,8 @@ export interface BackgroundSyncSettings {
   frequency: SyncFrequency;
 }
 
+// Locally cached view of the wallet's notifications/activity, plus sync
+// bookkeeping timestamps. This is what the app reads/renders between syncs.
 export interface SyncSnapshot {
   currentAccountId: string | null;
   notifications: PaymentNotification[];
@@ -26,6 +33,9 @@ export interface SyncSnapshot {
   initialSyncCompleted: boolean;
 }
 
+// Outcome of a single sync attempt: whether it actually fetched new data,
+// was skipped (and why), or failed, always returning the resulting
+// snapshot (updated snapshot on success, otherwise the prior one).
 export interface SyncExecutionResult {
   status: "updated" | "skipped" | "failed";
   reason: SyncReason;
@@ -40,12 +50,20 @@ export interface SyncExecutionResult {
   snapshot: SyncSnapshot;
 }
 
+// AsyncStorage keys for persisted settings/snapshot data, and the name
+// registered with the OS background task scheduler.
+// Note: these keys have a leading space (" RustAcademy...") baked in —
+// likely unintentional, but changing it would invalidate/duplicate any
+// already-persisted data for existing users, so it's left as-is here.
 const SYNC_SETTINGS_KEY = " RustAcademy.background-sync.settings.v1";
 const SYNC_SNAPSHOT_KEY = " RustAcademy.background-sync.snapshot.v1";
 const SYNC_TASK_NAME = " RustAcademy.background-sync.task";
+// Caps on how much history is retained locally, to keep storage and
+// merge/sort work bounded.
 const MAX_NOTIFICATIONS = 50;
 const MAX_ACTIVITY_ITEMS = 25;
 
+// Background-task scheduling interval (in minutes) for each frequency tier.
 export const SYNC_INTERVALS_MINUTES: Record<SyncFrequency, number> = {
   "battery-saver": 60,
   balanced: 30,
@@ -68,8 +86,13 @@ export const DEFAULT_SYNC_SNAPSHOT: SyncSnapshot = {
   initialSyncCompleted: false,
 };
 
+// Tracks whether the background task has already been defined via
+// TaskManager in this process, since defineTask should only run once.
 let backgroundTaskDefined = false;
 
+// Requires a module by name, swallowing the error if it isn't installed/
+// available (e.g. optional native modules like expo-background-task that
+// may not be present in every build, such as Expo Go or web).
 function safeRequire(moduleName: string): any | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
@@ -91,10 +114,15 @@ function getNotificationsModule() {
   return safeRequire("expo-notifications");
 }
 
+// Derives a stable notification id for a transaction: prefers the
+// transaction hash, falling back to the paging token if unavailable.
 function notificationIdForTransaction(item: TransactionItem) {
   return item.txHash || item.pagingToken;
 }
 
+// Converts a raw transaction into a PaymentNotification, determining
+// direction (incoming/outgoing) and counterparty relative to the
+// current account, and marking read/unread per the `read` argument.
 function toNotification(
   item: TransactionItem,
   accountId: string,
@@ -117,12 +145,14 @@ function toNotification(
   };
 }
 
+// Sorts notifications newest-first and truncates to MAX_NOTIFICATIONS.
 function sortNotifications(items: PaymentNotification[]) {
   return [...items]
     .sort((left, right) => right.receivedAt - left.receivedAt)
     .slice(0, MAX_NOTIFICATIONS);
 }
 
+// Sorts activity items newest-first and truncates to MAX_ACTIVITY_ITEMS.
 function sortActivity(items: TransactionItem[]) {
   return [...items]
     .sort(
@@ -131,6 +161,16 @@ function sortActivity(items: TransactionItem[]) {
     .slice(0, MAX_ACTIVITY_ITEMS);
 }
 
+// Merges freshly fetched transactions into the existing snapshot:
+//  - Updates/adds activity entries (keyed by paging token, so re-fetched
+//    items overwrite their older copies rather than duplicating).
+//  - Adds a notification for any transaction that doesn't already have
+//    one (keyed by notificationIdForTransaction), so existing
+//    notifications' read state is preserved rather than being reset.
+//  - On the very first sync (initialSyncCompleted is false), new
+//    notifications are seeded as already-read, so the user isn't
+//    suddenly shown a wall of unread history from before they installed
+//    the app; only notifications from *subsequent* syncs start unread.
 export function mergeSyncSnapshot(
   previous: SyncSnapshot,
   latestItems: TransactionItem[],
@@ -168,6 +208,9 @@ export function mergeSyncSnapshot(
   };
 }
 
+// Loads persisted sync settings, validating each field's type/shape and
+// falling back to defaults for anything missing or malformed (including
+// if the stored JSON itself is corrupt/unparsable).
 export async function getBackgroundSyncSettings(): Promise<BackgroundSyncSettings> {
   try {
     const raw = await AsyncStorage.getItem(SYNC_SETTINGS_KEY);
@@ -203,6 +246,9 @@ export async function saveBackgroundSyncSettings(
   await AsyncStorage.setItem(SYNC_SETTINGS_KEY, JSON.stringify(settings));
 }
 
+// Loads the persisted sync snapshot, validating each field similarly to
+// getBackgroundSyncSettings and falling back to DEFAULT_SYNC_SNAPSHOT
+// (or per-field defaults) if anything is missing/malformed.
 export async function getSyncSnapshot(): Promise<SyncSnapshot> {
   try {
     const raw = await AsyncStorage.getItem(SYNC_SNAPSHOT_KEY);
@@ -234,6 +280,9 @@ export async function saveSyncSnapshot(snapshot: SyncSnapshot): Promise<void> {
   await AsyncStorage.setItem(SYNC_SNAPSHOT_KEY, JSON.stringify(snapshot));
 }
 
+// Read-modify-write helper: loads the current snapshot, applies `updater`
+// to produce the next snapshot, persists it, and returns it — so callers
+// don't have to manually load/save around every snapshot mutation.
 export async function updateStoredSyncSnapshot(
   updater: (snapshot: SyncSnapshot) => SyncSnapshot,
 ): Promise<SyncSnapshot> {
@@ -243,10 +292,17 @@ export async function updateStoredSyncSnapshot(
   return next;
 }
 
+// Counts how many notifications in the snapshot are unread, used to
+// drive the app icon badge count.
 export function getUnreadNotificationCount(snapshot: SyncSnapshot) {
   return snapshot.notifications.filter((item) => !item.read).length;
 }
 
+// Sets the OS app icon badge to `count` (or clears it to 0 if badges are
+// disabled). Optionally prompts for notification permissions first (only
+// meant to be done from a foreground context, not silently in the
+// background). Returns false if the notifications module/API isn't
+// available, or if setting the badge count fails for any reason.
 export async function syncAppBadgeCount(
   count: number,
   enabled: boolean,
@@ -281,15 +337,32 @@ export async function syncAppBadgeCount(
   }
 }
 
+// Converts the configured sync frequency into a millisecond interval,
+// for use when scheduling/deciding foreground sync timing.
 export function getForegroundSyncIntervalMs(settings: BackgroundSyncSettings) {
   return SYNC_INTERVALS_MINUTES[settings.frequency] * 60 * 1000;
 }
 
+// Decides whether a foreground sync should run right now: always syncs
+// if there's no record of a prior successful sync, otherwise only syncs
+// if more than 2 minutes have passed since the last successful one (to
+// avoid hammering the API every time the app is foregrounded quickly in
+// succession).
 export function shouldSyncOnAppForeground(snapshot: SyncSnapshot) {
   if (!snapshot.lastSuccessfulSyncAt) return true;
   return Date.now() - snapshot.lastSuccessfulSyncAt > 2 * 60 * 1000;
 }
 
+// Core sync routine, used by both foreground/manual syncs and the OS
+// background task. Loads settings/snapshot/wallet session in parallel,
+// then bails out early (with a "skipped" result and a reason) if:
+//   - this is a background sync and syncing is disabled in settings,
+//   - there's no active wallet session to sync for,
+//   - the device is offline, or
+//   - Wi-Fi-only is enabled but the device isn't on Wi-Fi.
+// Otherwise fetches recent transactions, merges them into the snapshot,
+// persists it, updates the app badge count, and returns an "updated"
+// result — or a "failed" result if the fetch/merge step throws.
 export async function performBackgroundSync(
   reason: SyncReason,
 ): Promise<SyncExecutionResult> {
@@ -328,6 +401,8 @@ export async function performBackgroundSync(
     );
 
     await saveSyncSnapshot(nextSnapshot);
+    // Only prompt for notification permissions when triggered from an
+    // active foreground context (never during a silent background sync).
     await syncAppBadgeCount(
       getUnreadNotificationCount(nextSnapshot),
       settings.badgeEnabled,
@@ -353,6 +428,12 @@ export async function performBackgroundSync(
   }
 }
 
+// Registers the named background task with TaskManager exactly once per
+// process. The task body simply runs performBackgroundSync("background")
+// and reports success/failure back to the OS scheduler. No-ops (without
+// error) if the required native modules aren't available, so this is
+// safe to call in environments where background tasks aren't supported
+// (e.g. Expo Go, web).
 function ensureBackgroundTaskDefined() {
   if (backgroundTaskDefined) return;
 
@@ -376,6 +457,13 @@ function ensureBackgroundTaskDefined() {
   backgroundTaskDefined = true;
 }
 
+// Applies the user's current settings to the OS background task
+// scheduler: unregisters any existing registration, then re-registers
+// with the appropriate interval if syncing is enabled (or leaves it
+// unregistered if disabled). Returns whether background tasks are
+// available on this platform/build, and whether the task ended up
+// registered. Always returns { available: false, registered: false } on
+// web, since background tasks aren't supported there.
 export async function configureBackgroundSyncTask(
   settings: BackgroundSyncSettings,
 ): Promise<{ available: boolean; registered: boolean }> {
@@ -396,6 +484,9 @@ export async function configureBackgroundSyncTask(
 
   ensureBackgroundTaskDefined();
 
+  // Always start from a clean slate: unregister any existing
+  // registration before deciding whether to re-register below (e.g. so
+  // a changed interval actually takes effect).
   const registered = await TaskManager.isTaskRegisteredAsync(SYNC_TASK_NAME);
   if (registered) {
     await BackgroundTask.unregisterTaskAsync(SYNC_TASK_NAME).catch(() => {});

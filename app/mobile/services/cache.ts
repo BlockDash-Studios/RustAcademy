@@ -1,11 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { TransactionItem, TransactionResponse } from '../types/transaction';
 
+// Key prefixes used to namespace cached entries in AsyncStorage by kind
+// (transactions vs. profile data), each further suffixed with an account id.
 const TRANSACTIONS_CACHE_KEY_PREFIX = '@qex_tx_cache_';
 const PROFILE_CACHE_KEY_PREFIX = '@qex_profile_cache_';
 
 /**
  * Saves transactions for a specific account to the local cache.
+ * Wraps the data with a timestamp so it can later be checked for
+ * staleness (see invalidateOldCache). Failures are logged but not
+ * thrown, since caching is a best-effort optimization rather than a
+ * critical path.
  */
 export async function saveTransactionsToCache(accountId: string, data: TransactionResponse): Promise<void> {
     try {
@@ -37,16 +43,18 @@ export async function getTransactionsFromCache(accountId: string): Promise<Trans
 }
 
 /**
- * Simple cache invalidation: clears data older than 7 days.
- */
-/**
  * Searches all cached transaction responses for a specific transaction by pagingToken.
  * Returns the matching TransactionItem or null if not found.
+ * Useful when looking up a single transaction's details without knowing
+ * in advance which account's cache it belongs to (e.g. from a
+ * notification or deep link).
  */
 export async function findTransactionInCache(
     pagingToken: string,
 ): Promise<TransactionItem | null> {
     try {
+        // Scan every cached transactions entry across all accounts, since
+        // the caller only has a pagingToken and not an account id.
         const keys = await AsyncStorage.getAllKeys();
         const cacheKeys = keys.filter((k) =>
             k.startsWith(TRANSACTIONS_CACHE_KEY_PREFIX),
@@ -62,6 +70,8 @@ export async function findTransactionInCache(
             const match = entry.data.items.find(
                 (item) => item.pagingToken === pagingToken,
             );
+            // Return as soon as a match is found, rather than scanning
+            // every remaining cached account's data unnecessarily.
             if (match) return match;
         }
         return null;
@@ -71,6 +81,13 @@ export async function findTransactionInCache(
     }
 }
 
+/**
+ * Simple cache invalidation: clears data older than 7 days.
+ * Sweeps both transaction and profile cache entries (across all
+ * accounts) and removes any whose stored timestamp is older than the
+ * 7-day threshold, to keep AsyncStorage from accumulating stale data
+ * indefinitely.
+ */
 export async function invalidateOldCache(): Promise<void> {
     try {
         const keys = await AsyncStorage.getAllKeys();
