@@ -8,6 +8,7 @@ import { HealthController } from './health/health.controller';
 import { GamificationModule } from './gamification/gamification.module';
 import { ChatModule } from './chat/chat.module';
 import { SocialModule } from './social/social.module';
+import { ProgressModule } from './progress/progress.module';
 import { CoursesModule } from './courses/courses.module';
 
 @Module({
@@ -23,6 +24,7 @@ import { CoursesModule } from './courses/courses.module';
     GamificationModule,
     ChatModule,
     SocialModule,
+    ProgressModule,
     CoursesModule,
   ],
   controllers: [AppController, HealthController],

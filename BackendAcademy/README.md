@@ -9,6 +9,7 @@ NestJS backend API for RustAcademy — the decentralized, AI-powered Rust progra
 - `courses` — Learning academy courses and lessons
 - `tasks` — Coding tasks and submissions
 - `rewards` — XLM learn-to-earn rewards
+- `progress` — Per-learner lesson/task progress, XP per course, certificate eligibility
 - `ai-mentor` — Claude-powered AI mentor
 - `social` — Community feed
 - `chat` — Real-time messaging
