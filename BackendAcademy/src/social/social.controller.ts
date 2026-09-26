@@ -8,7 +8,10 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  Req,
+  Res,
 } from '@nestjs/common';
+import { Request, Response } from 'express';
 import { ChallengeService } from './challenge.service';
 import {
   CreateChallengeDto,
@@ -21,6 +24,7 @@ import { IndexPostDto } from './dto/index-post.dto';
 import { FollowService } from './follow.service';
 import { HashtagService } from './hashtag.service';
 import { ShowcaseService } from './showcase.service';
+import { SubmissionProtectionService, SubmissionRateLimitException } from './submission-protection.service';
 
 /** REST surface for the social feed (backlog area H). */
 @Controller('social')
@@ -30,6 +34,7 @@ export class SocialController {
     private readonly showcaseService: ShowcaseService,
     private readonly hashtagService: HashtagService,
     private readonly challengeService: ChallengeService,
+    private readonly submissionProtection: SubmissionProtectionService,
   ) {}
 
   // ── Follow graph (BE-088) ───────────────────────────────────────────────
@@ -111,8 +116,20 @@ export class SocialController {
   submitToChallenge(
     @Param('challengeId') challengeId: string,
     @Body() dto: SubmitChallengeDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
   ) {
-    return this.challengeService.submit(challengeId, dto);
+    return this.submissionProtection.protect({
+      ...dto,
+      challengeId,
+      clientIp: request.ip ?? 'unknown',
+      action: () => this.challengeService.submit(challengeId, dto),
+    }).catch((error: unknown) => {
+      if (error instanceof SubmissionRateLimitException) {
+        response.setHeader('Retry-After', String(error.retryAfterSeconds));
+      }
+      throw error;
+    });
   }
 
   @Post('challenges/:challengeId/voting')

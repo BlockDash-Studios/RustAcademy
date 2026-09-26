@@ -8,6 +8,8 @@ import { HealthController } from './health/health.controller';
 import { GamificationModule } from './gamification/gamification.module';
 import { ChatModule } from './chat/chat.module';
 import { SocialModule } from './social/social.module';
+import { StellarModule } from './stellar/stellar.module';
+import { SandboxModule } from './sandbox/sandbox.module';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { SocialModule } from './social/social.module';
     GamificationModule,
     ChatModule,
     SocialModule,
+    StellarModule,
+    SandboxModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
