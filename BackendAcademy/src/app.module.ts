@@ -9,6 +9,7 @@ import { GamificationModule } from './gamification/gamification.module';
 import { ChatModule } from './chat/chat.module';
 import { SocialModule } from './social/social.module';
 import { ProgressModule } from './progress/progress.module';
+import { CoursesModule } from './courses/courses.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { ProgressModule } from './progress/progress.module';
     ChatModule,
     SocialModule,
     ProgressModule,
+    CoursesModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
