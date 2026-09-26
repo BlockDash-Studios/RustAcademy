@@ -6,6 +6,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthController } from './health/health.controller';
 import { GamificationModule } from './gamification/gamification.module';
+import { GradingModule } from './grading/grading.module';
 import { ChatModule } from './chat/chat.module';
 import { SocialModule } from './social/social.module';
 import { ProgressModule } from './progress/progress.module';
@@ -22,6 +23,7 @@ import { CoursesModule } from './courses/courses.module';
       },
     ]),
     GamificationModule,
+    GradingModule,
     ChatModule,
     SocialModule,
     ProgressModule,
