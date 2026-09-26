@@ -9,6 +9,8 @@ import { GamificationModule } from './gamification/gamification.module';
 import { GradingModule } from './grading/grading.module';
 import { ChatModule } from './chat/chat.module';
 import { SocialModule } from './social/social.module';
+import { StellarModule } from './stellar/stellar.module';
+import { SandboxModule } from './sandbox/sandbox.module';
 import { ProgressModule } from './progress/progress.module';
 import { CoursesModule } from './courses/courses.module';
 
@@ -26,6 +28,8 @@ import { CoursesModule } from './courses/courses.module';
     GradingModule,
     ChatModule,
     SocialModule,
+    StellarModule,
+    SandboxModule,
     ProgressModule,
     CoursesModule,
   ],
