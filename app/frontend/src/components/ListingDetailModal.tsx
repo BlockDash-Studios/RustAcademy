@@ -3,13 +3,17 @@
 import { MarketplaceListing, formatCountdown } from "@/hooks/marketplaceApi";
 
 type ListingDetailModalProps = {
+  // The listing being shown; null means "closed" (component renders nothing).
   listing: MarketplaceListing | null;
+  // Whether this listing is currently on the viewer's watchlist.
   isWatched: boolean;
   onClose: () => void;
   onToggleWatchlist: (listing: MarketplaceListing) => void;
   onPlaceBid: (listing: MarketplaceListing) => void;
 };
 
+// Descriptive blurb shown per listing category, appended to the listing's
+// title/summary text.
 const CATEGORY_COPY: Record<MarketplaceListing["category"], string> = {
   brand: "Brand-ready handles with business-friendly naming.",
   crypto: "Crypto-native names that map well to wallets and trading profiles.",
@@ -18,6 +22,10 @@ const CATEGORY_COPY: Record<MarketplaceListing["category"], string> = {
   trending: "Popular names with the strongest current bidding velocity.",
 };
 
+// Modal showing full detail for a single marketplace listing: bid info,
+// auction countdown, stats, bidding rules, and actions (watchlist toggle,
+// place bid). Renders nothing when no listing is provided, so parents can
+// keep it mounted and simply pass `listing={null}` to hide it.
 export function ListingDetailModal({
   listing,
   isWatched,
@@ -29,14 +37,17 @@ export function ListingDetailModal({
     return null;
   }
 
+  // The smallest bid that would count as a valid next bid.
   const minimumBid = listing.currentBid + 1;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop closes the modal on click */}
       <div className="absolute inset-0 bg-black/75 backdrop-blur-md" onClick={onClose} />
 
       <div className="relative z-10 w-full max-w-4xl overflow-hidden rounded-[32px] border border-white/10 bg-neutral-950/90 shadow-2xl">
         <div className="grid gap-0 lg:grid-cols-[1.1fr_0.9fr]">
+          {/* Main column: title, bid/countdown stats, listing stats, and bidding rules */}
           <section className="border-b border-white/10 p-8 lg:border-b-0 lg:border-r">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -57,6 +68,7 @@ export function ListingDetailModal({
               </button>
             </div>
 
+            {/* Current bid + minimum next bid, and the live auction countdown */}
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
               <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
                 <p className="text-[10px] font-black uppercase tracking-[0.25em] text-neutral-500">
@@ -80,6 +92,8 @@ export function ListingDetailModal({
               </div>
             </div>
 
+            {/* Secondary stats: watcher count, bid count, and seller address,
+                rendered from a small inline array to avoid repeating markup */}
             <div className="mt-6 grid gap-4 md:grid-cols-3">
               {[
                 { label: "Watchers", value: listing.watchers.toLocaleString() },
@@ -95,6 +109,7 @@ export function ListingDetailModal({
               ))}
             </div>
 
+            {/* Static bidding rules/disclaimer text */}
             <div className="mt-8 rounded-[28px] border border-indigo-400/20 bg-indigo-500/10 p-5">
               <p className="text-xs font-black uppercase tracking-[0.25em] text-indigo-200">
                 Bidding Rules
@@ -108,18 +123,22 @@ export function ListingDetailModal({
             </div>
           </section>
 
+          {/* Sidebar: live activity snapshot plus watchlist/bid actions */}
           <aside className="p-8">
             <div className="rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
               <p className="text-xs font-black uppercase tracking-[0.25em] text-neutral-500">
                 Live Activity Snapshot
               </p>
               <div className="mt-5 space-y-4">
+                {/* Static reassurance that data on this card stays live */}
                 <div className="rounded-2xl border border-emerald-400/15 bg-emerald-500/10 p-4">
                   <p className="text-sm font-semibold text-white">Real-time updates connected</p>
                   <p className="mt-1 text-xs leading-5 text-emerald-50/80">
                     Bid counts and current price refresh automatically whenever listing activity arrives.
                   </p>
                 </div>
+                {/* Watchlist status message, phrased differently depending
+                    on whether the listing is already watched */}
                 <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                   <p className="text-sm font-semibold text-white">Watchlist status</p>
                   <p className="mt-1 text-xs leading-5 text-neutral-400">
@@ -128,6 +147,7 @@ export function ListingDetailModal({
                       : "Save this listing to your watchlist to revisit it quickly later."}
                   </p>
                 </div>
+                {/* Only shown when the listing has a buy-now option configured */}
                 {listing.buyNowPrice && (
                   <div className="rounded-2xl border border-amber-400/15 bg-amber-500/10 p-4">
                     <p className="text-sm font-semibold text-white">Buy now available</p>
@@ -139,6 +159,7 @@ export function ListingDetailModal({
               </div>
             </div>
 
+            {/* Primary actions: toggle watchlist membership, or proceed to bid */}
             <div className="mt-6 flex flex-col gap-3">
               <button
                 type="button"
