@@ -1,6 +1,14 @@
 import * as winston from 'winston';
 
 /**
+ * Log level, configurable per environment via LOG_LEVEL
+ * (fatal|error|warn|info|debug|verbose|silly).
+ *
+ * Defaults to `info` so unconfigured environments never emit debug noise.
+ */
+const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';
+
+/**
  * Structured logging format for Winston.
  *
  * All log entries include:
@@ -32,6 +40,7 @@ const consoleFormat = winston.format.combine(
 );
 
 export const winstonConfig = {
+  level: LOG_LEVEL,
   transports: [
     // Console: human-friendly for development
     new winston.transports.Console({
