@@ -5,6 +5,7 @@ import { FollowService } from './follow.service';
 import { HashtagService } from './hashtag.service';
 import { ShowcaseService } from './showcase.service';
 import { SocialController } from './social.controller';
+import { SubmissionProtectionService } from './submission-protection.service';
 
 /** Social feed module (backlog area H): follows, showcases, hashtags, challenges. */
 @Module({
@@ -23,6 +24,8 @@ import { SocialController } from './social.controller';
     ChallengeService,
     ContentModerationService,
   ],
+  providers: [FollowService, ShowcaseService, HashtagService, ChallengeService, SubmissionProtectionService],
+  exports: [FollowService, ShowcaseService, HashtagService, ChallengeService],
 })
 export class SocialModule {}
 

@@ -6,8 +6,13 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthController } from './health/health.controller';
 import { GamificationModule } from './gamification/gamification.module';
+import { GradingModule } from './grading/grading.module';
 import { ChatModule } from './chat/chat.module';
 import { SocialModule } from './social/social.module';
+import { StellarModule } from './stellar/stellar.module';
+import { SandboxModule } from './sandbox/sandbox.module';
+import { ProgressModule } from './progress/progress.module';
+import { CoursesModule } from './courses/courses.module';
 
 @Module({
   imports: [
@@ -20,8 +25,13 @@ import { SocialModule } from './social/social.module';
       },
     ]),
     GamificationModule,
+    GradingModule,
     ChatModule,
     SocialModule,
+    StellarModule,
+    SandboxModule,
+    ProgressModule,
+    CoursesModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
