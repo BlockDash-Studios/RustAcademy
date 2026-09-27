@@ -68,10 +68,37 @@ async function bootstrap() {
 
   app.use(helmet());
 
+  // ── CORS hardening ────────────────────────────────────────────────────────
+  // Resolve configuration values once so they can be inspected together.
+  const corsOrigin = config.get<string | string[]>('CORS_ORIGIN', '*');
+  const corsAllowCredentials =
+    config.get<string>('CORS_ALLOW_CREDENTIALS', 'false') === 'true';
+
+  // Security invariant: a wildcard origin combined with credentials is both
+  // a browser-enforced error and a CORS security misconfiguration. In
+  // production we also require an explicit allow-list — a wildcard admits
+  // any origin, which defeats the purpose of CORS on an authenticated API.
+  if (nodeEnv === 'production') {
+    const isWildcard = corsOrigin === '*';
+    if (isWildcard) {
+      throw new Error(
+        'CORS_ORIGIN must be set to an explicit allow-list of trusted origins ' +
+          'when NODE_ENV=production. Wildcard "*" is not permitted in production.',
+      );
+    }
+    if (corsAllowCredentials && isWildcard) {
+      // Belt-and-suspenders: this branch is unreachable because of the check
+      // above, but kept for clarity.
+      throw new Error(
+        'CORS_ALLOW_CREDENTIALS must not be "true" when CORS_ORIGIN is "*".',
+      );
+    }
+  }
+
   app.enableCors({
-    origin: config.get<string | string[]>('CORS_ORIGIN', '*'),
+    origin: corsOrigin,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    credentials: true,
+    credentials: corsAllowCredentials,
   });
 
   app.enableVersioning({

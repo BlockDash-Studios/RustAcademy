@@ -301,8 +301,10 @@ describe('env.schema', () => {
       });
 
       expect(error).toBeDefined();
-      expect(error!.details.length).toBeGreaterThanOrEqual(4);
-      for (const key of ['NODE_ENV', 'PORT', 'REDIS_PORT', 'AI_TEMPERATURE']) {
+      // NODE_ENV=staging is a valid value — it does not produce an error.
+      // We expect at least 3 other failures to be reported together.
+      expect(error!.details.length).toBeGreaterThanOrEqual(3);
+      for (const key of ['PORT', 'REDIS_PORT', 'AI_TEMPERATURE']) {
         expect(error!.message).toContain(key);
       }
     });

@@ -212,6 +212,24 @@ export const baseEnvSchema = Joi.object({
         'parsed here so main.ts receives a ready-to-use value.',
     ),
 
+  /**
+   * Whether the CORS layer should reflect `Access-Control-Allow-Credentials:
+   * true`. Setting this to `"true"` while `CORS_ORIGIN` is `"*"` is both
+   * a security risk and a browser-enforced error (browsers reject
+   * `credentials: true` + wildcard origin), so production rejects that
+   * combination at startup.
+   *
+   * Defaults to `"false"` in all environments. Set to `"true"` only when
+   * `CORS_ORIGIN` is an explicit allow-list of trusted origins.
+   */
+  CORS_ALLOW_CREDENTIALS: Joi.string()
+    .valid('true', 'false')
+    .default('false')
+    .description(
+      'Enable Access-Control-Allow-Credentials. Must be "false" when ' +
+        'CORS_ORIGIN is "*". Only enable for an explicit trusted-origin list.',
+    ),
+
   LOCALE: Joi.string().default('en').description('Default localization locale'),
 
   // ── Persistence ───────────────────────────────────────────────
@@ -676,3 +694,43 @@ export const envValidationSchema = baseEnvSchema
   .concat(migrationEnvSchema)
   .concat(notificationEnvSchema)
   .concat(stellarEnvSchema);
+
+/**
+ * Canonical Joi validation options used both in `ConfigModule.forRoot()` and
+ * in unit tests. Having a single source of truth ensures the test-time
+ * validation behaviour is identical to the runtime one.
+ *
+ * - `abortEarly: false` — report every invalid variable in one pass so a
+ *   misconfigured deployment shows all problems at once.
+ * - `convert: true` — env vars are always strings; coerce to number/boolean
+ *   before range checks run.
+ * - `allowUnknown: true` — process.env contains many OS/CI variables that
+ *   are irrelevant to this service; silently pass them through.
+ * - `stripUnknown: false` — keep unrecognised variables in the validated
+ *   object so higher-level consumers (e.g. feature-flag checks) still see
+ *   them after validation.
+ */
+export const ENV_VALIDATION_OPTIONS: Joi.ValidationOptions = {
+  abortEarly: false,
+  convert: true,
+  allowUnknown: true,
+  stripUnknown: false,
+};
+
+/**
+ * Returns `true` only when the feature-flag string is the exact literal
+ * `"true"`. Comparisons are intentionally case-sensitive so `"TRUE"` or
+ * `"True"` do not accidentally enable a feature.
+ */
+export function isFeatureEnabled(value: string | undefined): boolean {
+  return value === 'true';
+}
+
+/**
+ * Returns `true` only when the feature-flag string is the exact literal
+ * `"false"`. Useful for distinguishing "explicitly disabled" from
+ * "not configured".
+ */
+export function isFeatureExplicitlyDisabled(value: string | undefined): boolean {
+  return value === 'false';
+}
