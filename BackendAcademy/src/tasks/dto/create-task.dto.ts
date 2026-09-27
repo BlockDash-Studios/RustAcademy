@@ -1,4 +1,12 @@
-import { IsString, IsNumber, IsOptional, IsArray, IsEnum, Min } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsOptional,
+  IsArray,
+  IsEnum,
+  Min,
+  ArrayMaxSize,
+} from 'class-validator';
 import { TaskDifficulty } from '../interfaces/task-difficulty.enum';
 
 export class CreateTaskDto {
@@ -16,6 +24,7 @@ export class CreateTaskDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(20)
   @IsString({ each: true })
   testCases?: string[];
 
