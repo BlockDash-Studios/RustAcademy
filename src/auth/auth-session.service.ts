@@ -153,7 +153,7 @@ export class AuthSessionService {
     try {
       payload = await this.jwtService.verifyAsync<RefreshTokenPayload>(
         rawRefreshToken,
-        { secret: this.refreshSecret },
+        { secret: this.refreshSecret, algorithms: ["HS256"] },
       );
     } catch {
       throw new UnauthorizedException({
@@ -305,10 +305,11 @@ export class AuthSessionService {
   }
 
   private get refreshSecret(): string {
-    return this.configService.get<string>(
-      "JWT_REFRESH_SECRET",
-      "refresh_secret",
-    );
+    const secret = this.configService.get<string>("JWT_REFRESH_SECRET");
+    if (!secret) {
+      throw new Error("JWT_REFRESH_SECRET is not configured");
+    }
+    return secret;
   }
 
   /**
@@ -376,6 +377,7 @@ export class AuthSessionService {
       this.jwtService.signAsync(refreshPayload, {
         secret: this.refreshSecret,
         expiresIn: this.sessionPolicy.refreshTokenTtl,
+        algorithm: "HS256",
       }),
     ]);
 
