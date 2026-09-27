@@ -8,11 +8,21 @@ import { HealthService } from "./health.service";
 import { HealthResponseDto, ReadyResponseDto } from "./health-response.dto";
 import { PublicStatusResponseDto } from "./public-status.dto";
 
+// Exposes three endpoints for monitoring/orchestration tooling:
+//   GET /health  - shallow liveness check
+//   GET /ready   - readiness check including dependency checks
+//   GET /status  - public, cacheable, rate-limited status page
 @ApiTags("health")
 @Controller()
 export class HealthController {
+  // HealthService does the actual work of computing health/readiness/
+  // status results; this controller just wires it up to HTTP responses.
   constructor(private readonly healthService: HealthService) {}
 
+  // GET /health
+  // Simple liveness check: fetches health status from the service and
+  // always responds 200 with the result (no failure branch here — this
+  // endpoint just reports "the process is up").
   @Get("health")
   @ApiOperation({
     summary: "Health check",
@@ -25,6 +35,11 @@ export class HealthController {
     return res.status(200).json(result);
   }
 
+  // GET /ready
+  // Readiness check: fetches readiness status (which includes individual
+  // dependency check results). Responds 503 if the service reports itself
+  // as not ready, otherwise 200 — this lets orchestrators (e.g. Kubernetes)
+  // hold back traffic until the service is actually ready.
   @Get("ready")
   @ApiOperation({
     summary: "Readiness check",
@@ -47,6 +62,10 @@ export class HealthController {
     return res.status(200).json(result);
   }
 
+  // GET /status
+  // Public status page endpoint: rate-limited (5 requests/60s, since it's
+  // public-facing and cheap to abuse) and cacheable via ETag/Cache-Control,
+  // as it may be hit by external uptime monitors or a public status page.
   @Get("status")
   @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute for public status
   @ApiOperation({
@@ -61,7 +80,8 @@ export class HealthController {
   ) {
     const result = await this.healthService.getPublicStatus();
 
-    // Generate ETag based on response content
+    // Generate ETag based on response content, so unchanged results can
+    // be served as a cheap 304 instead of re-sending the full body.
     const etag = createHash("md5")
       .update(JSON.stringify(result))
       .digest("hex")
