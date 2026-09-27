@@ -144,6 +144,7 @@ export class SandboxService {
     const runnerCommand = [
       "IFS= read -r source_len",
       'head -c "$source_len" > /tmp/main.rs',
+      "IFS= read -r separator",
       "IFS= read -r input_len",
       'head -c "$input_len" > /tmp/stdin',
       `timeout -k 1s ${COMPILE_TIMEOUT_SECONDS}s rustc --edition=2021 --target=wasm32-wasip1 --crate-type=bin -o /tmp/main.wasm /tmp/main.rs`,
