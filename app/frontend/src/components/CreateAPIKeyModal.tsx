@@ -14,6 +14,8 @@ type Props = {
   loading: boolean;
 };
 
+// Human-readable label/description shown for each selectable API key
+// scope, keyed by the underlying scope identifier.
 const SCOPE_LABELS: Record<ApiKeyScope, { label: string; description: string }> = {
   "links:read":       { label: "links:read",       description: "Fetch and query payment links" },
   "links:write":      { label: "links:write",       description: "Create and update payment links" },
@@ -21,6 +23,11 @@ const SCOPE_LABELS: Record<ApiKeyScope, { label: string; description: string }> 
   "usernames:read":   { label: "usernames:read",    description: "Look up registered usernames" },
 };
 
+// Modal dialog for creating a new API key: lets the user name the key,
+// choose which scopes it grants, and submit to generate it. Implements
+// its own focus-trap and Escape-to-close behavior for accessibility,
+// since it renders as a plain fixed-position div rather than using the
+// browser's native <dialog> element.
 export default function CreateAPIKeyModal({
   setModalOpen,
   newKey,
@@ -28,10 +35,17 @@ export default function CreateAPIKeyModal({
   generateKey,
   loading,
 }: Props) {
+  // Root modal element, used to query focusable children for the tab trap.
   const modalRef = useRef<HTMLDivElement | null>(null);
+  // The Cancel button, focused automatically when the modal opens.
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Whatever element had focus before the modal opened, so it can be
+  // restored once the modal closes.
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
+  // On mount: remember the previously focused element and move focus into
+  // the modal (to the close button). On unmount: restore focus to
+  // wherever it was before the modal opened.
   useEffect(() => {
     previousFocusRef.current = document.activeElement as HTMLElement;
     closeButtonRef.current?.focus();
@@ -39,6 +53,11 @@ export default function CreateAPIKeyModal({
     return () => previousFocusRef.current?.focus();
   }, []);
 
+  // Keyboard handler for the modal container:
+  //  - Escape closes the modal (unless an action is in progress).
+  //  - Tab/Shift+Tab is trapped within the modal's focusable elements,
+  //    wrapping from last back to first (and vice versa) so focus never
+  //    escapes to the page behind the modal.
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape" && !loading) {
       event.preventDefault();
@@ -63,6 +82,7 @@ export default function CreateAPIKeyModal({
     }
   };
 
+  // Adds or removes a scope from the new key's selected scopes list.
   const toggleScope = (scope: ApiKeyScope) => {
     setNewKey((prev) => ({
       ...prev,
@@ -80,18 +100,18 @@ export default function CreateAPIKeyModal({
       aria-labelledby="create-api-key-title"
       onKeyDown={handleKeyDown}
     >
-      {/* Backdrop */}
+      {/* Backdrop: clicking it closes the modal, but only when not loading */}
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={() => !loading && setModalOpen(false)}
         aria-hidden="true"
       />
 
-      {/* Modal */}
+      {/* Modal panel */}
       <div ref={modalRef} className="relative w-full max-w-md bg-neutral-900 border border-white/10 rounded-3xl p-8 shadow-2xl space-y-6">
         <h3 id="create-api-key-title" className="text-xl font-black">Create New API Key</h3>
 
-        {/* Key name */}
+        {/* Key name input */}
         <div className="space-y-2">
           <label htmlFor="api-key-name" className="text-xs font-black uppercase tracking-widest text-neutral-500">
             Key Name
@@ -108,7 +128,7 @@ export default function CreateAPIKeyModal({
           />
         </div>
 
-        {/* Scope selection */}
+        {/* Scope selection: a list of toggleable buttons, one per available scope */}
         <div className="space-y-2">
           <div id="api-key-scopes-label" className="text-xs font-black uppercase tracking-widest text-neutral-500">
             Scopes
@@ -129,6 +149,7 @@ export default function CreateAPIKeyModal({
                       : "border-white/10 bg-white/5 hover:bg-white/10"
                   }`}
                 >
+                  {/* Custom checkbox indicator reflecting selected state */}
                   <div
                     className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center text-[10px] ${
                       active
@@ -152,7 +173,7 @@ export default function CreateAPIKeyModal({
           </div>
         </div>
 
-        {/* Actions */}
+        {/* Actions: Cancel (also the initial focus target) and Generate Key */}
         <div className="flex gap-3 pt-2">
           <button
             ref={closeButtonRef}
@@ -163,6 +184,7 @@ export default function CreateAPIKeyModal({
           >
             Cancel
           </button>
+          {/* Disabled until a name is entered and at least one scope is selected */}
           <button
             type="button"
             onClick={generateKey}
