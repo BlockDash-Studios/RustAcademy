@@ -13,6 +13,7 @@ import { StellarModule } from './stellar/stellar.module';
 import { SandboxModule } from './sandbox/sandbox.module';
 import { ProgressModule } from './progress/progress.module';
 import { CoursesModule } from './courses/courses.module';
+import { CertificatesModule } from './certificates/certificates.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { CoursesModule } from './courses/courses.module';
     SandboxModule,
     ProgressModule,
     CoursesModule,
+    CertificatesModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
