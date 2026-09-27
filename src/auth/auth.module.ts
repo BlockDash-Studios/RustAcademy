@@ -1,12 +1,12 @@
-import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { JwtLearnerGuard } from './guards/jwt-learner.guard';
-import { JwtTutorGuard } from './guards/jwt-tutor.guard';
-import { JwtAdminGuard } from './guards/jwt-admin.guard';
-import { RolesGuard } from './guards/roles.guard';
-import { AuthSessionService } from './auth-session.service';
-import { AuthSessionController } from './auth-session.controller';
+import { Module } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { JwtLearnerGuard } from "./guards/jwt-learner.guard";
+import { JwtTutorGuard } from "./guards/jwt-tutor.guard";
+import { JwtAdminGuard } from "./guards/jwt-admin.guard";
+import { RolesGuard } from "./guards/roles.guard";
+import { AuthSessionService } from "./auth-session.service";
+import { AuthSessionController } from "./auth-session.controller";
 
 @Module({
   imports: [
@@ -14,13 +14,14 @@ import { AuthSessionController } from './auth-session.controller';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => {
-        const secret = config.get<string>('JWT_SECRET');
+        const secret = config.get<string>("JWT_SECRET");
         if (!secret) {
-          throw new Error('JWT_SECRET is not configured');
+          throw new Error("JWT_SECRET is not configured");
         }
         return {
           secret,
-          signOptions: { expiresIn: '15m' },
+          signOptions: { expiresIn: "15m", algorithm: "HS256" },
+          verifyOptions: { algorithms: ["HS256"] },
         };
       },
       inject: [ConfigService],
