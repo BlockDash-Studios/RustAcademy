@@ -1,6 +1,7 @@
-"use client";
+'use client';
 
 import { useState } from "react";
+import { BRANDING } from "@/lib/branding";
 
 interface Workspace {
   id: string;
@@ -10,7 +11,7 @@ interface Workspace {
 
 const workspaces: Workspace[] = [
   { id: "1", name: "Personal Workspace", role: "admin" },
-  { id: "2", name: "Pulsefy Team", role: "operator" },
+  { id: "2", name: `${BRANDING.companyName} Team`, role: "operator" },
   { id: "3", name: "Stellar Devs", role: "viewer" },
 ];
 

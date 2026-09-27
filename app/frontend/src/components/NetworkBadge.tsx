@@ -1,17 +1,32 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 
-export function NetworkBadge() {
-  const [network, setNetwork] = useState<string | undefined>(undefined);
+type WalletNetwork = "testnet" | "futurenet" | "mainnet";
+
+interface NetworkBadgeProps {
+  /** Optional wallet network (from the wallet gateway) to compare against. */
+  walletNetwork?: WalletNetwork | null;
+  /** Force the mismatch indicator even when walletNetwork is omitted. */
+  mismatch?: boolean;
+}
+
+export function NetworkBadge({ walletNetwork, mismatch = false }: NetworkBadgeProps) {
+  const [appNetwork, setAppNetwork] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    setNetwork(process.env.NEXT_PUBLIC_STELLAR_NETWORK);
+    setAppNetwork(process.env.NEXT_PUBLIC_STELLAR_NETWORK);
   }, []);
 
-  if (!network) return null;
+  const hasMismatch =
+    walletNetwork !== undefined &&
+    walletNetwork !== null &&
+    walletNetwork !== (appNetwork?.toLowerCase() as WalletNetwork | undefined);
 
-  const normalized = network.toLowerCase();
+  if (!appNetwork) return null;
+
+  const normalized = appNetwork.toLowerCase();
 
   const badgeStyles: Record<string, string> = {
     testnet: "bg-yellow-100 text-yellow-800 border border-yellow-200",
@@ -23,16 +38,30 @@ export function NetworkBadge() {
     testnet: "TESTNET",
     futurenet: "FUTURENET",
     mainnet: "MAINNET",
-  }[normalized] ?? network.toUpperCase();
+  }[normalized] ?? appNetwork.toUpperCase();
+
+  const mismatchActive = mismatch || (walletNetwork !== undefined && hasMismatch);
 
   return (
-    <div
-      className={`fixed top-4 left-60 px-3 py-1 rounded-full text-xs font-bold transition-all ${badgeStyles[normalized] || ""}`}
-    >
-      {label}
+    <div className="fixed top-4 right-4 md:right-auto md:left-80 z-50 flex items-center gap-2">
+      <div
+        className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${badgeStyles[normalized] || ""}`}
+      >
+        {label}
 
-      {!process.env.NEXT_PUBLIC_STELLAR_NETWORK && (
-        <span className="ml-2 opacity-50 font-normal italic">(default)</span>
+        {!process.env.NEXT_PUBLIC_STELLAR_NETWORK && (
+          <span className="ml-2 opacity-50 font-normal italic">(default)</span>
+        )}
+      </div>
+
+      {mismatchActive && (
+        <div
+          role="alert"
+          className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700 border border-red-300 animate-in fade-in duration-200"
+        >
+          <AlertTriangle size={12} aria-hidden="true" />
+          NETWORK MISMATCH
+        </div>
       )}
     </div>
   );

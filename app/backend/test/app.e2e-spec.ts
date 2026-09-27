@@ -4,7 +4,7 @@ import {
   ValidationPipe,
 } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
-import * as request from "supertest";
+import request from "supertest";
 
 import { GlobalHttpExceptionFilter } from "../src/common/filters/global-http-exception.filter";
 import { AppConfigService } from "../src/config";
@@ -13,6 +13,7 @@ import { AppModule } from "../src/app.module";
 import { UsernamesService } from "../src/usernames/usernames.service";
 import { HealthService } from "../src/health/health.service";
 import { mapValidationErrors } from "../src/common/utils/validation-error.mapper";
+import { ErrorCode } from "../src/common/errors";
 import { ApiKeyGuard } from "../src/auth/guards/api-key.guard";
 import { CustomThrottlerGuard } from "../src/auth/guards/custom-throttler.guard";
 
@@ -93,9 +94,9 @@ describe("App endpoints", () => {
           const mapped = mapValidationErrors(errors);
 
           return new BadRequestException({
-            code: "VALIDATION_ERROR",
-            message: mapped.message,
-            fields: mapped.fields,
+          code: ErrorCode.VALIDATION_ERROR,
+          message: mapped.message,
+          fields: mapped.fields,
           });
         },
       }),

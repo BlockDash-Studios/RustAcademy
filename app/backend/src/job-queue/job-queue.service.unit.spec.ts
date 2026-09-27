@@ -13,6 +13,7 @@ import { JobRegistry } from './job-registry.service';
 import { CancellationStore } from './cancellation-token';
 import { JobQueueMetricsService } from './job-queue-metrics.service';
 import { JobType, JobStatus, Job, JobHandler, RetryPolicy } from './types';
+import { CorrelationContextService } from '../common/correlation/correlation-context.service';
 
 describe('JobQueueService', () => {
   let service: JobQueueService;
@@ -77,6 +78,13 @@ describe('JobQueueService', () => {
       recordJobExecutionDuration: jest.fn(),
     };
 
+    const mockCorrelationContext = {
+      getCorrelationId: jest.fn().mockReturnValue('test-correlation-id'),
+      setCorrelationId: jest.fn(),
+      run: jest.fn((_id, fn) => fn()),
+      runSync: jest.fn((_id, fn) => fn()),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         JobQueueService,
@@ -84,6 +92,7 @@ describe('JobQueueService', () => {
         { provide: JobRegistry, useValue: mockRegistry },
         { provide: CancellationStore, useValue: mockCancellationStore },
         { provide: JobQueueMetricsService, useValue: mockMetrics },
+        { provide: CorrelationContextService, useValue: mockCorrelationContext },
       ],
     }).compile();
 
@@ -134,6 +143,9 @@ describe('JobQueueService', () => {
         payload,
         5, // maxAttempts from policy
         expect.any(Date), // scheduledAt should be approximately now
+        undefined, // idempotencyKey
+        undefined, // retryMetadata
+        'test-correlation-id', // correlationId from context
       );
     });
 
@@ -247,6 +259,9 @@ describe('JobQueueService', () => {
         payload,
         5,
         scheduledAt,
+        undefined, // idempotencyKey
+        undefined, // retryMetadata
+        'test-correlation-id', // correlationId from context
       );
     });
 

@@ -1,43 +1,50 @@
-import { Injectable } from '@nestjs/common';
-import { CourseEntity } from './course.entity';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateCourseDto } from './dto/create-course.dto';
-import { UpdateCourseDto } from './dto/update-course.dto';
+import { Course } from './course.types';
 
+/**
+ * Manages the course catalogue (BE-041).
+ *
+ * In-memory, matching the pattern used by XpService, FollowService, etc.
+ * Each course carries a `prerequisiteCourseIds` list that EnrollmentService
+ * reads to enforce the prerequisite chain before allowing enrollment.
+ */
 @Injectable()
 export class CourseService {
-  private readonly courses: Map<string, CourseEntity> = new Map();
+  private readonly courses = new Map<string, Course>();
 
-  async create(dto: CreateCourseDto): Promise<CourseEntity> {
-    const course = new CourseEntity({
-      id: crypto.randomUUID(),
-      ...dto,
-    });
-    this.courses.set(course.id, course);
+  create(dto: CreateCourseDto): Course {
+    if (this.courses.has(dto.courseId)) {
+      throw new BadRequestException(`Course "${dto.courseId}" already exists`);
+    }
+
+    const course: Course = {
+      courseId: dto.courseId,
+      title: dto.title,
+      description: dto.description,
+      prerequisiteCourseIds: dto.prerequisiteCourseIds ?? [],
+      createdAt: new Date().toISOString(),
+    };
+
+    this.courses.set(course.courseId, course);
     return course;
   }
 
-  async findAll(): Promise<CourseEntity[]> {
-    return Array.from(this.courses.values()).filter(c => c.isActive);
-  }
-
-  async findByLevel(level: string): Promise<CourseEntity[]> {
-    return Array.from(this.courses.values()).filter(
-      c => c.isActive && c.level === level,
-    );
-  }
-
-  async findById(id: string): Promise<CourseEntity | null> {
-    return this.courses.get(id) || null;
-  }
-
-  async update(id: string, dto: UpdateCourseDto): Promise<CourseEntity | null> {
-    const course = this.courses.get(id);
-    if (!course) return null;
-    Object.assign(course, dto, { updatedAt: new Date() });
+  findById(courseId: string): Course {
+    const course = this.courses.get(courseId);
+    if (!course) throw new NotFoundException(`Course "${courseId}" not found`);
     return course;
   }
 
-  async remove(id: string): Promise<boolean> {
-    return this.courses.delete(id);
+  findAll(): Course[] {
+    return [...this.courses.values()];
+  }
+
+  exists(courseId: string): boolean {
+    return this.courses.has(courseId);
   }
 }

@@ -6,13 +6,17 @@ import { useSearchParams } from "next/navigation";
 import AnalyticsDashboard from "@/components/AnalyticsDashboard";
 import { NetworkBadge } from "@/components/NetworkBadge";
 import { useApi } from "@/hooks/useApi";
+import { useMarketplaceApi } from "@/hooks/MarketplaceApiContext";
+import type { UserBid, UserListing } from "@/hooks/marketplaceApi";
 import {
-  fetchUserBids,
-  fetchUserListings,
   formatCountdown,
   type UserBid,
   type UserListing,
 } from "@/hooks/marketplaceApi";
+import {
+  MarketplaceApiProvider,
+  useMarketplaceApi,
+} from "@/hooks/MarketplaceApiContext";
 import { mockContractCall, mockFetch } from "@/hooks/mockApi";
 
 type ActivityItem = {
@@ -84,9 +88,14 @@ const FOCUS_RING_CLASS =
 function DashboardContent() {
   const searchParams = useSearchParams();
   const { data, error, loading, callApi } = useApi<DashboardResponse>();
+  const { fetchUserBids, fetchUserListings, formatCountdown } =
+    useMarketplaceApi();
+  const marketplaceApi = useMarketplaceApi();
   const [userBids, setUserBids] = useState<UserBid[]>([]);
   const [userListings, setUserListings] = useState<UserListing[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [bidsError, setBidsError] = useState<string | null>(null);
+  const [listingsError, setListingsError] = useState<string | null>(null);
 
   useEffect(() => {
     void callApi(() =>
@@ -94,9 +103,20 @@ function DashboardContent() {
         items: ACTIVITY_ITEMS,
       }),
     );
-    void fetchUserBids().then(setUserBids);
-    void fetchUserListings().then(setUserListings);
-  }, [callApi]);
+    void fetchUserBids()
+      .then(setUserBids)
+      .catch((err: unknown) =>
+        setBidsError(err instanceof Error ? err.message : "Could not load your bids."),
+      );
+    void fetchUserListings()
+      .then(setUserListings)
+      .catch((err: unknown) =>
+        setListingsError(err instanceof Error ? err.message : "Could not load your listings."),
+      );
+  }, [callApi, fetchUserBids, fetchUserListings]);
+    void marketplaceApi.fetchUserBids().then(setUserBids);
+    void marketplaceApi.fetchUserListings().then(setUserListings);
+  }, [callApi, marketplaceApi]);
 
   useEffect(() => {
     if (!statusMessage) {
@@ -188,12 +208,38 @@ function DashboardContent() {
     setStatusMessage(`Storage deposit reclaimed for transaction ${id}.`);
   };
 
+  const handleWithdraw = async () => {
+    const hasWallet =
+      typeof window !== "undefined" &&
+      Boolean((window as Window & { freighterApi?: unknown }).freighterApi);
+    if (!hasWallet) {
+      setStatusMessage(
+        "Withdrawals require the Freighter wallet extension. Install it to continue.",
+      );
+      return;
+    }
+    setStatusMessage("Withdraw flow coming soon.");
+  };
+
   if (loading) {
     return <p className="text-neutral-200">Loading dashboard...</p>;
   }
 
   if (error) {
-    return <p className="text-red-300">{error}</p>;
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 text-white">
+        <p className="max-w-md rounded-2xl border border-red-500/20 bg-red-500/10 px-6 py-4 text-center text-sm text-red-200">
+          {error}
+        </p>
+        <button
+          type="button"
+          onClick={() => void callApi(() => mockFetch({ items: ACTIVITY_ITEMS }))}
+          className="rounded-xl bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400"
+        >
+          Retry
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -272,7 +318,7 @@ function DashboardContent() {
             </Link>
             <button
               type="button"
-              onClick={() => setStatusMessage("Withdraw flow coming soon.")}
+              onClick={() => void handleWithdraw()}
               className={`rounded-xl bg-indigo-500 px-4 py-3 font-semibold text-white shadow-lg transition hover:bg-indigo-400 ${FOCUS_RING_CLASS}`}
               aria-label="Withdraw funds"
             >
@@ -497,7 +543,11 @@ function DashboardContent() {
               <h3 className="mb-5 text-sm font-semibold uppercase tracking-[0.24em] text-neutral-300">
                 My Active Bids
               </h3>
-              {userBids.length === 0 ? (
+              {bidsError ? (
+                <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                  {bidsError}
+                </p>
+              ) : userBids.length === 0 ? (
                 <p className="text-sm text-neutral-200">No active bids yet.</p>
               ) : (
                 <div className="space-y-3">
@@ -540,7 +590,11 @@ function DashboardContent() {
               <h3 className="mb-5 text-sm font-semibold uppercase tracking-[0.24em] text-neutral-300">
                 My Listings
               </h3>
-              {userListings.length === 0 ? (
+              {listingsError ? (
+                <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                  {listingsError}
+                </p>
+              ) : userListings.length === 0 ? (
                 <p className="text-sm text-neutral-200">
                   No usernames listed yet.
                 </p>
@@ -594,10 +648,12 @@ function DashboardContent() {
 
 export default function Dashboard() {
   return (
-    <Suspense
-      fallback={<p className="text-neutral-200">Loading dashboard...</p>}
-    >
-      <DashboardContent />
-    </Suspense>
+    <MarketplaceApiProvider>
+      <Suspense
+        fallback={<p className="text-neutral-200">Loading dashboard...</p>}
+      >
+        <DashboardContent />
+      </Suspense>
+    </MarketplaceApiProvider>
   );
 }

@@ -1,14 +1,18 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { UsernameCard } from "@/components/UsernameCard";
 import { ListingDetailModal } from "@/components/ListingDetailModal";
-import { fetchListings, MarketplaceListing } from "@/hooks/marketplaceApi";
+import type { MarketplaceListing } from "@/hooks/marketplaceApi";
+import { useMarketplaceApi } from "@/hooks/MarketplaceApiContext";
+import { useRealtimeApi } from "@/hooks/RealtimeApiContext";
 import { useWatchlist } from "@/contexts/WatchlistContext";
-import { useRealtimeUpdates } from "@/hooks/useRealtimeUpdates";
 import Link from "next/link";
 import { WatchlistProvider } from "@/contexts/WatchlistContext";
+import { MarketplaceApiProvider } from "@/hooks/MarketplaceApiContext";
+import { RealtimeApiProvider } from "@/hooks/RealtimeApiContext";
+import { errorReporter } from "@/lib/errorReporter";
 
 const BidModal = dynamic(
   () => import("@/components/BidModal").then((mod) => mod.BidModal),
@@ -77,97 +81,161 @@ function StatsBar({ listings }: { listings: MarketplaceListing[] }) {
 function MarketplacePageContent() {
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<Category>("all");
   const [sortKey, setSortKey] = useState("ending");
-  const [activeListing, setActiveListing] = useState<MarketplaceListing | null>(
-    null,
-  );
-  const [detailListing, setDetailListing] = useState<MarketplaceListing | null>(
-    null,
-  );
+  const [activeListingId, setActiveListingId] = useState<string | null>(null);
+  const [detailListingId, setDetailListingId] = useState<string | null>(null);
   const [showWatchlistOnly, setShowWatchlistOnly] = useState(false);
 
+  // Modals hold a listing id, not a snapshot, so realtime bid updates keep
+  // the open modal (current bid, minimum bid) from going stale.
+  const activeListing = useMemo(
+    () => listings.find((l) => l.id === activeListingId) ?? null,
+    [listings, activeListingId],
+  );
+  const detailListing = useMemo(
+    () => listings.find((l) => l.id === detailListingId) ?? null,
+    [listings, detailListingId],
+  );
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+
   const { watchlist, isInWatchlist, toggleWatchlist } = useWatchlist();
-  const {
-    isConnected,
-    lastUpdate,
-    subscribeToListing,
-    unsubscribeFromListing,
-    onBidUpdate,
-  } = useRealtimeUpdates();
+
+  // Consume providers from context — no direct imports of concrete providers
+  const marketplaceApi = useMarketplaceApi();
+  const realtimeApi = useRealtimeApi();
+
+  // Stable connection-status derived from the provider
+  const isConnected = realtimeApi.isConnected;
+
+  // Monotonic id guarding against stale responses: when a retry is triggered
+  // while a previous request is still in flight, only the newest request may
+  // commit listings, error, or loading state.
+  const loadRequestIdRef = useRef(0);
+
+  const loadListings = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await marketplaceApi.fetchListings();
+      if (requestId !== loadRequestIdRef.current) return;
+      setListings(Array.isArray(data) ? data : []);
+    } catch (err) {
+      if (requestId !== loadRequestIdRef.current) return;
+      const captured = err instanceof Error ? err : new Error(String(err));
+      setError(captured.message || "Failed to load marketplace listings");
+      errorReporter.captureError(captured, {
+        route: "/marketplace",
+        codeOrigin: "marketplace.loadListings",
+        extra: { source: "MarketplacePageContent", operation: "fetchListings" },
+      });
+    } finally {
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [marketplaceApi]);
 
   useEffect(() => {
-    fetchListings().then((data) => {
-      setListings(data);
-      setLoading(false);
-    });
-  }, []);
+    loadListings();
+  }, [loadListings]);
 
-  // Subscribe to real-time updates for all listings
   useEffect(() => {
     if (listings.length > 0) {
-      listings.forEach((listing) => subscribeToListing(listing.id));
-      return () => {
-        listings.forEach((listing) => unsubscribeFromListing(listing.id));
-      };
+      try {
+        listings.forEach((listing) =>
+          realtimeApi.subscribeToListing(listing.id),
+        );
+        return () => {
+          listings.forEach((listing) =>
+            realtimeApi.unsubscribeFromListing(listing.id),
+          );
+        };
+      } catch (err) {
+        errorReporter.captureError(
+          err instanceof Error ? err : new Error(String(err)),
+          {
+            route: "/marketplace",
+            codeOrigin: "marketplace.realtimeSubscription",
+            extra: { source: "MarketplacePageContent", operation: "subscribeToListing" },
+          }
+        );
+      }
     }
-  }, [listings, subscribeToListing, unsubscribeFromListing]);
+  }, [listings, realtimeApi]);
 
-  // Handle real-time bid updates
+  // Handle real-time bid updates. applyBidUpdate discards stale, duplicate,
+  // and out-of-order deliveries so bidCount only moves for genuinely new bids.
   useEffect(() => {
-    const unsubscribe = onBidUpdate((update) => {
+    try {
+      const unsubscribe = realtimeApi.onBidUpdate((update) => {
+        if (!update || !update.listingId || typeof update.newBid !== "number") {
+          return;
+        }
+        setLastUpdate(update.timestamp ?? new Date());
+        setListings((prev) =>
+          prev.map((listing) =>
+            listing.id === update.listingId
+              ? {
+                  ...listing,
+                  currentBid: Math.max(listing.currentBid, update.newBid),
+                  bidCount: (listing.bidCount ?? 0) + 1,
+                }
+              : listing,
+          ),
+        );
+      });
+
+      return unsubscribe;
+    } catch (err) {
+      errorReporter.captureError(
+        err instanceof Error ? err : new Error(String(err)),
+        {
+          route: "/marketplace",
+          codeOrigin: "marketplace.onBidUpdate",
+          extra: { source: "MarketplacePageContent", operation: "onBidUpdate" },
+        }
+      );
+    }
+  }, [realtimeApi]);
+
+  const handleBidSuccess = useCallback(
+    (username: string, amount: number) => {
       setListings((prev) =>
-        prev.map((listing) =>
-          listing.id === update.listingId
-            ? {
-                ...listing,
-                currentBid: Math.max(listing.currentBid, update.newBid),
-                bidCount: listing.bidCount + 1,
-              }
-            : listing,
+        prev.map((l) =>
+          l.username === username
+            ? { ...l, currentBid: amount, bidCount: l.bidCount + 1 }
+            : l,
         ),
       );
-    });
-
-    return unsubscribe;
-  }, [onBidUpdate]);
-
-  function handleBidSuccess(username: string, amount: number) {
-    setListings((prev) =>
-      prev.map((l) =>
-        l.username === username
-          ? { ...l, currentBid: amount, bidCount: l.bidCount + 1 }
-          : l,
-      ),
-    );
-  }
+    },
+    [],
+  );
 
   function handleOpenBid(listing: MarketplaceListing) {
-    setDetailListing(null);
-    setActiveListing(listing);
+    setDetailListingId(null);
+    setActiveListingId(listing.id);
   }
 
   const filtered = useMemo(() => {
     let result = listings;
 
-    // Filter by watchlist if enabled
     if (showWatchlistOnly) {
       result = result.filter((listing) => isInWatchlist(listing.id));
     }
 
-    // Filter by category
     if (activeCategory !== "all") {
       result = result.filter((l) => l.category === activeCategory);
     }
 
-    // Filter by search
     if (search.trim()) {
       const q = search.toLowerCase().trim();
       result = result.filter((l) => l.username.includes(q));
     }
 
-    // Sort results
     switch (sortKey) {
       case "ending":
         result = [...result].sort(
@@ -250,7 +318,24 @@ function MarketplacePageContent() {
 
       {/* ── MAIN CONTENT ─────────────────────────────── */}
       <div className="max-w-5xl mx-auto px-6 pb-24">
-        {!loading && <StatsBar listings={listings} />}
+        {error && listings.length > 0 && (
+          <div className="mb-6 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-sm text-red-400 font-medium">
+              <span>⚠️</span>
+              <span>{error}</span>
+            </div>
+            <button
+              type="button"
+              onClick={loadListings}
+              disabled={loading}
+              className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed text-red-300 text-xs font-bold rounded-lg transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {listings.length > 0 && !error && <StatsBar listings={listings} />}
 
         {/* ── CONTROLS ─────────────────────────────── */}
         <div className="flex flex-col gap-4 mb-8">
@@ -346,7 +431,7 @@ function MarketplacePageContent() {
         </div>
 
         {/* ── RESULTS COUNT ─────────────────────────── */}
-        {!loading && (
+        {listings.length > 0 && !error && (
           <p className="text-xs text-neutral-600 font-bold uppercase tracking-widest mb-6">
             {filtered.length} listing{filtered.length !== 1 ? "s" : ""} found
             {search && ` for "${search}"`}
@@ -354,7 +439,31 @@ function MarketplacePageContent() {
         )}
 
         {/* ── GRID ─────────────────────────────────── */}
-        {loading ? (
+        {/* Full-page failure only when nothing is on screen yet; with cached
+            listings the inline banner above handles retry without wiping data. */}
+        {error && listings.length === 0 ? (
+          <div className="py-20 text-center space-y-6">
+            <div className="text-5xl mb-2">⚠️</div>
+            <div>
+              <h3 className="text-2xl font-black mb-2 text-white">
+                Unable to load marketplace listings
+              </h3>
+              <p className="text-neutral-400 text-sm max-w-md mx-auto leading-relaxed">
+                {error}
+              </p>
+            </div>
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={loadListings}
+                disabled={loading}
+                className="px-6 py-3 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm text-white rounded-xl transition active:scale-95 shadow-lg shadow-indigo-500/20"
+              >
+                Try again
+              </button>
+            </div>
+          </div>
+        ) : loading && listings.length === 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {Array.from({ length: 6 }).map((_, i) => (
               <div
@@ -446,7 +555,7 @@ function MarketplacePageContent() {
                 key={listing.id}
                 listing={listing}
                 onBid={handleOpenBid}
-                onViewDetails={setDetailListing}
+                onViewDetails={(l) => setDetailListingId(l.id)}
               />
             ))}
           </div>
@@ -456,7 +565,7 @@ function MarketplacePageContent() {
       <ListingDetailModal
         listing={detailListing}
         isWatched={detailListing ? isInWatchlist(detailListing.id) : false}
-        onClose={() => setDetailListing(null)}
+        onClose={() => setDetailListingId(null)}
         onToggleWatchlist={(listing) =>
           toggleWatchlist(listing.id, listing.username)
         }
@@ -466,10 +575,10 @@ function MarketplacePageContent() {
       {/* ── BID MODAL ─────────────────────────────── */}
       <BidModal
         listing={activeListing}
-        onClose={() => setActiveListing(null)}
+        onClose={() => setActiveListingId(null)}
         onBidSuccess={(username, amount) => {
           handleBidSuccess(username, amount);
-          setTimeout(() => setActiveListing(null), 2500);
+          setTimeout(() => setActiveListingId(null), 2500);
         }}
       />
     </div>
@@ -478,8 +587,13 @@ function MarketplacePageContent() {
 
 export default function MarketplacePage() {
   return (
-    <WatchlistProvider>
-      <MarketplacePageContent />
+    <WatchlistProvider userId="demo_user">
+      {/* Both API providers wrap the content so all children can use the hooks */}
+      <MarketplaceApiProvider>
+        <RealtimeApiProvider>
+          <MarketplacePageContent />
+        </RealtimeApiProvider>
+      </MarketplaceApiProvider>
     </WatchlistProvider>
   );
 }

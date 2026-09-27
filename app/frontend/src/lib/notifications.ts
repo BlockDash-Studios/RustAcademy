@@ -95,6 +95,10 @@ export const INITIAL_NOTIFICATIONS: StoredNotification[] = [
   },
 ];
 
+/**
+ * Pure sort — no browser globals. Safe to call on the server or client.
+ * Unread notifications appear first; within each group they are sorted newest first.
+ */
 export function sortNotifications(
   notifications: StoredNotification[],
 ): StoredNotification[] {
@@ -111,6 +115,9 @@ export function sortNotifications(
   });
 }
 
+/**
+ * Pure filter — no browser globals. Safe to call on the server or client.
+ */
 export function filterNotifications(
   notifications: StoredNotification[],
   category: NotificationCategory | "all",
@@ -129,20 +136,41 @@ export function filterNotifications(
   });
 }
 
+/**
+ * Returns a human-readable relative time string such as "3 hours ago".
+ *
+ * SSR safety: `Intl.RelativeTimeFormat` and `Date.parse` are available in
+ * Node.js, so this function never throws on the server.  However the string
+ * it produces depends on `Date.now()`, which means the server render and the
+ * first client render may produce different strings — a hydration mismatch.
+ *
+ * Components that call this function should either:
+ *   a) render it only after the client has hydrated (wrap in a `useEffect` or
+ *      guard with `hasHydrated` from `useNotificationCenter`), or
+ *   b) suppress the hydration warning with `suppressHydrationWarning` on the
+ *      wrapping element when an exact match is not critical.
+ */
 export function formatRelativeTime(isoTimestamp: string): string {
   const differenceMs = Date.parse(isoTimestamp) - Date.now();
   const differenceMinutes = Math.round(differenceMs / 60000);
-  const formatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
-  if (Math.abs(differenceMinutes) < 60) {
-    return formatter.format(differenceMinutes, "minute");
+  try {
+    const formatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+    if (Math.abs(differenceMinutes) < 60) {
+      return formatter.format(differenceMinutes, "minute");
+    }
+
+    const differenceHours = Math.round(differenceMinutes / 60);
+    if (Math.abs(differenceHours) < 24) {
+      return formatter.format(differenceHours, "hour");
+    }
+
+    const differenceDays = Math.round(differenceHours / 24);
+    return formatter.format(differenceDays, "day");
+  } catch {
+    // Fallback for environments where Intl.RelativeTimeFormat is unavailable.
+    const absDays = Math.abs(Math.round(differenceMs / 86400000));
+    return absDays === 0 ? "today" : `${absDays} day${absDays !== 1 ? "s" : ""} ago`;
   }
-
-  const differenceHours = Math.round(differenceMinutes / 60);
-  if (Math.abs(differenceHours) < 24) {
-    return formatter.format(differenceHours, "hour");
-  }
-
-  const differenceDays = Math.round(differenceHours / 24);
-  return formatter.format(differenceDays, "day");
 }

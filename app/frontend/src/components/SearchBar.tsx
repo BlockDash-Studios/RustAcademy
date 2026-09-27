@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { User, MOCK_USERS } from "@/lib/mockData";
 
 export function SearchBar() {
@@ -9,7 +10,9 @@ export function SearchBar() {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<User[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   useEffect(() => {
     // Click outside to close
@@ -25,6 +28,7 @@ export function SearchBar() {
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
+      setActiveIndex(-1);
       return;
     }
 
@@ -39,23 +43,51 @@ export function SearchBar() {
         user.bio.toLowerCase().includes(lowerQuery)
       );
       setResults(filtered.slice(0, 5)); // max 5 results
+      setActiveIndex(-1);
       setIsLoading(false);
     }, 300); // simulate network delay
 
     return () => clearTimeout(timer);
   }, [query]);
 
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      setIsOpen(false);
+      return;
+    }
+    if (!isOpen || results.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => (index + 1) % results.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => (index <= 0 ? results.length - 1 : index - 1));
+    } else if (event.key === "Enter" && activeIndex >= 0) {
+      event.preventDefault();
+      router.push(`/profile/${results[activeIndex].username}`);
+      setIsOpen(false);
+    }
+  };
+
   return (
     <div className="relative w-full" ref={dropdownRef}>
       <div className="relative flex items-center">
-        <svg className="absolute left-3 w-4 h-4 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <label htmlFor="global-profile-search" className="sr-only">Search profiles</label>
+        <svg aria-hidden="true" className="absolute left-3 w-4 h-4 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
         <input 
+          id="global-profile-search"
           type="text" 
           placeholder="Search global profiles..." 
           className="w-full bg-neutral-900/50 border border-white/10 rounded-full pl-10 pr-10 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all font-medium"
           value={query}
+          role="combobox"
+          aria-expanded={isOpen && Boolean(query.trim())}
+          aria-controls="profile-search-results"
+          aria-autocomplete="list"
+          aria-activedescendant={activeIndex >= 0 ? `profile-result-${results[activeIndex].id}` : undefined}
+          onKeyDown={handleKeyDown}
           onChange={(e) => {
             setQuery(e.target.value);
             if (!isOpen) setIsOpen(true);
@@ -66,7 +98,9 @@ export function SearchBar() {
         />
         {query && (
           <button 
-            className="absolute right-3 text-neutral-500 hover:text-white transition"
+            type="button"
+            aria-label="Clear profile search"
+            className="absolute right-3 text-neutral-500 hover:text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
             onClick={() => setQuery("")}
             title="Clear"
           >
@@ -78,9 +112,9 @@ export function SearchBar() {
       </div>
 
       {isOpen && query.trim() && (
-        <div className="absolute top-full lg:left-0 -left-10 lg:w-full w-[120%] mt-2 bg-neutral-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div id="profile-search-results" role="listbox" aria-label="Profile search results" className="absolute top-full lg:left-0 -left-10 lg:w-full w-[120%] mt-2 bg-neutral-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
           {isLoading ? (
-            <div className="p-2 space-y-1">
+            <div className="p-2 space-y-1" role="status" aria-live="polite">
               {[...Array(3)].map((_, i) => (
                 <div key={i} className="flex items-center gap-3 p-2 animate-pulse rounded-xl bg-white/[0.02]">
                   <div className="w-10 h-10 rounded-full bg-white/10"></div>
@@ -99,8 +133,11 @@ export function SearchBar() {
               {results.map((user) => (
                 <Link 
                   key={user.id} 
+                  id={`profile-result-${user.id}`}
+                  role="option"
+                  aria-selected={results.indexOf(user) === activeIndex}
                   href={`/profile/${user.username}`} 
-                  className="flex items-center gap-4 px-4 py-2 hover:bg-white/5 transition group"
+                  className={`flex items-center gap-4 px-4 py-2 hover:bg-white/5 transition group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-300 ${results.indexOf(user) === activeIndex ? "bg-white/10" : ""}`}
                   onClick={() => setIsOpen(false)}
                 >
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shadow-inner ${user.avatarColor}`}>

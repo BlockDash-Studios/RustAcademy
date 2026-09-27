@@ -1,4 +1,4 @@
-import { envSchema } from "./env.schema";
+import { envSchema, validateEnv } from "./env.schema";
 
 /**
  * Helper to create env without specific keys
@@ -78,6 +78,18 @@ describe("Environment Schema Validation", () => {
 
       expect(error).toBeUndefined();
       expect(value.SUPABASE_URL).toBe("http://localhost:54321");
+    });
+
+    it("should allow explicit ingestion enablement when contract id is configured", () => {
+      const env = {
+        ...validEnv,
+        RustAcademy_CONTRACT_ID: "C1234567890EXAMPLE",
+        INGESTION_ENABLED: true,
+      };
+      const { error, value } = envSchema.validate(env);
+
+      expect(error).toBeUndefined();
+      expect(value.INGESTION_ENABLED).toBe(true);
     });
   });
 
@@ -183,6 +195,15 @@ describe("Environment Schema Validation", () => {
       expect(error).toBeDefined();
       expect(error?.message).toContain("SUPABASE_URL");
     });
+
+    it("should reject INGESTION_ENABLED without RustAcademy_CONTRACT_ID", () => {
+      const env = { ...validEnv, INGESTION_ENABLED: true };
+      const { error } = envSchema.validate(env);
+
+      expect(error).toBeDefined();
+      expect(error?.message).toContain("RustAcademy_CONTRACT_ID");
+      expect(error?.message).toContain("INGESTION_ENABLED");
+    });
   });
 
   describe("error message clarity", () => {
@@ -217,4 +238,64 @@ it("rejects unknown environment variables when strict validation enabled", () =>
   );
 
   expect(result.error).toBeDefined();
+});
+
+describe("validateEnv", () => {
+  const validEnv = {
+    PORT: 4000,
+    NETWORK: "testnet",
+    SUPABASE_URL: "https://example.supabase.co",
+    SUPABASE_ANON_KEY: "test-anon-key-12345",
+    NODE_ENV: "development",
+  };
+
+  it("returns typed config with defaults for a valid environment", () => {
+    const config = validateEnv(validEnv);
+
+    expect(config.PORT).toBe(4000);
+    expect(config.NETWORK).toBe("testnet");
+    expect(config.NODE_ENV).toBe("development");
+    expect(config.CACHE_MAX_ITEMS).toBe(500);
+  });
+
+  it("reports every missing required variable in a single error", () => {
+    let message = "";
+    try {
+      validateEnv({ PORT: 4000, NODE_ENV: "development" });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+
+    expect(message).toContain("Environment validation failed");
+    expect(message).toContain("NETWORK");
+    expect(message).toContain("SUPABASE_URL");
+    expect(message).toContain("SUPABASE_ANON_KEY");
+    expect(message).toContain("Fix the listed variables");
+  });
+
+  it("names the offending key for invalid values", () => {
+    let message = "";
+    try {
+      validateEnv({ ...validEnv, NETWORK: "invalid-network" });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+
+    expect(message).toContain("NETWORK");
+    expect(message).toMatch(/testnet|mainnet/);
+  });
+
+  it("does not leak secret values in the error message", () => {
+    let message = "";
+    try {
+      validateEnv({
+        PORT: 4000,
+        SUPABASE_ANON_KEY: "super-secret-key-value-12345",
+      });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+
+    expect(message).not.toContain("super-secret-key-value-12345");
+  });
 });

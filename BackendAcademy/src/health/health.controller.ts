@@ -1,13 +1,16 @@
 import { Controller, Get } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 
+@ApiTags('health')
 @Controller('health')
+//controller for health check endpoint
 export class HealthController {
   @Get()
-  check() {
+  getHealth() {
     return {
       status: 'ok',
+      service: 'backend-academy',
       timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
     };
   }
 }

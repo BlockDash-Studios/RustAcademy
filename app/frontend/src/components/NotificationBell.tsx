@@ -12,7 +12,7 @@ import { useNotificationCenter } from "@/components/NotificationCenterProvider";
 
 export function NotificationBell() {
   const pathname = usePathname();
-  const { notifications, unreadCount, markAsRead, markAllAsRead } =
+  const { notifications, unreadCount, markAsRead, markAllAsRead, hasHydrated } =
     useNotificationCenter();
   const [isOpen, setIsOpen] = useState(false);
   const [readState, setReadState] =
@@ -57,6 +57,11 @@ export function NotificationBell() {
     [notifications, readState],
   );
 
+  // Only show the badge once the client has hydrated from localStorage so the
+  // server-rendered HTML (always 0 for an anonymous visitor) matches the initial
+  // client render before React takes over.  After hydration the real count is shown.
+  const displayCount = hasHydrated ? unreadCount : 0;
+
   return (
     <div className="relative" ref={panelRef}>
       <button
@@ -64,17 +69,17 @@ export function NotificationBell() {
         aria-expanded={isOpen}
         aria-controls=" RustAcademy-notification-panel"
         aria-label={
-          unreadCount > 0
-            ? `Open notifications. ${unreadCount} unread.`
+          displayCount > 0
+            ? `Open notifications. ${displayCount} unread.`
             : "Open notifications."
         }
         onClick={() => setIsOpen((currentValue) => !currentValue)}
         className="relative flex h-11 items-center justify-center rounded-full border border-white/10 bg-white/5 px-3.5 text-sm font-semibold text-white transition hover:bg-white/10"
       >
         <span aria-hidden="true">Inbox</span>
-        {unreadCount > 0 ? (
+        {displayCount > 0 ? (
           <span className="absolute -right-1 -top-1 min-w-6 rounded-full bg-indigo-500 px-1.5 py-0.5 text-[11px] font-semibold text-white">
-            {unreadCount}
+            {displayCount}
           </span>
         ) : null}
       </button>
@@ -139,7 +144,7 @@ export function NotificationBell() {
 
           <div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4">
             <span className="text-sm text-neutral-400">
-              {unreadCount} unread
+              {displayCount} unread
             </span>
             <Link
               href="/notifications"

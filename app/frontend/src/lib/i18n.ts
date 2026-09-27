@@ -1,10 +1,11 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 
-const initialLanguage =
-  typeof window !== "undefined"
-    ? window.localStorage.getItem("i18nextLng") || "en"
-    : "en";
+// Start in "en" on both server and client so SSR markup matches the first
+// client render (reading localStorage here would cause a hydration mismatch
+// between the server-rendered language and the client's saved one). The
+// saved language is restored after hydration via a useEffect in Header.
+const initialLanguage = "en";
 
 i18n.use(initReactI18next).init({
   lng: initialLanguage,

@@ -17,22 +17,25 @@ import { JobQueueMetricsService } from "./job-queue-metrics.service";
 import { SupabaseModule } from "../supabase/supabase.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { LinksModule } from "../links/links.module";
-import { ReconciliationModule } from "../reconciliation/reconciliation.module";
-import { IngestionModule } from "../ingestion/ingestion.module";
 import { AuthModule } from "../auth/auth.module";
 import { MetricsModule } from "../metrics/metrics.module";
 import { ApiKeysModule } from "../api-keys/api-keys.module";
 import { ContractsModule } from "../contracts/contracts.module";
 import { TransactionsModule } from "../transactions/transactions.module";
 import { StellarModule } from "../stellar/stellar.module";
+import { AppConfigModule } from "../config/config.module";
 import {
   WebhookDeliveryHandler,
+  StellarReconnectHandler,
   RecurringPaymentHandler,
   ExportGenerationHandler,
-  ReconciliationHandler,
-  StellarReconnectHandler,
   RefundJobHandler,
 } from "./handlers";
+import {
+  WebhookDeliveryAdapter,
+  EmailDeliveryAdapter,
+  DownloadLinkAdapter,
+} from "./delivery";
 
 /**
  * Job Queue Module
@@ -47,11 +50,7 @@ import {
  * - JobQueueMetricsService: Prometheus metrics for job lifecycle events
  * - JobAdminController: Admin API endpoints for job monitoring and management
  * - WebhookDeliveryHandler: Handler for webhook delivery jobs
- * - RecurringPaymentHandler: Handler for recurring payment jobs
- * - ExportGenerationHandler: Handler for export generation jobs
- * - ReconciliationHandler: Handler for reconciliation jobs
  * - StellarReconnectHandler: Handler for Stellar SSE reconnection jobs
- * - RefundJobHandler: Handler for on-chain refund operations
  */
 @Module({
   imports: [
@@ -64,8 +63,7 @@ import {
     StellarModule,
     forwardRef(() => NotificationsModule),
     forwardRef(() => LinksModule),
-    forwardRef(() => ReconciliationModule),
-    forwardRef(() => IngestionModule),
+    AppConfigModule,
   ],
   controllers: [JobAdminController],
   providers: [
@@ -77,11 +75,13 @@ import {
     JobQueueInitializer,
     JobQueueMetricsService,
     WebhookDeliveryHandler,
+    StellarReconnectHandler,
     RecurringPaymentHandler,
     ExportGenerationHandler,
-    ReconciliationHandler,
-    StellarReconnectHandler,
     RefundJobHandler,
+    WebhookDeliveryAdapter,
+    EmailDeliveryAdapter,
+    DownloadLinkAdapter,
   ],
   exports: [
     JobQueueService,
@@ -89,11 +89,9 @@ import {
     JobRepository,
     JobQueueMetricsService,
     WebhookDeliveryHandler,
-    RecurringPaymentHandler,
-    ExportGenerationHandler,
-    ReconciliationHandler,
     StellarReconnectHandler,
-    RefundJobHandler,
+    WebhookDeliveryAdapter,
+    EmailDeliveryAdapter,
   ],
 })
 export class JobQueueModule {}

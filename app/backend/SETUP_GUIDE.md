@@ -1,5 +1,9 @@
 # Crash Reporting Setup Guide
 
+> **Scope:** This guide covers setup and testing for the **crash reporting feature
+> only**. For general backend setup — environment variables, feature flags,
+> contract ingestion, and rate limiting — see [`README.md`](./README.md).
+
 This guide will walk you through setting up and testing the crash reporting feature.
 
 ## Prerequisites

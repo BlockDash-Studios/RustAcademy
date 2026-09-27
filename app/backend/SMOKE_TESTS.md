@@ -41,6 +41,41 @@ Specialized tests for Stellar infrastructure:
 - Error resilience
 - Performance benchmarks for external services
 
+### Export Failure Notification Tests
+
+The export generation handler now includes retry semantics and user notification on failure:
+
+- **Retry Backoff**: Exponential backoff with delays of 1m, 5m, 30m
+- **User Notification**: In-app notification dispatched via NotificationService when export permanently fails
+- **DLQ Enrichment**: Structured failure details logged for debugging (userId, exportType, format, deliveryMethod, attempt count)
+- **Notification Payload**: `ExportFailedPayload` includes error message, attempt count, and permanent flag
+
+Unit tests cover:
+- Retry attempt logging with backoff delay calculation
+- DLQ enrichment on final failure
+- User notification dispatch with correct payload
+- Notification failure isolation (does not re-throw)
+
+### Export Delivery Pipeline Tests
+
+The export generation handler now supports three delivery methods configured via environment variables:
+
+- **Webhook Delivery**: POSTs export data to a configured `webhookUrl`
+- **Email Delivery**: Sends export as a SendGrid attachment (requires `SENDGRID_API_KEY` + `SENDGRID_FROM_EMAIL`)
+- **Download Link**: Uploads export to Supabase Storage (`EXPORT_STORAGE_BUCKET`) and returns a signed URL (`EXPORT_LINK_EXPIRY_MS`)
+
+Configuration variables:
+- `EXPORT_STORAGE_BUCKET` — Supabase Storage bucket for export files
+- `EXPORT_LINK_EXPIRY_MS` — Signed URL expiry in milliseconds (default: 7 days)
+- `EXPORT_WEBHOOK_TIMEOUT_MS` — HTTP timeout for webhook delivery (default: 30s)
+- `APP_BASE_URL` — Base URL for constructing absolute download links
+
+Unit tests cover:
+- Webhook delivery adapter: 2xx success, non-2xx failure, missing webhook URL
+- Email delivery adapter: SendGrid success, missing config failure, missing recipient
+- Download link adapter: Upload + signed URL success, missing bucket failure
+- Handler integration: Correct adapter invocation, delivery notification dispatch
+
 ## Running Smoke Tests
 
 ### Local Development
@@ -102,6 +137,19 @@ The smoke test workflow (`.github/workflows/smoke-tests.yml`):
 - `SMOKE_TEST_BASE_URL`: Target API URL
 - `NODE_ENV`: Test environment
 - `STELLAR_NETWORK`: Stellar network (mainnet/testnet)
+- `RustAcademy_CONTRACT_ID`: Active contract ID used by Soroban-dependent checks
+- `INGESTION_ENABLED`: Must be `true` before boot-time ingestion is allowed
+
+### Ingestion Safety Gate
+
+Before enabling contract event ingestion in any shared environment:
+
+1. Set `INGESTION_ENABLED=true`; `RustAcademy_CONTRACT_ID` alone no longer starts ingestion.
+2. Publish the active `RustAcademy` registry entry with matching `contractId`.
+3. Include `metadata.eventSchemaVersion` in the registry entry and keep it aligned with the backend-supported schema version.
+4. If dual-read is configured, provide `previousContractId` plus `effectiveLedger` or `effectiveTime`.
+
+If registry validation fails, the backend now refuses to start ingestion instead of falling back to an unvalidated event stream.
 
 ## Test Categories
 

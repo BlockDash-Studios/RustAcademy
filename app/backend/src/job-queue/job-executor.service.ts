@@ -14,6 +14,7 @@ import { JobRegistry } from './job-registry.service';
 import { CancellationStore } from './cancellation-token';
 import { JobQueueMetricsService } from './job-queue-metrics.service';
 import { Job, JobStatus, RetryPolicy } from './types';
+import { CorrelationContextService } from '../common/correlation/correlation-context.service';
 
 /**
  * Job Executor Service
@@ -39,6 +40,7 @@ export class JobExecutor implements OnModuleInit {
     private readonly registry: JobRegistry,
     private readonly cancellationStore: CancellationStore,
     private readonly metrics: JobQueueMetricsService,
+    private readonly correlationContext: CorrelationContextService,
   ) {}
 
   /**
@@ -144,86 +146,96 @@ export class JobExecutor implements OnModuleInit {
   private async executeJob(job: Job): Promise<void> {
     let policy: RetryPolicy;
     
-    try {
-      // Get the retry policy for this job type to determine visibility timeout
-      policy = this.registry.getPolicy(job.type);
+    // Restore the caller's correlation ID into AsyncLocalStorage so that
+    // any logging, metrics, or downstream service calls within the handler
+    // carry the same correlation ID as the originating HTTP request.
+    // Falls back to the job ID for jobs without an origin context.
+    const jobCorrelationId = job.correlationId || job.id;
 
-      // Check if this job has an expired visibility timeout
-      // This indicates the previous execution attempt timed out or crashed
-      if (job.visibilityTimeout && job.visibilityTimeout < new Date()) {
-        this.logger.warn(
-          `Job ${job.id} has expired visibility timeout (type: ${job.type}, timeout: ${job.visibilityTimeout.toISOString()}). Treating as timeout failure.`,
-        );
-        
-        // Treat expired visibility timeout as a failure
-        const timeoutError = new Error(
-          `Visibility timeout expired at ${job.visibilityTimeout.toISOString()}`,
-        );
-        await this.handleJobFailure(job, timeoutError, policy);
-        return;
+    await this.correlationContext.run(jobCorrelationId, async () => {
+      try {
+        // Get the retry policy for this job type to determine visibility timeout
+        policy = this.registry.getPolicy(job.type);
+
+        // Check if this job has an expired visibility timeout
+        // This indicates the previous execution attempt timed out or crashed
+        if (job.visibilityTimeout && job.visibilityTimeout < new Date()) {
+          this.logger.warn(
+            `Job ${job.id} has expired visibility timeout (type: ${job.type}, timeout: ${job.visibilityTimeout.toISOString()}). Treating as timeout failure.`,
+          );
+          
+          // Treat expired visibility timeout as a failure
+          const timeoutError = new Error(
+            `Visibility timeout expired at ${job.visibilityTimeout.toISOString()}`,
+          );
+          await this.handleJobFailure(job, timeoutError, policy);
+          return;
+        }
+
+        // Calculate visibility timeout: current time + policy.visibilityTimeoutMs
+        const visibilityTimeout = new Date(Date.now() + policy.visibilityTimeoutMs);
+        const startedAt = new Date();
+
+        // Lock the job by updating status to 'running' and setting visibility timeout
+        // This prevents other executor instances from picking up the same job
+        await this.repository.updateJobStatus(job.id, JobStatus.RUNNING, {
+          startedAt,
+          visibilityTimeout,
+        });
+
+        // Update gauge metrics: pending -> running
+        this.metrics.updateJobsPendingCount(job.type, -1);
+        this.metrics.updateJobsRunningCount(job.type, 1);
+
+        // Structured logging: job started at INFO level
+        this.logger.log({
+          message: 'Job started',
+          jobId: job.id,
+          type: job.type,
+          attempts: job.attempts + 1,
+          correlationId: jobCorrelationId,
+        });
+
+        // Retrieve handler from JobRegistry
+        const handler = this.registry.getHandler(job.type);
+
+        // Create CancellationToken for the job
+        const cancellationToken = this.cancellationStore.createToken(job.id);
+
+        // Invoke handler.execute() with job and cancellation token
+        await handler.execute(job, cancellationToken);
+
+        // Success: update status to completed, set completedAt
+        const completedAt = new Date();
+        await this.repository.updateJobStatus(job.id, JobStatus.COMPLETED, {
+          completedAt,
+        });
+
+        // Calculate execution duration in seconds
+        const durationMs = completedAt.getTime() - startedAt.getTime();
+        const durationSeconds = durationMs / 1000;
+
+        // Update metrics
+        this.metrics.incrementJobsCompleted(job.type);
+        this.metrics.updateJobsRunningCount(job.type, -1);
+        this.metrics.recordJobExecutionDuration(job.type, durationSeconds);
+
+        // Structured logging: job completed at INFO level
+        this.logger.log({
+          message: 'Job completed',
+          jobId: job.id,
+          type: job.type,
+          correlationId: jobCorrelationId,
+          duration: durationMs,
+        });
+
+        // Clean up cancellation token
+        this.cancellationStore.clearCancellation(job.id);
+      } catch (error) {
+        // Handle failure: increment attempts, set failureReason, schedule retry or move to DLQ
+        await this.handleJobFailure(job, error, policy);
       }
-
-      // Calculate visibility timeout: current time + policy.visibilityTimeoutMs
-      const visibilityTimeout = new Date(Date.now() + policy.visibilityTimeoutMs);
-      const startedAt = new Date();
-
-      // Lock the job by updating status to 'running' and setting visibility timeout
-      // This prevents other executor instances from picking up the same job
-      await this.repository.updateJobStatus(job.id, JobStatus.RUNNING, {
-        startedAt,
-        visibilityTimeout,
-      });
-
-      // Update gauge metrics: pending -> running
-      this.metrics.updateJobsPendingCount(job.type, -1);
-      this.metrics.updateJobsRunningCount(job.type, 1);
-
-      // Structured logging: job started at INFO level
-      this.logger.log({
-        message: 'Job started',
-        jobId: job.id,
-        type: job.type,
-        attempts: job.attempts + 1,
-      });
-
-      // Retrieve handler from JobRegistry
-      const handler = this.registry.getHandler(job.type);
-
-      // Create CancellationToken for the job
-      const cancellationToken = this.cancellationStore.createToken(job.id);
-
-      // Invoke handler.execute() with job and cancellation token
-      await handler.execute(job, cancellationToken);
-
-      // Success: update status to completed, set completedAt
-      const completedAt = new Date();
-      await this.repository.updateJobStatus(job.id, JobStatus.COMPLETED, {
-        completedAt,
-      });
-
-      // Calculate execution duration in seconds
-      const durationMs = completedAt.getTime() - startedAt.getTime();
-      const durationSeconds = durationMs / 1000;
-
-      // Update metrics
-      this.metrics.incrementJobsCompleted(job.type);
-      this.metrics.updateJobsRunningCount(job.type, -1);
-      this.metrics.recordJobExecutionDuration(job.type, durationSeconds);
-
-      // Structured logging: job completed at INFO level
-      this.logger.log({
-        message: 'Job completed',
-        jobId: job.id,
-        type: job.type,
-        duration: durationMs,
-      });
-
-      // Clean up cancellation token
-      this.cancellationStore.clearCancellation(job.id);
-    } catch (error) {
-      // Handle failure: increment attempts, set failureReason, calculate retry delay
-      await this.handleJobFailure(job, error, policy);
-    }
+    });
   }
 
   /**
@@ -252,6 +264,7 @@ export class JobExecutor implements OnModuleInit {
       message: 'Job failed',
       jobId: job.id,
       type: job.type,
+      correlationId: job.correlationId || job.id,
       attempts: newAttempts,
       failureReason,
       stack: error.stack,

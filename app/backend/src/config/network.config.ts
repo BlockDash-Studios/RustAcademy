@@ -35,12 +35,15 @@ const DEFAULT_ENDPOINTS: Record<
   },
 };
 
-function normalizeNetworkValue(value?: string): StellarNetwork | undefined {
+function normalizeNetworkValue(
+  key: string,
+  value?: string,
+): StellarNetwork | undefined {
   if (!value) return undefined;
   const normalized = value.trim().toLowerCase();
   if (normalized === 'testnet' || normalized === 'mainnet') return normalized;
   throw new Error(
-    `Invalid network value "${value}". Use "testnet" or "mainnet".`,
+    `Invalid value "${value}" for ${key}. Use "testnet" or "mainnet".`,
   );
 }
 
@@ -58,7 +61,7 @@ export function resolveNetworkSnapshot(
 ): NetworkSnapshot {
   const aliasValues = NETWORK_ALIASES.map((key) => ({
     key,
-    value: normalizeNetworkValue(env[key]),
+    value: normalizeNetworkValue(key, env[key]),
   })).filter((entry) => entry.value !== undefined);
 
   const unique = new Set(aliasValues.map((entry) => entry.value));
@@ -73,28 +76,40 @@ export function resolveNetworkSnapshot(
 
   const horizonUrl = env.HORIZON_URL?.trim() || defaults.horizonUrl;
   const sorobanRpcUrl = env.SOROBAN_RPC_URL?.trim() || defaults.sorobanRpcUrl;
-  const sorobanRpcUrls = [
-    sorobanRpcUrl,
-    ...(env.SOROBAN_RPC_URLS ?? '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean),
-  ];
+  const fallbackRpcUrls = (env.SOROBAN_RPC_URLS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
   const explorerUrl = env.STELLAR_EXPLORER_URL?.trim() || defaults.explorerUrl;
 
   if (!isValidHttpUrl(horizonUrl)) {
-    throw new Error(`Invalid HORIZON_URL "${horizonUrl}". Expected http/https URL.`);
+    throw new Error(
+      `Invalid HORIZON_URL "${horizonUrl}". Expected http/https URL. ` +
+        `Unset HORIZON_URL to use the ${network} default (${defaults.horizonUrl}).`,
+    );
   }
   if (!isValidHttpUrl(sorobanRpcUrl)) {
     throw new Error(
-      `Invalid SOROBAN_RPC_URL "${sorobanRpcUrl}". Expected http/https URL.`,
+      `Invalid SOROBAN_RPC_URL "${sorobanRpcUrl}". Expected http/https URL. ` +
+        `Unset SOROBAN_RPC_URL to use the ${network} default (${defaults.sorobanRpcUrl}).`,
     );
+  }
+  for (const url of fallbackRpcUrls) {
+    if (!isValidHttpUrl(url)) {
+      throw new Error(
+        `Invalid SOROBAN_RPC_URLS entry "${url}". Expected http/https URL. ` +
+          `Remove or fix the entry (or unset SOROBAN_RPC_URLS to use the ${network} default ${defaults.sorobanRpcUrl}).`,
+      );
+    }
   }
   if (!isValidHttpUrl(explorerUrl)) {
     throw new Error(
-      `Invalid STELLAR_EXPLORER_URL "${explorerUrl}". Expected http/https URL.`,
+      `Invalid STELLAR_EXPLORER_URL "${explorerUrl}". Expected http/https URL. ` +
+        `Unset STELLAR_EXPLORER_URL to use the ${network} default (${defaults.explorerUrl}).`,
     );
   }
+
+  const sorobanRpcUrls = [sorobanRpcUrl, ...fallbackRpcUrls];
 
   return {
     network,

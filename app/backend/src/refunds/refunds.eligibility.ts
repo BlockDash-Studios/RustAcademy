@@ -1,6 +1,10 @@
-import { PaymentDbStatus } from '../reconciliation/types/reconciliation.types';
-import { EscrowDbStatus } from '../reconciliation/types/reconciliation.types';
+import {
+  PaymentDbStatus,
+  EscrowDbStatus,
+} from '../supabase/supabase.service';
 import { LinkState } from '../links/link-state-machine';
+
+export { PaymentDbStatus, EscrowDbStatus };
 
 export function isPaymentRefundable(status: PaymentDbStatus): boolean {
   return status === PaymentDbStatus.Paid;

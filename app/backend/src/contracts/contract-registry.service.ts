@@ -23,7 +23,6 @@ import {
 } from "../events/contract-registry.events";
 import { ContractChangeWebhookService } from "./contract-change-webhook.service";
 import { ContractChangeWebhookDispatcher } from "./contract-change-webhook.dispatcher";
-import { ContractWritePolicyService } from "../feature-flags/contract-write-policy.service";
 
 interface RegistryRecord {
   name: string;
@@ -42,6 +41,27 @@ interface RegistryRecord {
   updatedAt: string;
   networkPassphrase: string;
   active: boolean;
+}
+
+export interface ContractRegistryViewRecord {
+  id: string;
+  wasmHash: string;
+  version: number;
+  deploymentId?: string;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+  previousContractId?: string;
+  effectiveLedger?: number;
+  effectiveTime?: string;
+  eventSchemaVersion?: number;
+}
+
+export interface ValidatedIngestionRegistration {
+  contractId: string;
+  previousContractId?: string;
+  effectiveLedger?: number;
+  effectiveTime?: string;
+  eventSchemaVersion: number;
 }
 
 @Injectable()
@@ -73,7 +93,6 @@ export class ContractRegistryService {
     private readonly eventEmitter: EventEmitter2,
     private readonly contractChangeWebhookService: ContractChangeWebhookService,
     private readonly webhookDispatcher: ContractChangeWebhookDispatcher,
-    private readonly contractWritePolicyService: ContractWritePolicyService,
   ) {
     this.expectedContracts = (
       process.env.CONTRACT_REGISTRY_EXPECTED_SET ?? " RustAcademy"
@@ -89,14 +108,7 @@ export class ContractRegistryService {
     const data = Object.fromEntries(
       active.map((record) => [
         record.name,
-        {
-          id: record.contractId,
-          wasmHash: record.wasmHash,
-          version: record.contractVersion,
-          deploymentId: record.deploymentId,
-          updatedAt: record.updatedAt,
-          metadata: record.metadata ?? {},
-        },
+        this.toRegistryView(record),
       ]),
     );
 
@@ -114,23 +126,77 @@ export class ContractRegistryService {
     };
   }
 
+  async getValidatedIngestionRegistration(
+    contractName: string,
+    configuredContractId: string,
+    expectedSchemaVersion: number,
+  ): Promise<ValidatedIngestionRegistration> {
+    const records = await this.readRecords();
+    const normalizedName = contractName.trim().toLowerCase();
+    const activeEntry = records.find(
+      (record) => record.active && record.name === normalizedName,
+    );
+
+    if (!activeEntry) {
+      throw new BadRequestException(
+        `No active contract registry entry found for ${normalizedName}`,
+      );
+    }
+
+    if (activeEntry.contractId !== configuredContractId) {
+      throw new BadRequestException(
+        `Configured contract ID ${configuredContractId} does not match active registry contract ${activeEntry.contractId} for ${normalizedName}`,
+      );
+    }
+
+    const eventSchemaVersion = this.extractEventSchemaVersion(activeEntry.metadata);
+
+    if (!eventSchemaVersion) {
+      throw new BadRequestException(
+        `Contract registry metadata for ${normalizedName} must declare metadata.eventSchemaVersion before ingestion can start`,
+      );
+    }
+
+    if (eventSchemaVersion !== expectedSchemaVersion) {
+      throw new BadRequestException(
+        `Contract registry schema version ${eventSchemaVersion} does not match backend-supported schema version ${expectedSchemaVersion} for ${normalizedName}`,
+      );
+    }
+
+    if (
+      activeEntry.previousContractId &&
+      activeEntry.previousContractId === activeEntry.contractId
+    ) {
+      throw new BadRequestException(
+        `Contract registry dual-read config for ${normalizedName} is invalid: previousContractId cannot match the active contract ID`,
+      );
+    }
+
+    if (
+      activeEntry.previousContractId &&
+      !activeEntry.effectiveLedger &&
+      !activeEntry.effectiveTime
+    ) {
+      throw new BadRequestException(
+        `Contract registry dual-read config for ${normalizedName} must include effectiveLedger or effectiveTime`,
+      );
+    }
+
+    return {
+      contractId: activeEntry.contractId,
+      previousContractId: activeEntry.previousContractId,
+      effectiveLedger: activeEntry.effectiveLedger,
+      effectiveTime: activeEntry.effectiveTime,
+      eventSchemaVersion,
+    };
+  }
+
   async publish(
     dto: PublishContractRegistryDto,
     actor = "deployment_automation",
   ) {
     const startTime = Date.now();
-    
-    // Service-level policy check for defense in depth
-    await this.contractWritePolicyService.assertWritePermission({
-      userId: actor,
-      operation: 'contract_registry.publish',
-      additionalContext: {
-        deploymentId: dto.deploymentId,
-        contractCount: dto.contracts.length,
-        contractNames: dto.contracts.map(c => c.name),
-      },
-    });
-    
+
     this.validatePassphrase(dto.networkPassphrase);
     this.validateContractSet(dto.contracts);
 
@@ -358,16 +424,6 @@ async finalizeDualRead(
 ) {
   const startTime = Date.now();
   const targetName = dto.name.toLowerCase();
-  
-  // Service-level policy check for defense in depth
-  await this.contractWritePolicyService.assertWritePermission({
-    userId: actor,
-    operation: 'contract_registry.rollback',
-    contractName: targetName,
-    additionalContext: {
-      targetVersion: dto.version,
-    },
-  });
 
   try {
     const result = await this.retryOperation(
@@ -524,6 +580,60 @@ async finalizeDualRead(
       networkPassphrase: dto.networkPassphrase,
       active: true,
     };
+  }
+
+  private toRegistryView(record: RegistryRecord): ContractRegistryViewRecord {
+    return {
+      id: record.contractId,
+      wasmHash: record.wasmHash,
+      version: record.contractVersion,
+      deploymentId: record.deploymentId,
+      updatedAt: record.updatedAt,
+      metadata: record.metadata ?? {},
+      previousContractId: record.previousContractId,
+      effectiveLedger: record.effectiveLedger,
+      effectiveTime: record.effectiveTime,
+      eventSchemaVersion: this.extractEventSchemaVersion(record.metadata),
+    };
+  }
+
+  private extractEventSchemaVersion(
+    metadata?: Record<string, unknown>,
+  ): number | undefined {
+    if (!metadata) {
+      return undefined;
+    }
+
+    const candidates = [
+      metadata.eventSchemaVersion,
+      metadata.event_schema_version,
+      this.readNestedMetadataNumber(metadata, ["ingestion", "eventSchemaVersion"]),
+      this.readNestedMetadataNumber(metadata, ["ingestion", "event_schema_version"]),
+      this.readNestedMetadataNumber(metadata, ["eventSchema", "version"]),
+    ];
+
+    return candidates.find(this.isPositiveInteger);
+  }
+
+  private readNestedMetadataNumber(
+    metadata: Record<string, unknown>,
+    path: string[],
+  ): number | undefined {
+    let current: unknown = metadata;
+
+    for (const key of path) {
+      if (!current || typeof current !== "object" || Array.isArray(current)) {
+        return undefined;
+      }
+
+      current = (current as Record<string, unknown>)[key];
+    }
+
+    return typeof current === "number" ? current : undefined;
+  }
+
+  private isPositiveInteger(value: unknown): value is number {
+    return typeof value === "number" && Number.isInteger(value) && value > 0;
   }
 
   private buildEtag(version: number): string {

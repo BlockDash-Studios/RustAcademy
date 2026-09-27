@@ -12,6 +12,7 @@ export {
   RetryPolicy,
   CancellationToken,
   JobHandler,
+  ExportRetryState,
 } from './job.types';
 
 // Job payload types

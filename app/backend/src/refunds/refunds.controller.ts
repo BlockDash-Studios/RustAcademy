@@ -23,12 +23,10 @@ import { RefundsService } from './refunds.service';
 import { InitiateRefundDto } from './dto/initiate-refund.dto';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
-import { NetworkSafetyGuard } from '../feature-flags/network-safety.guard';
-import { RequiresFlag } from '../feature-flags/requires-flag.decorator';
 import { decodeCursor, clampLimit } from '../common/pagination/cursor.util';
 
 interface ApiKeyRequest extends Request {
-  apiKey: { id: string };
+  apiKey?: Request['apiKey'];
 }
 
 @ApiTags('admin/refunds')
@@ -45,8 +43,6 @@ export class RefundsController {
 
   @Post()
   @HttpCode(HttpStatus.OK)
-  @UseGuards(NetworkSafetyGuard)
-  @RequiresFlag('mainnet.refunds')
   @ApiOperation({ summary: 'Initiate a refund (idempotent)' })
   @ApiResponse({ status: 200, description: 'Refund attempt created or existing attempt returned' })
   @ApiResponse({ status: 409, description: 'Entity is not in a refundable state' })
@@ -55,14 +51,12 @@ export class RefundsController {
     @Body() dto: InitiateRefundDto,
     @Req() req: ApiKeyRequest,
   ) {
-    const actorId: string = req.apiKey.id;
+    const actorId = req.apiKey?.id ?? 'api';
     return this.refundsService.initiateRefund(dto, actorId);
   }
 
   @Post(':id/approve')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(NetworkSafetyGuard)
-  @RequiresFlag('mainnet.refunds')
   @ApiOperation({ summary: 'Approve a pending refund and submit to on-chain' })
   @ApiResponse({ status: 200, description: 'Refund submitted for processing' })
   @ApiResponse({ status: 409, description: 'Refund is not in pending state' })
@@ -71,14 +65,12 @@ export class RefundsController {
     @Param('id') id: string,
     @Req() req: ApiKeyRequest,
   ) {
-    const actorId: string = req.apiKey.id;
+    const actorId = req.apiKey?.id ?? 'api';
     return this.refundsService.approveRefund(id, actorId);
   }
 
   @Post(':id/reject')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(NetworkSafetyGuard)
-  @RequiresFlag('mainnet.refunds')
   @ApiOperation({ summary: 'Reject a pending refund' })
   @ApiResponse({ status: 200, description: 'Refund rejected' })
   @ApiResponse({ status: 409, description: 'Refund is not in pending state' })
@@ -88,7 +80,7 @@ export class RefundsController {
     @Body() body: { notes?: string },
     @Req() req: ApiKeyRequest,
   ) {
-    const actorId: string = req.apiKey.id;
+    const actorId = req.apiKey?.id ?? 'api';
     return this.refundsService.rejectRefund(id, actorId, body.notes);
   }
 

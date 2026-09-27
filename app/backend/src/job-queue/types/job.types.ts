@@ -68,6 +68,19 @@ export interface Job<TPayload = unknown> {
   
   /** Lock expiry timestamp - prevents concurrent execution */
   visibilityTimeout: Date | null;
+
+  /** Optional idempotency key to prevent duplicate execution */
+  idempotencyKey?: string | null;
+
+  /** Structured retry metadata for debugging and operator inspection */
+  retryMetadata?: Record<string, unknown> | null;
+
+  /**
+   * Correlation ID propagated from the caller context (HTTP request or
+   * upstream job). Enables operators to trace a single request across
+   * the entire NestJS application, queue, and realtime services.
+   */
+  correlationId?: string | null;
 }
 
 /**
@@ -99,6 +112,26 @@ export interface CancellationToken {
   
   /** Throw error if cancellation has been requested */
   throwIfCancelled(): void;
+}
+
+/**
+ * Export-specific retry state - attached to Job metadata for DLQ enrichment
+ */
+export interface ExportRetryState {
+  /** Current attempt number (1-indexed) */
+  attemptCount: number;
+  /** Maximum retry attempts allowed */
+  maxRetries: number;
+  /** Exponential backoff delays in milliseconds (1m, 5m, 30m) */
+  backoffDelaysMs: number[];
+  /** Calculated delay for the next retry in milliseconds */
+  nextBackoffDelayMs: number;
+  /** Timestamp of the last failure */
+  lastFailureAt: string;
+  /** Error message from the last failure */
+  lastError: string;
+  /** Whether the job has been moved to DLQ */
+  inDlq: boolean;
 }
 
 /**

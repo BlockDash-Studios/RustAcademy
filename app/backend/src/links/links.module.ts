@@ -14,7 +14,6 @@ import { SupabaseModule } from "../supabase/supabase.module";
 import { StellarModule } from "../stellar/stellar.module";
 import { ApiKeysModule } from "../api-keys/api-keys.module";
 import { JobQueueModule } from "../job-queue/job-queue.module";
-import { FeatureFlagsModule } from "../feature-flags/feature-flags.module";
 import { PrivacyModule } from "../privacy/privacy.module";
 import { TransactionsModule } from "../transactions/transactions.module";
 import { AuditModule } from "../audit/audit.module";
@@ -47,7 +46,6 @@ import { AuditModule } from "../audit/audit.module";
     SupabaseModule,
     StellarModule,
     ApiKeysModule,
-    FeatureFlagsModule,
     PrivacyModule,
     TransactionsModule,
     AuditModule,

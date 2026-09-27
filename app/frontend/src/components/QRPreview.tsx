@@ -5,7 +5,7 @@ import QRCode from "react-qr-code";
 export function QRPreview({ value }: { value?: string }) {
   const isValid = Boolean(value);
   return (
-    <div className="relative group">
+    <div className="relative group" role="img" aria-label={isValid ? "Payment QR code" : "QR code placeholder"}>
       <div className="absolute -inset-10 bg-indigo-500/10 blur-[60px] rounded-full opacity-50 group-hover:opacity-80 transition-opacity" />
       
       <div className="relative w-full aspect-square bg-gradient-to-br from-white/10 to-white/[0.02] backdrop-blur-3xl rounded-[3rem] p-1 border border-white/10 shadow-2xl overflow-hidden group-hover:scale-[1.02] transition-all duration-500">
@@ -24,17 +24,20 @@ export function QRPreview({ value }: { value?: string }) {
                 fgColor="black"
               />
             ) : (
-              /* Show your original placeholder */
+              /* Accessible placeholder shown when no value is available */
               <div className="w-48 h-48 border-4 border-dashed border-neutral-100/30 rounded-2xl flex flex-col items-center justify-center gap-4">
                 <div className="w-12 h-12 bg-black rounded-lg flex items-center justify-center">
                   <div className="w-6 h-6 bg-indigo-500 rounded-sm animate-pulse" />
                 </div>
-                <div className="grid grid-cols-2 gap-1 opacity-20 capitalize">
+                <div className="grid grid-cols-2 gap-1 opacity-20 capitalize" aria-hidden="true">
                   <div className="w-4 h-4 bg-black rounded-sm" />
                   <div className="w-4 h-4 bg-black rounded-sm" />
                   <div className="w-4 h-4 bg-black rounded-sm" />
                   <div className="w-4 h-4 bg-black rounded-sm" />
                 </div>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                  No QR value
+                </span>
               </div>
             )}
           </div>

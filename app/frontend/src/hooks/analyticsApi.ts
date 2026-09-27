@@ -1,5 +1,16 @@
 import i18n from "i18next";
 import { getRustAcademyApiBase } from "@/lib/api";
+import { errorReporter } from "@/lib/errorReporter";
+
+export class AnalyticsRequestError extends Error {
+  status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "AnalyticsRequestError";
+    this.status = status;
+  }
+}
 
 export type DateRange = "24h" | "7d" | "30d" | "all";
 
@@ -213,13 +224,26 @@ export async function fetchAnalytics(range: DateRange): Promise<AnalyticsData> {
   try {
     const res = await fetch(url.toString(), { method: "GET" });
     if (!res.ok) {
-      throw new Error(`Analytics request failed with status ${res.status}`);
+      throw new AnalyticsRequestError(
+        `Analytics request failed with status ${res.status}`,
+        res.status,
+      );
     }
     const report = (await res.json()) as ApiReport;
     const parsed = toUiModel(report);
     analyticsCache[range] = parsed;
     return parsed;
   } catch (error) {
+    const captured = error instanceof Error ? error : new Error(String(error));
+    errorReporter.captureError(captured, {
+      route: typeof window !== "undefined" ? window.location.pathname : undefined,
+      codeOrigin: "analyticsApi.fetchAnalytics",
+      extra: {
+        source: "analyticsApi",
+        operation: "fetchAnalytics",
+        range,
+      },
+    });
     console.warn("Falling back to empty analytics data:", error);
     const empty = fallbackEmpty();
     analyticsCache[range] = empty;
@@ -244,21 +268,44 @@ export async function exportAnalyticsReport(
 
   const res = await fetch(url.toString(), { method: "GET" });
   if (!res.ok) {
-    throw new Error(`Export request failed with status ${res.status}`);
+    throw new AnalyticsRequestError(
+      `Export request failed with status ${res.status}`,
+      res.status,
+    );
   }
+  try {
+    const res = await fetch(url.toString(), { method: "GET" });
+    if (!res.ok) {
+      throw new Error(`Export request failed with status ${res.status}`);
+    }
 
-  const blob = await res.blob();
-  const disposition = res.headers.get("Content-Disposition");
-  const fallbackName = ` RustAcademy-analytics-report.${format}`;
-  const fileName = parseFilename(disposition) ?? fallbackName;
-  const objectUrl = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(objectUrl);
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition");
+    const fallbackName = ` RustAcademy-analytics-report.${format}`;
+    const fileName = parseFilename(disposition) ?? fallbackName;
+    const objectUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(objectUrl);
+  } catch (error) {
+    const captured = error instanceof Error ? error : new Error(String(error));
+    errorReporter.captureError(captured, {
+      route: typeof window !== "undefined" ? window.location.pathname : undefined,
+      codeOrigin: "analyticsApi.exportAnalyticsReport",
+      extra: {
+        source: "analyticsApi",
+        operation: "exportAnalyticsReport",
+        range,
+        format,
+        reportType,
+      },
+    });
+    throw error;
+  }
 }
 
 function parseFilename(disposition: string | null): string | null {

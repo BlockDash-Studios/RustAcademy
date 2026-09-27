@@ -9,6 +9,8 @@ export enum NotificationEvent {
   RecurringLinkCompleted = 'recurring.link.completed',
   RecurringPaymentExecuted = 'recurring.payment.executed',
   RecurringPaymentFailed = 'recurring.payment.failed',
+  ExportDelivered = 'export.delivered',
+  ExportFailed = 'export.failure',
 }
 
 export class PaymentReceivedEvent {

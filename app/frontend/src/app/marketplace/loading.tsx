@@ -2,7 +2,12 @@ import * as React from "react";
 
 export default function MarketplaceLoading() {
   return (
-    <div className="min-h-screen text-white selection:bg-indigo-500/30">
+    <div
+      className="min-h-screen text-white selection:bg-indigo-500/30"
+      role="status"
+      aria-busy="true"
+    >
+      <span className="sr-only">Loading marketplace listings…</span>
       <div className="space-y-10">
         <div className="h-8 w-1/3 rounded-full bg-white/5 animate-pulse" />
         <div className="h-72 rounded-3xl bg-white/5 border border-white/5 animate-pulse" />

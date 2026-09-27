@@ -6,7 +6,7 @@ import {
 } from "@nestjs/common";
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { ThrottlerModule } from "@nestjs/throttler";
-import * as request from "supertest";
+import request from "supertest";
 import { LinksModule } from "../src/links/links.module";
 import { mapValidationErrors } from "../src/common/utils/validation-error.mapper";
 import { AppConfigService } from "../src/config";

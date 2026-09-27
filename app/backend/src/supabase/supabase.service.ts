@@ -3,16 +3,56 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 import { AppConfigService } from "../config";
 import {
-  EscrowDbStatus,
-  EscrowRecord,
-  PaymentDbStatus,
-  PaymentRecord,
-} from "../reconciliation/types/reconciliation.types";
-import {
+  SupabaseAuthError,
   SupabaseError,
   SupabaseNetworkError,
+  SupabaseSerializationError,
+  SupabaseTimeoutError,
   SupabaseUniqueConstraintError,
 } from "./supabase.errors";
+
+// Payment/escrow DB row statuses (the reconciliation types module was removed).
+export enum PaymentDbStatus {
+  Pending = "pending",
+  Paid = "paid",
+  Failed = "failed",
+  Refunded = "refunded",
+}
+
+export enum EscrowDbStatus {
+  Pending = "pending",
+  Active = "active",
+  Claimed = "claimed",
+  Withdrawn = "withdrawn",
+  Refunded = "refunded",
+  Irreconcilable = "irreconcilable",
+}
+
+export interface EscrowRecord {
+  id: string;
+  status: EscrowDbStatus | string;
+  commitment?: string;
+  owner?: string;
+  amount?: string;
+  token?: string;
+  reconciliation_note?: string | null;
+  updated_at?: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+export interface PaymentRecord {
+  id: string;
+  status: PaymentDbStatus | string;
+  commitment?: string;
+  sender_public_key?: string;
+  receiver_public_key?: string;
+  amount_usd?: number;
+  reconciliation_note?: string | null;
+  updated_at?: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
 
 export interface SearchProfileResult {
   id: string;
@@ -93,26 +133,84 @@ export class SupabaseService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private handleError(error: any): never {
-    if (error?.code === "23505") {
+    const code: string = error?.code ?? "";
+    const message: string = error?.message ?? "";
+    const messageLower = message.toLowerCase();
+
+    this.logger.error(
+      `Supabase error [${code || "no-code"}]: ${message || "no message"}`,
+      error,
+    );
+
+    // ── Unique-constraint violation ────────────────────────────────────────
+    if (code === "23505") {
       throw new SupabaseUniqueConstraintError(
-        error.message || "Unique constraint violation",
+        message || "Unique constraint violation",
         error,
       );
     }
-    // Match common network/timeout issues or PostgREST generic errors
+
+    // ── Serialization failures & deadlocks ────────────────────────────────
+    // PG 40001 = serialization_failure, 40P01 = deadlock_detected
+    if (code === "40001" || code === "40P01") {
+      throw new SupabaseSerializationError(
+        message || "Transaction serialization failure — safe to retry",
+        error,
+      );
+    }
+
+    // ── Timeout errors ────────────────────────────────────────────────────
+    // PG 57014 = query_canceled (statement_timeout / lock_timeout)
+    // PGRST504 = PostgREST gateway timeout
     if (
-      error?.message?.toLowerCase().includes("fetch") ||
-      error?.message?.toLowerCase().includes("network") ||
-      error?.code === "PGRST301"
+      code === "57014" ||
+      code === "PGRST504" ||
+      messageLower.includes("timeout") ||
+      messageLower.includes("timed out")
+    ) {
+      throw new SupabaseTimeoutError(
+        message || "Supabase request timed out",
+        error,
+      );
+    }
+
+    // ── Authentication / authorisation failures ───────────────────────────
+    // PGRST301 = JWT expired, PGRST302 = JWT invalid / missing
+    // Auth-level codes: invalid_grant, invalid_token, token_expired
+    if (
+      code === "PGRST301" ||
+      code === "PGRST302" ||
+      code === "invalid_grant" ||
+      code === "invalid_token" ||
+      code === "token_expired" ||
+      messageLower.includes("jwt") ||
+      messageLower.includes("unauthorized") ||
+      messageLower.includes("forbidden")
+    ) {
+      throw new SupabaseAuthError(
+        message || "Supabase authentication failure",
+        error,
+      );
+    }
+
+    // ── Network / connectivity errors ─────────────────────────────────────
+    if (
+      messageLower.includes("fetch") ||
+      messageLower.includes("network") ||
+      messageLower.includes("econnrefused") ||
+      messageLower.includes("enotfound") ||
+      messageLower.includes("connection refused")
     ) {
       throw new SupabaseNetworkError(
-        error.message || "Network error connecting to Supabase",
+        message || "Network error connecting to Supabase",
         error,
       );
     }
+
+    // ── Fallback ──────────────────────────────────────────────────────────
     throw new SupabaseError(
-      error?.message || "Unknown Supabase error",
-      error?.code,
+      message || "Unknown Supabase error",
+      code || undefined,
       error,
     );
   }

@@ -33,4 +33,41 @@ describe('network config resolver', () => {
       }),
     ).toThrow('Invalid SOROBAN_RPC_URL');
   });
+
+  it('names the variable in the error for an invalid network value', () => {
+    expect(() =>
+      resolveNetworkSnapshot({ STELLAR_NETWORK: 'invalid' }),
+    ).toThrow('STELLAR_NETWORK');
+  });
+
+  it('fails on a malformed SOROBAN_RPC_URLS fallback entry', () => {
+    expect(() =>
+      resolveNetworkSnapshot({
+        NETWORK: 'testnet',
+        SOROBAN_RPC_URLS: 'https://rpc-a.example.com,not-a-url',
+      }),
+    ).toThrow('Invalid SOROBAN_RPC_URLS entry');
+  });
+
+  it('deduplicates Soroban RPC fallback URLs', () => {
+    const snapshot = resolveNetworkSnapshot({
+      NETWORK: 'testnet',
+      SOROBAN_RPC_URL: 'https://rpc-a.example.com',
+      SOROBAN_RPC_URLS: 'https://rpc-b.example.com,https://rpc-b.example.com',
+    });
+
+    expect(snapshot.sorobanRpcUrls).toEqual([
+      'https://rpc-a.example.com',
+      'https://rpc-b.example.com',
+    ]);
+  });
+
+  it('points to the network default when an override is invalid', () => {
+    expect(() =>
+      resolveNetworkSnapshot({
+        NETWORK: 'testnet',
+        HORIZON_URL: 'not-a-url',
+      }),
+    ).toThrow(/HORIZON_URL.*horizon-testnet/);
+  });
 });

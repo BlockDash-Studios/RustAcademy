@@ -12,24 +12,19 @@ import { AppConfigService } from "../../config";
 import { MetricsService } from "../../metrics/metrics.service";
 import { SorobanDomainException } from "../exceptions/soroban-domain.exception";
 import { sanitizeErrorMessage } from "../utils/redaction.util";
+import {
+  type ErrorEnvelope,
+  type ValidationErrorField,
+  ErrorCode,
+} from "../errors";
 
-interface ErrorResponseBody {
-  success: false;
-  error: {
-    code: string;
-    message: string | string[];
-    /** Stable alias for correlationId — used by clients to trace requests */
-    request_id?: string;
-    correlationId?: string;
-    fields?: unknown;
-    details?: unknown;
-  };
-}
+/** Re-export for downstream consumers that import from this module */
+export { type ErrorEnvelope, type ValidationErrorField, ErrorCode } from "../errors";
 
 type ValidationExceptionPayload = {
-  code: "VALIDATION_ERROR";
+  code: ErrorCode.VALIDATION_ERROR;
   message?: string;
-  fields: unknown;
+  fields: ValidationErrorField[];
 };
 
 type BusinessExceptionPayload = {
@@ -59,18 +54,16 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
     const isProduction = this.config.isProduction;
 
     // Extract correlation ID for traceability
-    const correlationId = (request as Record<string, unknown>)[
-      "correlationId"
-    ] as string | undefined;
+    const correlationId = request.correlationId;
 
     let status: number = HttpStatus.INTERNAL_SERVER_ERROR;
-    let code = "INTERNAL_SERVER_ERROR";
+    let code: string = ErrorCode.INTERNAL_SERVER_ERROR;
     let message: string | string[] = "An unexpected error occurred";
     let details: unknown = undefined;
 
     if (exception instanceof ThrottlerException) {
       status = HttpStatus.TOO_MANY_REQUESTS;
-      code = "RATE_LIMIT_EXCEEDED";
+      code = ErrorCode.RATE_LIMIT_EXCEEDED;
       const retryAfterSeconds = this.getRetryAfterSeconds(response);
 
       message =
@@ -82,11 +75,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
         retryAfterSeconds,
       };
 
-      const reqRecord = request as Record<string, unknown>;
-      const rateLimitContext =
-        (reqRecord["rateLimitContext"] as
-          | { group?: string; keyType?: string }
-          | undefined) ?? {};
+      const rateLimitContext = request.rateLimitContext ?? {};
 
       const route = this.resolveRoute(request);
 
@@ -103,7 +92,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
       this.logger.warn(
         `[SorobanDomainException] ${body.code}: ${exception.technicalError}`,
       );
-      return response.status(status).json({
+      response.status(status).json({
         success: false,
         error: {
           code: body.code,
@@ -112,6 +101,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
           ...(body.details && !isProduction ? { details: body.details } : {}),
         },
       });
+      return;
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const res = exception.getResponse() as HttpExceptionResponse;
@@ -123,15 +113,16 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
         if ("fields" in res) {
           const validation = res as ValidationExceptionPayload;
 
-          return response.status(status).json({
+          response.status(status).json({
             success: false,
             error: {
-              code: "VALIDATION_ERROR",
+              code: ErrorCode.VALIDATION_ERROR,
               message: validation.message ?? "Validation failed",
               fields: validation.fields ?? [],
               ...(correlationId ? { request_id: correlationId, correlationId } : {}),
             },
-          });
+          } satisfies ErrorEnvelope);
+          return;
         }
 
         // ✅ BUSINESS ERRORS
@@ -155,7 +146,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
         : sanitizeErrorMessage(exception.message);
     }
 
-    const body: ErrorResponseBody = {
+    const body: ErrorEnvelope = {
       success: false,
       error: {
         code,

@@ -5,7 +5,7 @@ import {
   TrendingCreatorResult,
 } from "../supabase/supabase.service";
 import { decodeCursor } from "../common/pagination/cursor.util";
-import { SupabaseUniqueConstraintError } from "../supabase/supabase.errors";
+import { SupabaseUniqueConstraintError, SupabaseAuthError, SupabaseTimeoutError } from "../supabase/supabase.errors";
 import { AppConfigService } from "../config";
 import { DiscoveryCacheService } from "./cache/discovery-cache.service";
 import {
@@ -83,6 +83,20 @@ export class UsernamesService {
     } catch (error) {
       if (error instanceof SupabaseUniqueConstraintError) {
         throw new UsernameConflictError(normalized);
+      }
+      if (error instanceof SupabaseAuthError) {
+        throw new UsernameValidationError(
+          UsernameErrorCode.INVALID_FORMAT,
+          "Service is temporarily unavailable due to an authentication configuration issue",
+          "service",
+        );
+      }
+      if (error instanceof SupabaseTimeoutError) {
+        throw new UsernameValidationError(
+          UsernameErrorCode.INVALID_FORMAT,
+          "Request timed out — please try again",
+          "service",
+        );
       }
       throw error;
     }

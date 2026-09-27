@@ -10,7 +10,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { JobHandler, Job, CancellationToken } from '../types';
 import { StellarReconnectPayload } from '../types/job-payloads.types';
-import { StellarIngestionService } from '../../ingestion/stellar-ingestion.service';
 import { PermanentJobError } from './webhook-delivery.handler';
 
 /**
@@ -19,17 +18,14 @@ import { PermanentJobError } from './webhook-delivery.handler';
  * Handles reconnection of Stellar SSE streams after disconnection.
  * This handler is designed to run with unlimited retries (maxAttempts=0)
  * and exponential backoff to ensure eventual reconnection.
- * 
- * The handler delegates to StellarIngestionService which manages the
- * actual SSE stream lifecycle and cursor management.
+ *
+ * NOTE: The ingestion service that managed SSE stream lifecycle was removed
+ * from the codebase, so reconnection jobs currently only validate their
+ * payload and no-op. Registered to keep the job type valid for producers.
  */
 @Injectable()
 export class StellarReconnectHandler implements JobHandler<StellarReconnectPayload> {
   private readonly logger = new Logger(StellarReconnectHandler.name);
-
-  constructor(
-    private readonly stellarIngestionService: StellarIngestionService,
-  ) {}
 
   /**
    * Execute SSE stream reconnection
@@ -59,34 +55,13 @@ export class StellarReconnectHandler implements JobHandler<StellarReconnectPaylo
     // Check cancellation before attempting reconnection
     cancellationToken.throwIfCancelled();
 
-    try {
-      // Start streaming - this will open a new SSE connection
-      // The StellarIngestionService will automatically resume from the last cursor
-      // stored in the cursor repository
-      await this.stellarIngestionService.startStreaming(contractId);
-
-      this.logger.log(
-        `SSE stream reconnected successfully (jobId: ${job.id}, ` +
-        `contractId: ${contractId})`,
-      );
-
-      // Note: The StellarIngestionService handles:
-      // - Loading the last cursor from the cursor repository
-      // - Opening the SSE stream with the cursor
-      // - Processing events and updating the cursor
-      // - Auto-reconnection with exponential backoff on future disconnections
-    } catch (error) {
-      // Log error with context
-      this.logger.error(
-        `SSE stream reconnection failed (jobId: ${job.id}, ` +
-        `contractId: ${contractId}): ${error.message}`,
-        error.stack,
-      );
-
-      // Re-throw to trigger job retry with exponential backoff
-      // Most reconnection errors are transient (network issues, Horizon unavailable)
-      throw error;
-    }
+    // The ingestion service that owned SSE stream lifecycle is no longer part
+    // of the codebase, so there is nothing to reconnect to. Acknowledge the
+    // job so it is not retried forever.
+    this.logger.warn(
+      `Stellar ingestion service is not available (jobId: ${job.id}, ` +
+      `contractId: ${contractId}) — skipping reconnection`,
+    );
   }
 
   /**

@@ -23,12 +23,14 @@ export function ReportIssueModal({
     "idle"
   );
   const modalRef = useRef<HTMLDivElement | null>(null);
-  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (open) {
       setStatus("idle");
-      submitButtonRef.current?.focus();
+      previousFocusRef.current = document.activeElement as HTMLElement;
+      closeButtonRef.current?.focus();
     }
   }, [open]);
 
@@ -41,6 +43,7 @@ export function ReportIssueModal({
     setUserMessage("");
     setStatus("idle");
     onClose();
+    previousFocusRef.current?.focus();
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -102,6 +105,7 @@ export function ReportIssueModal({
     >
       <div
         ref={modalRef}
+        tabIndex={-1}
         className="w-full max-w-2xl rounded-3xl bg-neutral-950 p-8 shadow-2xl shadow-black/50"
       >
         <div className="flex items-start justify-between gap-4">
@@ -118,9 +122,11 @@ export function ReportIssueModal({
             </p>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={handleClose}
-            className="rounded-full bg-white/10 px-4 py-2 text-sm text-white transition hover:bg-white/20"
+            aria-label="Close report issue dialog"
+            className="rounded-full bg-white/10 px-4 py-2 text-sm text-white transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
           >
             Close
           </button>
@@ -145,25 +151,26 @@ export function ReportIssueModal({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          <label className="block text-sm font-semibold text-neutral-200">
+          <label htmlFor="report-issue-details" className="block text-sm font-semibold text-neutral-200">
             Additional details
           </label>
           <textarea
+            id="report-issue-details"
             value={userMessage}
             onChange={(event) => setUserMessage(event.target.value)}
             rows={5}
-            className="w-full rounded-3xl border border-white/10 bg-neutral-900 px-4 py-3 text-sm text-white outline-none transition focus:border-white/30"
+            aria-describedby="report-issue-hint"
+            className="w-full rounded-3xl border border-white/10 bg-neutral-900 px-4 py-3 text-sm text-white outline-none transition focus:border-white/30 focus-visible:ring-2 focus-visible:ring-indigo-300"
             placeholder="What were you doing when this happened?"
           />
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-neutral-400">
+            <p id="report-issue-hint" className="text-xs text-neutral-400">
               Your message will be sanitized before sending.
             </p>
             <button
-              ref={submitButtonRef}
               type="submit"
               disabled={status === "submitting" || status === "success"}
-              className="inline-flex items-center justify-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-neutral-950 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center justify-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-neutral-950 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
             >
               {status === "submitting" ? "Sending..." : "Send report"}
             </button>
@@ -171,7 +178,7 @@ export function ReportIssueModal({
         </form>
 
         {status === "success" ? (
-          <div className="mt-4 rounded-3xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          <div role="status" aria-live="polite" className="mt-4 rounded-3xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
             Issue report submitted successfully.
           </div>
         ) : null}

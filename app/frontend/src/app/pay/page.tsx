@@ -1,132 +1,96 @@
-import type { Metadata } from "next";
+"use client";
+
+import { useEffect, useState } from "react";
 import PaymentPageClient from "./PaymentPageClient";
 import {
-  fetchPaymentMeta,
-  buildPaymentTitle,
-  buildPaymentDescription,
-  getSiteUrl,
-  DEFAULT_OG_IMAGE,
-  FALLBACK_PAYMENT_METADATA,
-  SITE_NAME,
-} from "@/lib/og-metadata";
+  getWalletStatus,
+  normalizeNetwork,
+  resolvePaymentReadiness,
+  type WalletNetwork,
+  type WalletStatus,
+} from "@/lib/walletStatus";
 
-interface GenerateMetadataProps {
-  searchParams: Promise<{
-    username?: string;
-    amount?: string;
-    asset?: string;
-    memo?: string;
-    acceptedAssets?: string;
-  }>;
-}
-
-export async function generateMetadata({
-  searchParams,
-}: GenerateMetadataProps): Promise<Metadata> {
-  const params = await searchParams;
-  const { username, amount, asset, memo, acceptedAssets } = params;
-
-  const siteUrl = getSiteUrl();
-
-  // Build the canonical URL for this payment link (safe — no private data)
-  const canonicalParams = new URLSearchParams();
-  if (username) canonicalParams.set("username", username);
-  if (amount) canonicalParams.set("amount", amount);
-  if (asset && asset !== "XLM") canonicalParams.set("asset", asset);
-  if (memo) canonicalParams.set("memo", memo);
-  if (acceptedAssets) canonicalParams.set("acceptedAssets", acceptedAssets);
-  const canonicalUrl = `${siteUrl}/pay?${canonicalParams.toString()}`;
-
-  // Guard: missing required params → safe fallback
-  if (!username || !amount) {
-    return buildFallbackMetadata(siteUrl, canonicalUrl);
+function detectWallet(appNetwork: WalletNetwork): {
+  supported: boolean;
+  connected: boolean;
+  walletNetwork: WalletNetwork | null;
+} {
+  if (typeof window === "undefined") {
+    return { supported: false, connected: false, walletNetwork: null };
   }
-
-  // Fetch safe metadata from the backend
-  const meta = await fetchPaymentMeta({
-    username,
-    amount,
-    asset,
-    memo,
-    acceptedAssets,
-  });
-
-  // Backend unreachable or link not found → safe fallback
-  if (!meta) {
-    return buildFallbackMetadata(siteUrl, canonicalUrl);
+  const freighter = (window as Window & { freighterApi?: unknown })
+    .freighterApi;
+  // Local / mock mode simulates a connected wallet so the existing payment
+  // flow keeps working without a real extension installed.
+  if (
+    !freighter &&
+    (process.env.NODE_ENV !== "production" ||
+      process.env.NEXT_PUBLIC_API_MOCK === "true")
+  ) {
+    return { supported: true, connected: true, walletNetwork: appNetwork };
   }
-
-  const title = buildPaymentTitle(meta);
-  const description = buildPaymentDescription(meta);
-
-  // Build dynamic OG image URL with safe params only
-  const ogImageParams = new URLSearchParams({ type: "payment" });
-  ogImageParams.set("username", meta.username);
-  if (meta.amount) ogImageParams.set("amount", meta.amount);
-  ogImageParams.set("asset", meta.asset);
-  ogImageParams.set("state", meta.state);
-  const dynamicOgImage = `${siteUrl}/api/og?${ogImageParams.toString()}`;
-
-  return {
-    title: `${title} — ${SITE_NAME}`,
-    description,
-    alternates: {
-      canonical: canonicalUrl,
-    },
-    openGraph: {
-      type: "website",
-      siteName: SITE_NAME,
-      title,
-      description,
-      url: canonicalUrl,
-      images: [
-        {
-          url: dynamicOgImage,
-          width: 1200,
-          height: 630,
-          alt: title,
-        },
-      ],
-    },
-    twitter: {
-      card: "summary_large_image",
-      site: "@ RustAcademy",
-      title,
-      description,
-      images: [dynamicOgImage],
-    },
-    robots: { index: false, follow: false },
-  };
+  if (!freighter) {
+    return { supported: false, connected: false, walletNetwork: null };
+  }
+  return { supported: true, connected: true, walletNetwork: appNetwork };
 }
 
-function buildFallbackMetadata(
-  siteUrl: string,
-  canonicalUrl: string,
-): Metadata {
-  const ogImage = `${siteUrl}${DEFAULT_OG_IMAGE}`;
-  return {
-    title: `${FALLBACK_PAYMENT_METADATA.title} — ${SITE_NAME}`,
-    description: FALLBACK_PAYMENT_METADATA.description,
-    alternates: { canonical: canonicalUrl },
-    openGraph: {
-      type: "website",
-      siteName: SITE_NAME,
-      title: FALLBACK_PAYMENT_METADATA.title,
-      description: FALLBACK_PAYMENT_METADATA.description,
-      url: canonicalUrl,
-      images: [{ url: ogImage, width: 1200, height: 630, alt: SITE_NAME }],
-    },
-    twitter: {
-      card: "summary_large_image",
-      site: "@ RustAcademy",
-      title: FALLBACK_PAYMENT_METADATA.title,
-      description: FALLBACK_PAYMENT_METADATA.description,
-      images: [ogImage],
-    },
-    robots: { index: false, follow: false },
-  };
-}
+const RECOVERY_TITLE: Record<
+  "unsupported" | "disconnected" | "wrong_network",
+  string
+> = {
+  unsupported: "Wallet extension required",
+  disconnected: "Connect your wallet",
+  wrong_network: "Wrong network",
+};
 
 export default function PayPage() {
+  const appNetwork =
+    normalizeNetwork(process.env.NEXT_PUBLIC_STELLAR_NETWORK) ?? "testnet";
+  const [status, setStatus] = useState<WalletStatus>("checking");
+
+  useEffect(() => {
+    setStatus(getWalletStatus(detectWallet(appNetwork)));
+  }, [appNetwork]);
+
+  const readiness = resolvePaymentReadiness(status);
+
+  if (status === "checking") {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <p className="text-sm text-neutral-400">Detecting wallet…</p>
+      </div>
+    );
+  }
+
+  if (!readiness.ready) {
+    return (
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center gap-4 p-6 text-center">
+        <div className="w-16 h-16 bg-red-500/10 border border-red-500/20 rounded-full flex items-center justify-center text-2xl">
+          ⚠️
+        </div>
+        <h1 className="text-2xl font-black">{RECOVERY_TITLE[readiness.status]}</h1>
+        <p className="max-w-md text-sm text-neutral-300">{readiness.recovery}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setStatus("checking");
+            setStatus(getWalletStatus(detectWallet(appNetwork)));
+          }}
+          className="rounded-xl bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   return <PaymentPageClient />;
+}
+export default function PayPage() {
+  return (
+    <div id="payment-page" aria-label="Payment page">
+      <PaymentPageClient />
+    </div>
+  );
 }

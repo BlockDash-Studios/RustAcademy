@@ -1,89 +1,89 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Header } from "@/components/Header";
 import { NotificationCenterProvider } from "@/components/NotificationCenterProvider";
 import { ErrorReportingShell } from "@/components/ErrorReportingShell";
+import { PWAHandler } from "@/components/PWAHandler";
+import { OnlineStatusProvider } from "@/lib/onlineStatus";
+import { OnlineStatusBadge } from "@/components/OnlineStatusBadge";
+import { BRANDING } from "@/lib/branding";
 import "./globals.css";
 
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-  "https:// RustAcademy.to";
+  BRANDING.defaultSiteUrl;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: " RustAcademy",
-    template: "%s |  RustAcademy",
+    default: BRANDING.productName,
+    template: `%s | ${BRANDING.productName}`,
   },
-  description: "Privacy-focused payments on Stellar",
-  applicationName: " RustAcademy",
-  keywords: ["Stellar", "payments", "crypto", "XLM", "USDC", "payment link"],
-  authors: [{ name: "Pulsefy" }],
-  creator: "Pulsefy",
+  description: BRANDING.description,
+  applicationName: BRANDING.productName,
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: BRANDING.productName,
+  },
+  keywords: BRANDING.keywords,
+  authors: [{ name: BRANDING.companyName }],
+  creator: BRANDING.companyName,
   openGraph: {
     type: "website",
-    siteName: " RustAcademy",
-    title: " RustAcademy — Privacy-focused payments on Stellar",
-    description: "Privacy-focused payments on Stellar",
+    siteName: BRANDING.productName,
+    title: `${BRANDING.productName} — ${BRANDING.tagline}`,
+    description: BRANDING.description,
     url: siteUrl,
     images: [
       {
         url: "/api/og",
         width: 1200,
         height: 630,
-        alt: " RustAcademy — Privacy-focused payments on Stellar",
+        alt: BRANDING.ogImageAlt,
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    site: "@ RustAcademy",
-    title: " RustAcademy — Privacy-focused payments on Stellar",
-    description: "Privacy-focused payments on Stellar",
+    site: `@${BRANDING.twitterHandle}`,
+    title: `${BRANDING.productName} — ${BRANDING.tagline}`,
+    description: BRANDING.description,
     images: ["/api/og"],
   },
   robots: {
     index: true,
     follow: true,
   },
+  icons: {
+    icon: "/favicon.ico",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: "#0a0a0a",
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
-    <html lang="en">
-      <body className="bg-neutral-950 text-white antialiased">
-        <NotificationCenterProvider>
-          <Header />
+    <html lang="en" className="dark">
+      <body className="bg-black text-white antialiased">
+        <OnlineStatusProvider>
           <ErrorReportingShell>
-            <main
-              id="main-content"
-              tabIndex={-1}
-              className="min-h-screen container mx-auto px-6 py-10 focus:outline-none"
-            >
-              {children}
-            </main>
+            <NotificationCenterProvider>
+              <PWAHandler />
+              <OnlineStatusBadge />
+              <Header />
+              <main className="min-h-screen pt-16">{children}</main>
+            </NotificationCenterProvider>
           </ErrorReportingShell>
-
-          <footer className="container mx-auto border-t border-white/5 px-6 py-12 text-sm text-neutral-400">
-            <div className="flex flex-col items-center justify-between gap-6 md:flex-row">
-              <p>Copyright 2026 RustAcademy Platform. Built by Pulsefy.</p>
-              <div className="flex gap-8 underline decoration-white/10 underline-offset-4 hover:decoration-white/20">
-                <a
-                  href="https://github.com/pulsefy/ RustAcademy"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  GitHub
-                </a>
-                <a href="#">Terms</a>
-                <a href="#">Privacy</a>
-              </div>
-            </div>
-          </footer>
-        </NotificationCenterProvider>
+        </OnlineStatusProvider>
       </body>
     </html>
   );

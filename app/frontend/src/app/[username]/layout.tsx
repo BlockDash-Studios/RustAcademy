@@ -6,6 +6,7 @@
  */
 
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import {
   getSiteUrl,
   DEFAULT_OG_IMAGE,
@@ -103,6 +104,18 @@ function buildProfileFallback(siteUrl: string): Metadata {
   };
 }
 
-export default function UsernameLayout({ children }: UsernameLayoutProps) {
+export default async function UsernameLayout({ 
+  children, 
+  params 
+}: UsernameLayoutProps) {
+  const { username } = await params;
+  
+  // Validate username format on the server
+  const safeUsername = username?.replace(/[^\w-]/g, "").slice(0, 64) ?? "";
+  
+  if (!safeUsername || safeUsername !== username) {
+    notFound();
+  }
+  
   return <>{children}</>;
 }

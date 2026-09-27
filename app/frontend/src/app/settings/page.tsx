@@ -1,16 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { NetworkBadge } from "@/components/NetworkBadge";
 import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 import '@/lib/i18n';
 import { useTranslation } from "react-i18next";
+import { useApi } from "@/hooks/useApi";
+import { getProfile, saveProfile } from "@/lib/api";
+import { validateProfile, type Profile, type ProfileValidationErrors } from "@/types/profile";
+import { errorReporter } from "@/lib/errorReporter";
 
 export default function Settings() {
   const { t } = useTranslation();
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<Profile>({
     username: "john_doe",
     primaryColor: "#6366f1",
     avatarUrl: "",
@@ -20,11 +24,95 @@ export default function Settings() {
     githubHandle: "",
   });
 
+  const [errors, setErrors] = useState<ProfileValidationErrors>({});
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const handleSave = () => {
-    console.log("Saving profile:", form);
-    // TODO: Call API to save profile
+  const { error: apiError, loading, callApi } = useApi<Profile>();
+
+  const loadData = async () => {
+    try {
+      setLoadError(null);
+      const data = await getProfile("john_doe");
+      if (data) {
+        setForm(data);
+      }
+    } catch (err) {
+      console.error("Failed to load profile settings", err);
+      const captured = err instanceof Error ? err : new Error(String(err));
+      errorReporter.captureError(captured, {
+        route: "/settings",
+        codeOrigin: "settings.loadProfile",
+        extra: { source: "settings/page.tsx", operation: "getProfile" },
+      });
+      setLoadError(captured.message || "Failed to load profile settings");
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    const loadData = async () => {
+      setLoadError(null);
+    const fetchInitial = async () => {
+      try {
+        setLoadError(null);
+        const data = await getProfile("john_doe");
+        if (active && data) {
+          setForm(data);
+        }
+      } catch (err) {
+        console.error("Failed to load profile settings", err);
+        if (active) {
+          setLoadError(
+            err instanceof Error
+              ? err.message
+              : "Could not load your profile. Please try again.",
+          );
+        const captured = err instanceof Error ? err : new Error(String(err));
+        errorReporter.captureError(captured, {
+          route: "/settings",
+          codeOrigin: "settings.loadProfile",
+          extra: { source: "settings/page.tsx", operation: "getProfile" },
+        });
+        if (active) {
+          setLoadError(captured.message || "Failed to load profile settings");
+        }
+      }
+    };
+
+    fetchInitial();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleSave = async () => {
+    setSuccessMessage(null);
+    setErrors({});
+
+    const validation = validateProfile(form);
+    if (!validation.isValid) {
+      setErrors(validation.errors);
+      return;
+    }
+
+    try {
+      await callApi(() => saveProfile(form));
+      setSuccessMessage("Settings saved successfully!");
+      setTimeout(() => {
+        setSuccessMessage(null);
+      }, 5000);
+    } catch (err) {
+      console.error("Save profile error", err);
+      const captured = err instanceof Error ? err : new Error(String(err));
+      errorReporter.captureError(captured, {
+        route: "/settings",
+        codeOrigin: "settings.handleSave",
+        extra: { source: "settings/page.tsx", operation: "saveProfile" },
+      });
+    }
   };
 
   return (
@@ -119,6 +207,66 @@ export default function Settings() {
           </Link>
         </nav>
 
+        {successMessage && (
+          <div role="status" aria-live="polite" className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-200">
+            <span>✓</span> {successMessage}
+          </div>
+        )}
+
+        {loadError && (
+          <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-semibold flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-4 duration-200">
+            <div className="flex items-center gap-2">
+              <span>⚠️</span>
+              <span>{loadError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={loadData}
+              className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-bold rounded-lg transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {apiError && (
+          <div role="alert" className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-200">
+            <span>⚠️</span> {apiError}
+          </div>
+        )}
+
+        {loadError && (
+          <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-semibold flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-4 duration-200">
+            <span className="flex items-center gap-2">
+              <span>⚠️</span> {loadError}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setLoadError(null);
+                const reload = async () => {
+                  try {
+                    const data = await getProfile("john_doe");
+                    if (data) {
+                      setForm(data);
+                    }
+                  } catch (err) {
+                    setLoadError(
+                      err instanceof Error
+                        ? err.message
+                        : "Could not load your profile. Please try again.",
+                    );
+                  }
+                };
+                void reload();
+              }}
+              className="shrink-0 rounded-lg bg-red-500/20 px-3 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500/30"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
           {/* Settings Form */}
           <div className="space-y-4 sm:space-y-6">
@@ -130,60 +278,81 @@ export default function Settings() {
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
+                  <label htmlFor="primary-color" className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
                     {t('primaryColor')}
                   </label>
                   <div className="flex gap-2 sm:gap-3">
                     <input
+                      id="primary-color"
                       type="color"
                       value={form.primaryColor}
                       onChange={(e) =>
                         setForm({ ...form, primaryColor: e.target.value })
                       }
-                      className="w-14 sm:w-16 h-11 sm:h-12 rounded-xl border border-white/10 bg-transparent cursor-pointer"
+                      aria-describedby={errors.primaryColor ? "primary-color-error" : undefined}
+                      className="w-14 sm:w-16 h-11 sm:h-12 rounded-xl border border-white/10 bg-transparent cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
                     />
                     <input
+                      id="primary-color-value"
                       type="text"
                       value={form.primaryColor}
                       onChange={(e) =>
                         setForm({ ...form, primaryColor: e.target.value })
                       }
-                      className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white font-mono text-sm sm:text-base"
+                      aria-label="Primary color hex value"
+                      aria-invalid={Boolean(errors.primaryColor)}
+                      aria-describedby={errors.primaryColor ? "primary-color-error" : undefined}
+                      className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white font-mono text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
                       placeholder="#6366f1"
                     />
                   </div>
+                  {errors.primaryColor && (
+                    <p id="primary-color-error" role="alert" className="text-red-500 text-xs mt-1.5 font-medium">{errors.primaryColor}</p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
+                  <label htmlFor="avatar-url" className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
                     {t('avatarUrl')}
                   </label>
                   <input
+                    id="avatar-url"
                     type="url"
                     value={form.avatarUrl}
                     onChange={(e) =>
                       setForm({ ...form, avatarUrl: e.target.value })
                     }
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base"
+                    aria-invalid={Boolean(errors.avatarUrl)}
+                    aria-describedby={errors.avatarUrl ? "avatar-url-error" : undefined}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
                     placeholder="https://example.com/avatar.jpg"
                   />
+                  {errors.avatarUrl && (
+                    <p id="avatar-url-error" role="alert" className="text-red-500 text-xs mt-1.5 font-medium">{errors.avatarUrl}</p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
+                  <label htmlFor="profile-bio" className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
                     {t('bioLabel')}
                   </label>
                   <textarea
+                    id="profile-bio"
                     value={form.bio}
                     onChange={(e) => setForm({ ...form, bio: e.target.value })}
                     maxLength={160}
                     rows={3}
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white resize-none text-sm sm:text-base"
+                    aria-invalid={Boolean(errors.bio)}
+                    aria-describedby={errors.bio ? "profile-bio-hint profile-bio-error" : "profile-bio-hint"}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white resize-none text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
                     placeholder="Building the future of payments on Stellar"
                   />
-                  <p className="text-xs text-neutral-600 mt-1">
+                  <p id="profile-bio-hint" className="text-xs text-neutral-600 mt-1">
                     {form.bio.length}/160 characters
                   </p>
+                  {errors.bio && (
+                    <p id="profile-bio-error" role="alert" className="text-red-500 text-xs mt-1.5 font-medium">{errors.bio}</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -206,7 +375,7 @@ export default function Settings() {
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
+                  <label htmlFor="twitter-handle" className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
                     {t('twitterHandleLabel')}
                   </label>
                   <div className="flex items-center gap-2">
@@ -214,48 +383,66 @@ export default function Settings() {
                       @
                     </span>
                     <input
+                      id="twitter-handle"
                       type="text"
                       value={form.twitterHandle}
                       onChange={(e) =>
                         setForm({ ...form, twitterHandle: e.target.value })
                       }
-                      className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base"
+                      aria-invalid={Boolean(errors.twitterHandle)}
+                      aria-describedby={errors.twitterHandle ? "twitter-handle-error" : undefined}
+                      className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
                       placeholder="stellarorg"
                       maxLength={15}
                     />
                   </div>
+                  {errors.twitterHandle && (
+                    <p id="twitter-handle-error" role="alert" className="text-red-500 text-xs mt-1.5 font-medium">{errors.twitterHandle}</p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
+                  <label htmlFor="discord-handle" className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
                     {t('discordUsernameLabel')}
                   </label>
                   <input
+                    id="discord-handle"
                     type="text"
                     value={form.discordHandle}
                     onChange={(e) =>
                       setForm({ ...form, discordHandle: e.target.value })
                     }
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base"
+                    aria-invalid={Boolean(errors.discordHandle)}
+                    aria-describedby={errors.discordHandle ? "discord-handle-error" : undefined}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
                     placeholder="user#1234"
                     maxLength={32}
                   />
+                  {errors.discordHandle && (
+                    <p id="discord-handle-error" role="alert" className="text-red-500 text-xs mt-1.5 font-medium">{errors.discordHandle}</p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
+                  <label htmlFor="github-handle" className="block text-xs sm:text-sm font-bold text-neutral-400 mb-2">
                     {t('githubHandleLabel')}
                   </label>
                   <input
+                    id="github-handle"
                     type="text"
                     value={form.githubHandle}
                     onChange={(e) =>
                       setForm({ ...form, githubHandle: e.target.value })
                     }
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base"
+                    aria-invalid={Boolean(errors.githubHandle)}
+                    aria-describedby={errors.githubHandle ? "github-handle-error" : undefined}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
                     placeholder="stellar"
                     maxLength={39}
                   />
+                  {errors.githubHandle && (
+                    <p id="github-handle-error" role="alert" className="text-red-500 text-xs mt-1.5 font-medium">{errors.githubHandle}</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -263,14 +450,26 @@ export default function Settings() {
             {/* Action Buttons - Desktop */}
             <div className="hidden sm:flex gap-3 sm:gap-4">
               <button
+                type="button"
                 onClick={handleSave}
-                className="flex-1 px-4 sm:px-6 py-3 sm:py-4 bg-indigo-500 text-white font-bold rounded-xl hover:scale-105 active:scale-95 transition text-sm sm:text-base"
+                disabled={loading}
+                className="flex-1 px-4 sm:px-6 py-3 sm:py-4 bg-indigo-500 text-white font-bold rounded-xl hover:scale-105 active:scale-95 transition text-sm sm:text-base disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
               >
-                {t('saveChanges')}
+                {loading ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  t('saveChanges')
+                )}
               </button>
               <button
+                type="button"
                 onClick={() => setShowPreview(!showPreview)}
-                className="px-4 sm:px-6 py-3 sm:py-4 bg-white/5 border border-white/10 text-white font-bold rounded-xl hover:bg-white/10 transition text-sm sm:text-base whitespace-nowrap"
+                aria-expanded={showPreview}
+                aria-controls="profile-live-preview"
+                className="px-4 sm:px-6 py-3 sm:py-4 bg-white/5 border border-white/10 text-white font-bold rounded-xl hover:bg-white/10 transition text-sm sm:text-base whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
               >
                 {showPreview ? t('hide') : t('show')} {t('preview')}
               </button>
@@ -279,7 +478,7 @@ export default function Settings() {
 
           {/* Live Preview - Desktop */}
           {showPreview && (
-            <div className="hidden lg:block lg:sticky lg:top-12 h-fit">
+            <div id="profile-live-preview" className="hidden lg:block lg:sticky lg:top-12 h-fit">
               <div className="rounded-3xl bg-black/40 border border-white/5 p-8">
                 <h2 className="text-xl font-bold mb-6">{t('livePreview')}</h2>
                 <div className="rounded-2xl border border-white/10 overflow-hidden bg-neutral-950">
@@ -291,7 +490,7 @@ export default function Settings() {
 
           {/* Live Preview - Mobile/Tablet (when toggled) */}
           {showPreview && (
-            <div className="lg:hidden rounded-2xl sm:rounded-3xl bg-black/40 border border-white/5 p-5 sm:p-6 md:p-8">
+            <div id="profile-live-preview-mobile" className="lg:hidden rounded-2xl sm:rounded-3xl bg-black/40 border border-white/5 p-5 sm:p-6 md:p-8">
               <h2 className="text-lg sm:text-xl font-bold mb-4 sm:mb-6">
                 {t('livePreview')}
               </h2>
@@ -307,14 +506,26 @@ export default function Settings() {
       <div className="sm:hidden fixed bottom-0 left-0 right-0 z-30 p-4 bg-black/80 backdrop-blur-3xl border-t border-white/5">
         <div className="flex gap-3">
           <button
+            type="button"
             onClick={handleSave}
-            className="flex-1 px-4 py-3 bg-indigo-500 text-white font-bold rounded-xl active:scale-95 transition"
+            disabled={loading}
+            className="flex-1 px-4 py-3 bg-indigo-500 text-white font-bold rounded-xl active:scale-95 transition disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
           >
-            {t('saveChanges')}
+            {loading ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Saving...
+              </>
+            ) : (
+              t('saveChanges')
+            )}
           </button>
           <button
+            type="button"
             onClick={() => setShowPreview(!showPreview)}
-            className="px-4 py-3 bg-white/5 border border-white/10 text-white font-bold rounded-xl active:scale-95 transition"
+            aria-expanded={showPreview}
+            aria-controls="profile-live-preview-mobile"
+            className="px-4 py-3 bg-white/5 border border-white/10 text-white font-bold rounded-xl active:scale-95 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
           >
             {showPreview ? t('hide') : t('show')} {t('preview')}
           </button>
@@ -341,11 +552,17 @@ function ProfilePreview({
   discordHandle: string;
   githubHandle: string;
 }) {
+  const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [avatarUrl]);
+
   return (
     <div className="p-6 sm:p-8 text-center">
       {/* Avatar */}
       <div className="flex justify-center mb-4 sm:mb-6">
-        {avatarUrl ? (
+        {avatarUrl && !imageError ? (
           <Image
             src={avatarUrl}
             alt={username}
@@ -353,13 +570,15 @@ function ProfilePreview({
             height={96}
             className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border-4 object-cover"
             style={{ borderColor: primaryColor }}
+            onError={() => setImageError(true)}
+            unoptimized
           />
         ) : (
           <div
             className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border-4 flex items-center justify-center text-2xl sm:text-3xl font-black"
             style={{ borderColor: primaryColor, color: primaryColor }}
           >
-            {username[0]?.toUpperCase()}
+            {username[0]?.toUpperCase() ?? "U"}
           </div>
         )}
       </div>

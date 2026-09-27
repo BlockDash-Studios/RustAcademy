@@ -28,7 +28,9 @@ export type NotificationEventType =
   | "recurring.link.paused"
   | "recurring.link.resumed"
   | "recurring.link.completed"
-  | "auto_reconciliation.succeeded";
+  | "auto_reconciliation.succeeded"
+  | "export.failure"
+  | "export.delivered";
 
 export interface BaseNotificationPayload {
   /** The event kind — used to match against user preference filters. */
@@ -141,6 +143,38 @@ export interface AutoReconciliationSucceededNotificationPayload extends BaseNoti
   confidence: number;
 }
 
+export interface ExportFailedPayload extends BaseNotificationPayload {
+  eventType: "export.failure";
+  /** Type of export that failed */
+  exportType: string;
+  /** Output format requested */
+  format: string;
+  /** Delivery method requested */
+  deliveryMethod: string;
+  /** Error message from the failure */
+  errorMessage: string;
+  /** Attempt number when the failure occurred */
+  attemptCount: number;
+  /** Whether all retries have been exhausted */
+  permanent: boolean;
+}
+
+export interface ExportDeliveredPayload extends BaseNotificationPayload {
+  eventType: "export.delivered";
+  /** Type of export that was delivered */
+  exportType: string;
+  /** Output format of the export */
+  format: string;
+  /** Delivery method used */
+  deliveryMethod: string;
+  /** Download or delivery URL (for download/webhook methods) */
+  deliveryUrl?: string;
+  /** Size of the export in bytes */
+  exportSizeBytes?: number;
+  /** Attempt number when delivery succeeded */
+  attemptCount: number;
+}
+
 export type NotificationPayload =
   | EscrowDepositedPayload
   | EscrowWithdrawnPayload
@@ -151,7 +185,9 @@ export type NotificationPayload =
   | RecurringPaymentExecutedPayload
   | RecurringPaymentFailedPayload
   | RecurringLinkStatusPayload
-  | AutoReconciliationSucceededNotificationPayload;
+  | AutoReconciliationSucceededNotificationPayload
+  | ExportFailedPayload
+  | ExportDeliveredPayload;
 
 // ---------------------------------------------------------------------------
 // User preferences

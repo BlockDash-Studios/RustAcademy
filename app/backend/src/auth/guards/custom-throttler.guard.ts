@@ -9,10 +9,12 @@ import {
   RATE_LIMIT_GROUP_METADATA_KEY,
   RateLimitGroup,
   RateLimitKeyType,
+  SENSITIVE_IP_SEGMENT,
   THROTTLER_BURST_NAME,
   throttlerConfig,
 } from "../../config/rate-limit.config";
 import { MetricsService } from "../../metrics/metrics.service";
+import { AuditService } from "../../audit/audit.service";
 
 type RequestWithRateLimitContext = Record<string, unknown> & {
   headers?: Record<string, string | string[] | undefined>;
@@ -27,6 +29,8 @@ type RequestWithRateLimitContext = Record<string, unknown> & {
   rateLimitContext?: {
     group: RateLimitGroup;
     keyType: RateLimitKeyType;
+    /** True while the always-IP-keyed "sensitive" check is in progress. */
+    forcedIp?: boolean;
   };
 };
 
@@ -34,6 +38,9 @@ type RequestWithRateLimitContext = Record<string, unknown> & {
 export class CustomThrottlerGuard extends ThrottlerGuard {
   @Inject(MetricsService)
   private readonly metricsService: MetricsService;
+
+  @Inject(AuditService)
+  private readonly auditService: AuditService;
 
   protected readonly reflector = new Reflector();
 
@@ -46,13 +53,30 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
       .getRequest<RequestWithRateLimitContext>();
 
     const group = this.resolveGroup(context, req);
-    const window =
-      throttler.name === THROTTLER_BURST_NAME ? "burst" : "sustained";
-    const windowConfig = throttlerConfig.groups[group][window];
+
+    if (!throttler.name.startsWith(`${group}_`)) {
+      return true;
+    }
+
+    // For "sensitive", two independent throttler profiles are registered
+    // per window (see buildThrottlerProfiles): one keyed by the resolved
+    // identity (`sensitive_burst`/`sensitive_sustained`) and one always
+    // keyed by IP (`sensitive_ip_burst`/`sensitive_ip_sustained`). Both must
+    // pass — this is what gives sensitive mutations *both* a per-user and a
+    // per-IP cap, per Issue #551, instead of just whichever identity
+    // resolves first.
+    const forcedIp = throttler.name.includes(`_${SENSITIVE_IP_SEGMENT}_`);
+    const window = throttler.name.endsWith(`_${THROTTLER_BURST_NAME}`)
+      ? "burst"
+      : "sustained";
+    const windowConfig = forcedIp
+      ? throttlerConfig.sensitiveIpLimits[window]
+      : throttlerConfig.groups[group][window];
 
     req.rateLimitContext = {
       group,
-      keyType: this.resolveIdentity(req).keyType,
+      keyType: forcedIp ? "ip" : this.resolveIdentity(req).keyType,
+      forcedIp,
     };
 
     try {
@@ -79,13 +103,41 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
 
         const method = req.method ?? "unknown";
         const routePath = req.route?.path ?? req.path ?? req.originalUrl ?? "unknown";
-        
+
         this.metricsService.recordRateLimitedRequest(
           method,
           routePath,
           group,
           req.rateLimitContext.keyType,
         );
+
+        // Explicit anomaly handling (Issue #551): a tripped "sensitive"
+        // limit is itself a security-relevant event, not just a metric —
+        // record who/what/where in the immutable audit trail. Fire-and-
+        // forget: AuditService.log() never throws (it degrades to an
+        // in-memory fallback internally), and auditing must never be able
+        // to block or fail the throttling decision itself.
+        if (group === "sensitive") {
+          const identity = this.resolveIdentity(req);
+          const requestIdHeader = req.headers?.["x-request-id"];
+          const requestId =
+            typeof requestIdHeader === "string" ? requestIdHeader : undefined;
+
+          void this.auditService.log(
+            `${identity.keyType}:${identity.value}`,
+            "rate_limit.sensitive_exceeded",
+            routePath,
+            {
+              method,
+              window,
+              forcedIp,
+              ip: this.getIp(req),
+              limit: windowConfig.limit,
+              ttlMs: windowConfig.ttlMs,
+            },
+            requestId,
+          );
+        }
       }
 
       throw error;
@@ -95,6 +147,10 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
   protected async getTracker(
     req: RequestWithRateLimitContext,
   ): Promise<string> {
+    if (req.rateLimitContext?.forcedIp) {
+      return `ip:${this.getIp(req)}`;
+    }
+
     const identity = this.resolveIdentity(req);
     return `${identity.keyType}:${identity.value}`;
   }

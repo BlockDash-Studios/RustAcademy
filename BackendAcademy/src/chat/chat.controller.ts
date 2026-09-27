@@ -1,34 +1,26 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
-import { ChatService } from './chat.service';
-import { CreateMessageDto } from './dto/create-message.dto';
-import { CreateRoomDto } from './dto/create-room.dto';
+import { Body, Controller, Get, Post } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import { ModerationService } from './moderation.service';
+import { ReportMessageDto } from './dto/report-message.dto';
+import { SendMessageDto } from './dto/send-message.dto';
 
-@Controller('chat')
+@ApiTags('chat')
+@Controller('v1/chat')
 export class ChatController {
-  constructor(private readonly chatService: ChatService) {}
-
-  @Post('rooms')
-  createRoom(@Body() createRoomDto: CreateRoomDto) {
-    return this.chatService.createRoom(createRoomDto);
-  }
-
-  @Get('rooms')
-  findAllRooms() {
-    return this.chatService.findAllRooms();
-  }
-
-  @Get('rooms/:roomId')
-  findRoom(@Param('roomId') roomId: string) {
-    return this.chatService.findRoomById(roomId);
-  }
+  constructor(private readonly moderation: ModerationService) {}
 
   @Post('messages')
-  createMessage(@Body() createMessageDto: CreateMessageDto) {
-    return this.chatService.createMessage(createMessageDto);
+  sendMessage(@Body() message: SendMessageDto) {
+    return this.moderation.sendMessage(message);
   }
 
-  @Get('rooms/:roomId/messages')
-  findMessagesByRoom(@Param('roomId') roomId: string) {
-    return this.chatService.findMessagesByRoom(roomId);
+  @Post('reports')
+  report(@Body() report: ReportMessageDto) {
+    return this.moderation.report(report);
+  }
+
+  @Get('moderation/queue')
+  queue() {
+    return this.moderation.getQueue();
   }
 }

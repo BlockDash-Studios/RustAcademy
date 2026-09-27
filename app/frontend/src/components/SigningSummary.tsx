@@ -1,8 +1,11 @@
 "use client";
 
-import { AlertTriangle, Clock, ShieldCheck, Wallet } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Loader2, ShieldCheck, Wallet } from "lucide-react";
 
 export type SigningAction = "bid" | "refund" | "dispute" | "listing" | "purchase";
+
+/** Final outcome of the transaction so the summary can reflect recovery steps. */
+export type SigningStatus = "pending" | "confirmed" | "rejected" | "expired" | "timeout";
 
 interface SigningFee {
   value: number;
@@ -27,6 +30,8 @@ interface SigningSummaryProps {
   network?: string;
   targetNetwork?: string;
   fee?: SigningFee;
+  status?: SigningStatus;
+  recoveryAction?: string;
 }
 
 export function SigningSummary({
@@ -37,6 +42,8 @@ export function SigningSummary({
   network = "Stellar Testnet",
   targetNetwork = "Stellar Testnet",
   fee,
+  status = "pending",
+  recoveryAction,
 }: SigningSummaryProps) {
   const isNetworkMismatch = network !== targetNetwork;
   const isExpired = expiry ? expiry.getTime() < Date.now() : false;
@@ -141,10 +148,61 @@ export function SigningSummary({
         </div>
       )}
 
-      {!isNetworkMismatch && !isExpired && !isHighFee && (
+      {!isNetworkMismatch && !isExpired && !isHighFee && status === "pending" && (
         <p className="text-[10px] text-neutral-500 text-center px-4 leading-relaxed italic">
           Verify the details above match your intention. This summary is generated from the exact payload that will be sent to your wallet.
         </p>
+      )}
+
+      {/* Final status banner with recovery guidance */}
+      {status !== "pending" && (
+        <div
+          role="status"
+          className={`p-4 rounded-2xl border space-y-1 ${
+            status === "confirmed"
+              ? "bg-emerald-500/10 border-emerald-500/30"
+              : status === "timeout"
+                ? "bg-amber-500/10 border-amber-500/30"
+                : "bg-red-500/10 border-red-500/30"
+          }`}
+        >
+          <div className="flex items-center gap-2 font-black text-xs uppercase tracking-tight">
+            {status === "confirmed" ? (
+              <CheckCircle2 size={16} className="text-emerald-400" />
+            ) : status === "timeout" ? (
+              <Loader2 size={16} className="text-amber-400" />
+            ) : (
+              <AlertTriangle size={16} className="text-red-400" />
+            )}
+            <span
+              className={
+                status === "confirmed"
+                  ? "text-emerald-400"
+                  : status === "timeout"
+                    ? "text-amber-400"
+                    : "text-red-400"
+              }
+            >
+              {status === "confirmed"
+                ? "Transaction confirmed"
+                : status === "rejected"
+                  ? "Signature rejected"
+                  : status === "expired"
+                    ? "Payment window expired"
+                    : "Broadcast timed out"}
+            </span>
+          </div>
+          <p className="text-xs text-red-200/90 leading-relaxed">
+            {recoveryAction ??
+              (status === "confirmed"
+                ? "Your payment has been accepted by the network."
+                : status === "rejected"
+                  ? "Open your wallet and approve the signature request to try again."
+                  : status === "expired"
+                    ? "Refresh the quote to get a new payload, then retry."
+                    : "The signed payload is cached. Retrying is safe and will not duplicate the payment.")}
+          </p>
+        </div>
       )}
     </div>
   );

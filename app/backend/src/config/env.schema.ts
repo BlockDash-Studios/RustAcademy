@@ -1,5 +1,7 @@
 import * as Joi from "joi";
 
+import { sanitizeErrorMessage } from "../common/utils/redaction.util";
+
 /**
  * Environment variable validation schema.
  * Validates all required and optional environment variables at startup.
@@ -94,6 +96,18 @@ export const envSchema = Joi.object({
   CORS_ALLOWED_ORIGINS: Joi.string()
     .empty("")
     .optional()
+    .custom((value, helpers) => {
+      if (
+        process.env.NODE_ENV === "production" &&
+        (!value || value.trim() === "")
+      ) {
+        return helpers.error("any.invalid", {
+          message:
+            "CORS_ALLOWED_ORIGINS is empty — in production, all cross-origin requests will be blocked unless a Vercel preview project is configured via CORS_VERCEL_PROJECT.",
+        });
+      }
+      return value;
+    })
     .description(
       "Comma-separated list of allowed CORS origins (e.g. https:// RustAcademy.to,https://app. RustAcademy.to). " +
         "Required in production when no wildcard is desired.",
@@ -136,6 +150,36 @@ export const envSchema = Joi.object({
   FEATURE_FLAGS_BOOTSTRAP_JSON: Joi.string()
     .empty("")
     .optional()
+    .custom((value, helpers) => {
+      if (!value) return value;
+      try {
+        const parsed = JSON.parse(value);
+        if (!Array.isArray(parsed)) {
+          return helpers.error("any.custom", {
+            message:
+              "FEATURE_FLAGS_BOOTSTRAP_JSON must be a valid JSON array of feature flag objects",
+          });
+        }
+        for (const item of parsed) {
+          if (
+            typeof item !== "object" ||
+            item === null ||
+            typeof item.key !== "string" ||
+            !item.key.trim()
+          ) {
+            return helpers.error("any.custom", {
+              message:
+                "FEATURE_FLAGS_BOOTSTRAP_JSON array items must be objects with a non-empty string 'key' property",
+            });
+          }
+        }
+      } catch (err) {
+        return helpers.error("any.custom", {
+          message: `FEATURE_FLAGS_BOOTSTRAP_JSON contains invalid JSON: ${(err as Error).message}`,
+        });
+      }
+      return value;
+    })
     .description(
       "Optional JSON array of bootstrap feature flags used when the store is unavailable",
     ),
@@ -146,6 +190,12 @@ export const envSchema = Joi.object({
     .optional()
     .description(
       "Soroban contract ID to stream events from (enables Stellar ingestion service)",
+    ),
+
+  INGESTION_ENABLED: Joi.boolean()
+    .default(false)
+    .description(
+      "Explicit safety gate for starting contract event ingestion at boot",
     ),
 
   // ---------------------------------------------------------------------------
@@ -163,6 +213,35 @@ export const envSchema = Joi.object({
     .optional()
     .description(
       "From address for SendGrid emails (e.g. noreply@ RustAcademy.to)",
+    ),
+
+  // Wallet authentication (#549)
+  WALLET_AUTH_ACCESS_TOKEN_SECRET: Joi.string()
+    .empty("")
+    .min(32)
+    .optional()
+    .description(
+      "HMAC secret for wallet access tokens. Must be at least 32 characters. A random secret is generated at boot when unset, which invalidates existing access tokens on restart and does not work across multiple instances.",
+    ),
+
+  WALLET_AUTH_ACCESS_TTL_SECONDS: Joi.number()
+    .integer()
+    .min(60)
+    .default(900)
+    .description("Wallet access-token lifetime in seconds"),
+
+  WALLET_AUTH_NONCE_TTL_SECONDS: Joi.number()
+    .integer()
+    .min(30)
+    .default(300)
+    .description("How long a wallet login challenge remains valid, in seconds"),
+
+  WALLET_AUTH_REFRESH_TTL_SECONDS: Joi.number()
+    .integer()
+    .min(300)
+    .default(1209600)
+    .description(
+      "Absolute wallet session lifetime in seconds. Rotation does not extend it.",
     ),
 
   // Expo push channel
@@ -190,7 +269,9 @@ export const envSchema = Joi.object({
     .optional()
     .description(
       "Comma-separated list of bcrypt-hashed API keys for trusted clients. " +
-        "Valid keys receive higher rate limits (120 req/min vs 20 req/min).",
+        "Used for API key authentication only — it has no effect on rate limits. " +
+        "Rate limits are applied per resolved group (public/authenticated/webhooks); " +
+        "see RATE_LIMIT_* variables and rate-limit.config.ts.",
     ),
 
   // Global HTTP rate-limiting profiles (all optional; defaults applied)
@@ -256,6 +337,58 @@ export const envSchema = Joi.object({
     .min(1000)
     .default(60000)
     .description("Webhook traffic sustained window in milliseconds"),
+
+  // Admin, auth, and payment-sensitive mutations (Issue #551). Routes are
+  // opted in explicitly via @SensitiveMutation()/@RateLimitGroupTag("sensitive") —
+  // see rate-limit.config.ts for why this needs BOTH an identity-keyed limit
+  // and a separate, always-IP-keyed limit.
+  RATE_LIMIT_SENSITIVE_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(5)
+    .description("Sensitive-mutation burst request limit, per resolved identity"),
+  RATE_LIMIT_SENSITIVE_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Sensitive-mutation burst window in milliseconds"),
+  RATE_LIMIT_SENSITIVE_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(20)
+    .description("Sensitive-mutation sustained request limit, per resolved identity"),
+  RATE_LIMIT_SENSITIVE_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Sensitive-mutation sustained window in milliseconds"),
+
+  RATE_LIMIT_SENSITIVE_IP_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(15)
+    .description(
+      "Sensitive-mutation burst request limit, always keyed by IP " +
+        "(applies in addition to RATE_LIMIT_SENSITIVE_BURST_LIMIT)",
+    ),
+  RATE_LIMIT_SENSITIVE_IP_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Sensitive-mutation per-IP burst window in milliseconds"),
+  RATE_LIMIT_SENSITIVE_IP_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(50)
+    .description(
+      "Sensitive-mutation sustained request limit, always keyed by IP " +
+        "(applies in addition to RATE_LIMIT_SENSITIVE_SUSTAINED_LIMIT)",
+    ),
+  RATE_LIMIT_SENSITIVE_IP_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Sensitive-mutation per-IP sustained window in milliseconds"),
 
   RATE_LIMIT_KEY_ORDER: Joi.string()
     .default("user_id,api_key,ip")
@@ -362,7 +495,98 @@ export const envSchema = Joi.object({
     .description(
       "Admin override to disable lag guard temporarily (for emergencies)",
     ),
-});
+
+  // ── Feature Flags ─────────────────────────────────────────────────────────
+  FEATURES_RECONCILIATION_ENABLED: Joi.boolean()
+    .default(true)
+    .description("Whether the reconciliation module is enabled"),
+  FEATURES_NOTIFICATIONS_ENABLED: Joi.boolean()
+    .default(true)
+    .description("Whether the notifications module is enabled"),
+  FEATURES_DEVELOPER_ROUTES_ENABLED: Joi.boolean()
+    .default(false)
+    .description("Whether the developer routes/module is enabled"),
+
+  // ── Export Delivery Pipeline ──────────────────────────────────────────────
+  EXPORT_STORAGE_BUCKET: Joi.string()
+    .empty("")
+    .optional()
+    .description(
+      "Supabase Storage bucket for export files (used for download delivery)",
+    ),
+
+  EXPORT_LINK_EXPIRY_MS: Joi.number()
+    .integer()
+    .min(60_000)
+    .default(604_800_000)
+    .description(
+      "Signed URL expiry for download links in milliseconds (default: 7 days)",
+    ),
+
+  EXPORT_WEBHOOK_TIMEOUT_MS: Joi.number()
+    .integer()
+    .min(1_000)
+    .default(30_000)
+    .description("HTTP timeout for webhook export delivery in milliseconds"),
+
+  APP_BASE_URL: Joi.string()
+    .uri({ scheme: ["http", "https"] })
+    .empty("")
+    .optional()
+    .description(
+      "Base URL for constructing absolute download links (e.g. https://app. RustAcademy.to)",
+    ),
+})
+  .custom((value, helpers) => {
+    if (value.INGESTION_ENABLED && !value.RustAcademy_CONTRACT_ID) {
+      return helpers.error("any.custom", {
+        message:
+          "RustAcademy_CONTRACT_ID is required when INGESTION_ENABLED is true",
+      });
+    }
+
+    return value;
+  }, "ingestion safety validation")
+  .messages({
+    "any.custom": "{{#message}}",
+  });
+
+/**
+ * Validates an environment object against {@link envSchema} and returns the
+ * typed config with defaults applied.
+ *
+ * Fail-fast: throws a single Error listing every missing or invalid variable
+ * (with the offending key name) so operators can fix the whole environment in
+ * one pass. Raw secret values are redacted from the message.
+ *
+ * @param env - Environment variables to validate (e.g. `process.env`)
+ * @param options - Validation options. `allowUnknown` defaults to `true`,
+ *   matching the runtime `ConfigModule` configuration.
+ */
+export function validateEnv(
+  env: Record<string, unknown>,
+  options: { allowUnknown?: boolean } = {},
+): EnvConfig {
+  const { error, value } = envSchema.validate(env, {
+    abortEarly: false,
+    allowUnknown: options.allowUnknown ?? true,
+  });
+
+  if (error) {
+    const issues = error.details.map(
+      (detail) =>
+        `  - ${detail.path.join(".") || "(root)"}: ${detail.message}`,
+    );
+    const label = issues.length === 1 ? "issue" : "issues";
+    const message =
+      `Environment validation failed (${issues.length} ${label}):\n` +
+      issues.join("\n") +
+      "\nFix the listed variables in your environment (or .env file) and restart.";
+    throw new Error(sanitizeErrorMessage(message));
+  }
+
+  return value as EnvConfig;
+}
 
 /**
  * Interface for typed environment variables
@@ -391,9 +615,14 @@ export interface EnvConfig {
   FEATURE_FLAGS_CACHE_TTL_MS: number;
   FEATURE_FLAGS_BOOTSTRAP_JSON?: string;
   RustAcademy_CONTRACT_ID?: string;
+  INGESTION_ENABLED: boolean;
   SENDGRID_API_KEY?: string;
   SENDGRID_FROM_EMAIL?: string;
   EXPO_ACCESS_TOKEN?: string;
+  WALLET_AUTH_ACCESS_TOKEN_SECRET?: string;
+  WALLET_AUTH_ACCESS_TTL_SECONDS: number;
+  WALLET_AUTH_NONCE_TTL_SECONDS: number;
+  WALLET_AUTH_REFRESH_TTL_SECONDS: number;
   RECONCILIATION_BATCH_SIZE: number;
   API_KEYS?: string;
   RATE_LIMIT_PUBLIC_BURST_LIMIT: number;
@@ -408,6 +637,14 @@ export interface EnvConfig {
   RATE_LIMIT_WEBHOOKS_BURST_TTL_MS: number;
   RATE_LIMIT_WEBHOOKS_SUSTAINED_LIMIT: number;
   RATE_LIMIT_WEBHOOKS_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_SENSITIVE_BURST_LIMIT: number;
+  RATE_LIMIT_SENSITIVE_BURST_TTL_MS: number;
+  RATE_LIMIT_SENSITIVE_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_SENSITIVE_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_SENSITIVE_IP_BURST_LIMIT: number;
+  RATE_LIMIT_SENSITIVE_IP_BURST_TTL_MS: number;
+  RATE_LIMIT_SENSITIVE_IP_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_SENSITIVE_IP_SUSTAINED_TTL_MS: number;
   RATE_LIMIT_KEY_ORDER: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
@@ -424,4 +661,11 @@ export interface EnvConfig {
   INDEXER_LAG_THRESHOLD_LEDGERS: number;
   INDEXER_LAG_GUARD_ENABLED: boolean;
   INDEXER_LAG_GUARD_OVERRIDE: boolean;
+  FEATURES_RECONCILIATION_ENABLED: boolean;
+  FEATURES_NOTIFICATIONS_ENABLED: boolean;
+  FEATURES_DEVELOPER_ROUTES_ENABLED: boolean;
+  EXPORT_STORAGE_BUCKET?: string;
+  EXPORT_LINK_EXPIRY_MS: number;
+  EXPORT_WEBHOOK_TIMEOUT_MS: number;
+  APP_BASE_URL?: string;
 }

@@ -11,6 +11,16 @@ import { Injectable, Logger } from '@nestjs/common';
 import { JobHandler, Job, CancellationToken } from '../types';
 import { ExportGenerationPayload } from '../types/job-payloads.types';
 import { SupabaseService } from '../../supabase/supabase.service';
+import { NotificationService } from '../../notifications/notification.service';
+import {
+  WebhookDeliveryAdapter,
+  EmailDeliveryAdapter,
+  DownloadLinkAdapter,
+} from '../delivery';
+import type {
+  ExportFailedPayload,
+  ExportDeliveredPayload,
+} from '../../notifications/types/notification.types';
 
 /**
  * Error thrown for permanent job failures (no retry)
@@ -34,8 +44,19 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
   private readonly logger = new Logger(ExportGenerationHandler.name);
   private readonly cancellationCheckInterval = 1000; // Check every 1000 records
 
+  /** Exponential backoff delays: 1m, 5m, 30m */
+  private readonly BACKOFF_DELAYS_MS = [
+    60_000,      // 1 minute
+    300_000,     // 5 minutes
+    1_800_000,   // 30 minutes
+  ];
+
   constructor(
     private readonly supabase: SupabaseService,
+    private readonly notificationService: NotificationService,
+    private readonly webhookAdapter: WebhookDeliveryAdapter,
+    private readonly emailAdapter: EmailDeliveryAdapter,
+    private readonly downloadAdapter: DownloadLinkAdapter,
   ) {}
 
   /**
@@ -56,8 +77,15 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
     const { userId, exportType, filters, format, deliveryMethod } = job.payload;
 
     this.logger.log(
-      `Generating ${format} export for user ${userId} (type: ${exportType}, jobId: ${job.id})`,
+      `Generating ${format} export for user ${userId} (type: ${exportType}, jobId: ${job.id}, attempt: ${job.attempts + 1}/${job.maxAttempts})`,
     );
+
+    if (job.attempts > 0) {
+      const backoffDelayMs = this.BACKOFF_DELAYS_MS[Math.min(job.attempts - 1, this.BACKOFF_DELAYS_MS.length - 1)];
+      this.logger.log(
+        `Retry attempt ${job.attempts} (next backoff delay: ${backoffDelayMs}ms, jobId: ${job.id})`,
+      );
+    }
 
     try {
       // Fetch data based on export type
@@ -75,7 +103,7 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
       );
 
       // Deliver export via specified method
-      await this.deliverExport(userId, exportType, exportData, format, deliveryMethod, cancellationToken);
+      await this.deliverExport(job, exportData, format, deliveryMethod, cancellationToken);
 
       this.logger.log(
         `Export delivered successfully via ${deliveryMethod} (jobId: ${job.id})`,
@@ -88,10 +116,22 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
 
       // Other errors are transient (database errors, network errors, etc.)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const attemptCount = job.attempts + 1;
+
       this.logger.error(
-        `Export generation failed (jobId: ${job.id}): ${errorMessage}`,
+        `Export generation failed (jobId: ${job.id}, attempt: ${attemptCount}/${job.maxAttempts}): ${errorMessage}`,
         error instanceof Error ? error.stack : undefined,
       );
+
+      // DLQ enrichment: log structured retry metadata on final failure
+      if (attemptCount >= job.maxAttempts) {
+        this.logger.error(
+          `Export permanently failed — moving to DLQ (jobId: ${job.id}, userId: ${userId}, ` +
+          `exportType: ${exportType}, attempts: ${attemptCount}, ` +
+          `backoffDelays: ${this.BACKOFF_DELAYS_MS.join(',')})`,
+        );
+      }
+
       throw new Error(`Export generation failed: ${errorMessage}`);
     }
   }
@@ -238,37 +278,39 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
    * @param cancellationToken - Token to check for cancellation
    */
   private async deliverExport(
-    userId: string,
-    exportType: string,
+    job: Job<ExportGenerationPayload>,
     exportData: string,
-    format: string,
+    format: 'csv' | 'json',
     deliveryMethod: 'webhook' | 'email' | 'download',
     cancellationToken: CancellationToken,
   ): Promise<void> {
+    const { exportType } = job.payload;
     cancellationToken.throwIfCancelled();
 
+    let result;
     switch (deliveryMethod) {
       case 'webhook':
-        // TODO: Implement webhook delivery
-        // For now, just log
-        this.logger.log(`Webhook delivery not yet implemented for user ${userId}`);
+        result = await this.webhookAdapter.deliver(job.payload, exportData, format);
         break;
-
       case 'email':
-        // TODO: Implement email delivery
-        // For now, just log
-        this.logger.log(`Email delivery not yet implemented for user ${userId}`);
+        result = await this.emailAdapter.deliver(job.payload, exportData, format);
         break;
-
       case 'download':
-        // TODO: Implement download link generation (store in S3/Supabase Storage)
-        // For now, just log
-        this.logger.log(`Download link generation not yet implemented for user ${userId}`);
+        result = await this.downloadAdapter.deliver(job.payload, exportData, format);
         break;
-
       default:
         throw new PermanentJobError(`Unsupported delivery method: ${deliveryMethod}`);
     }
+
+    if (!result.success) {
+      throw new Error(result.error ?? 'Export delivery failed');
+    }
+
+    this.logger.log(
+      `Export delivered successfully via ${deliveryMethod} (url: ${result.deliveryUrl ?? 'n/a'}, jobId: ${job.id})`,
+    );
+
+    await this.notifyUserOfDelivery(job, exportType, format, deliveryMethod, result);
   }
 
   /**
@@ -304,6 +346,14 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
       errors.push('deliveryMethod is required and must be one of: webhook, email, download');
     }
 
+    if (payload.deliveryMethod === 'webhook' && !payload.webhookUrl) {
+      errors.push('webhookUrl is required when deliveryMethod is webhook');
+    }
+
+    if (payload.deliveryMethod === 'email' && !payload.email) {
+      errors.push('email is required when deliveryMethod is email');
+    }
+
     if (!payload.filters || typeof payload.filters !== 'object') {
       errors.push('filters is required and must be an object');
     }
@@ -316,8 +366,9 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
   /**
    * Handle job failure
    * 
-   * Logs export generation failure.
-   * This is called when the job exhausts all retry attempts and moves to DLQ.
+   * Logs export generation failure, sends user notification, and enriches DLQ
+   * with structured failure details. This is called when the job exhausts all
+   * retry attempts and moves to DLQ.
    * 
    * @param job - The failed job
    * @param error - The error that caused the failure
@@ -325,13 +376,130 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
    * **Validates: Requirements 9.5**
    */
   async onFailure(job: Job<ExportGenerationPayload>, error: Error): Promise<void> {
-    const { userId, exportType } = job.payload;
+    const { userId, exportType, format, deliveryMethod } = job.payload;
+    const errorMessage = error.message;
+    const attemptCount = job.attempts + 1;
 
     this.logger.error(
-      `Export generation permanently failed for user ${userId} (type: ${exportType}, jobId: ${job.id}): ${error.message}`,
+      `Export generation permanently failed for user ${userId} (type: ${exportType}, jobId: ${job.id}): ${errorMessage}`,
       error.stack,
     );
 
-    // TODO: Notify user of export failure via notification system
+    // DLQ enrichment: structured failure details for debugging
+    this.logger.error(
+      `DLQ enrichment (jobId: ${job.id}): userId=${userId}, exportType=${exportType}, ` +
+      `format=${format}, deliveryMethod=${deliveryMethod}, ` +
+      `attempts=${attemptCount}/${job.maxAttempts}, backoffDelays=[${this.BACKOFF_DELAYS_MS.join(',')}], ` +
+      `error=${errorMessage}`,
+    );
+
+    // Send notification to user about the failed export
+    await this.notifyUserOfFailure(job, error, attemptCount);
+  }
+
+  /**
+   * Notify the user that their export has permanently failed.
+   * 
+   * Attempts to send an in-app notification via the notification service.
+   * Uses the user's public key derived from userId for notification delivery.
+   * Failures in notification delivery are logged but do not re-throw.
+   */
+  private async notifyUserOfFailure(
+    job: Job<ExportGenerationPayload>,
+    error: Error,
+    attemptCount: number,
+  ): Promise<void> {
+    const { userId, exportType, format, deliveryMethod } = job.payload;
+    const errorMessage = error.message;
+
+    try {
+      const payload: ExportFailedPayload = {
+        eventType: 'export.failure',
+        eventId: `export-failed-${job.id}`,
+        recipientPublicKey: userId,
+        title: 'Export Failed',
+        body:
+          `Your ${format.toUpperCase()} export of ${exportType} data has failed after ` +
+          `${attemptCount} attempt${attemptCount === 1 ? '' : 's'}. ` +
+          `Error: ${errorMessage}`,
+        occurredAt: new Date().toISOString(),
+        exportType,
+        format,
+        deliveryMethod,
+        errorMessage,
+        attemptCount,
+        permanent: true,
+        metadata: {
+          jobId: job.id,
+          exportType,
+          format,
+          deliveryMethod,
+          attempts: attemptCount,
+          maxAttempts: job.maxAttempts,
+        },
+      };
+
+      await this.notificationService.dispatch(payload);
+
+      this.logger.log(
+        `User notified of export failure (userId: ${userId}, jobId: ${job.id})`,
+      );
+    } catch (notificationError) {
+      this.logger.error(
+        `Failed to send export failure notification (userId: ${userId}, jobId: ${job.id}): ` +
+        `${notificationError instanceof Error ? notificationError.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  /**
+   * Notify the user that their export has been delivered successfully.
+   */
+  private async notifyUserOfDelivery(
+    job: Job<ExportGenerationPayload>,
+    exportType: string,
+    format: string,
+    deliveryMethod: string,
+    result: { deliveryUrl?: string; metadata?: Record<string, unknown> },
+  ): Promise<void> {
+    const { userId } = job.payload;
+
+    try {
+      const payload: ExportDeliveredPayload = {
+        eventType: 'export.delivered',
+        eventId: `export-delivered-${job.id}`,
+        recipientPublicKey: userId,
+        title: 'Export Ready',
+        body:
+          `Your ${format.toUpperCase()} export of ${exportType} data is ready. ` +
+          `Delivered via ${deliveryMethod}.`,
+        occurredAt: new Date().toISOString(),
+        exportType,
+        format,
+        deliveryMethod,
+        deliveryUrl: result.deliveryUrl,
+        exportSizeBytes: result.metadata?.exportSizeBytes as number | undefined,
+        attemptCount: job.attempts + 1,
+        metadata: {
+          jobId: job.id,
+          exportType,
+          format,
+          deliveryMethod,
+          deliveryUrl: result.deliveryUrl,
+          ...result.metadata,
+        },
+      };
+
+      await this.notificationService.dispatch(payload);
+
+      this.logger.log(
+        `User notified of export delivery (userId: ${userId}, jobId: ${job.id})`,
+      );
+    } catch (notificationError) {
+      this.logger.error(
+        `Failed to send export delivery notification (userId: ${userId}, jobId: ${job.id}): ` +
+        `${notificationError instanceof Error ? notificationError.message : 'Unknown error'}`,
+      );
+    }
   }
 }

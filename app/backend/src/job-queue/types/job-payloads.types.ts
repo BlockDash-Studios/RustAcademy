@@ -75,6 +75,12 @@ export interface ExportGenerationPayload {
   
   /** How to deliver the export */
   deliveryMethod: 'webhook' | 'email' | 'download';
+
+  /** Webhook URL for webhook delivery (required when deliveryMethod is 'webhook') */
+  webhookUrl?: string;
+
+  /** Email address for email delivery (required when deliveryMethod is 'email') */
+  email?: string;
 }
 
 /**

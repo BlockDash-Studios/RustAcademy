@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { NetworkBadge } from "@/components/NetworkBadge";
 
 interface TeamMember {
   id: string;
@@ -56,6 +57,7 @@ export default function TeamSettings() {
 
   return (
     <div className="relative min-h-screen text-white">
+      <NetworkBadge />
       {/* Background glows */}
       <div className="fixed top-[-20%] left-[-30%] w-[60%] h-[60%] bg-indigo-500/10 blur-[120px] rounded-full" />
 

@@ -4,113 +4,171 @@ import {
   Delete,
   Get,
   HttpCode,
-  HttpStatus,
   Param,
+  ParseIntPipe,
   Post,
-  Put,
   Query,
+  Req,
+  Res,
 } from '@nestjs/common';
-import { CreateSocialPostDto } from './dto/create-social-post.dto';
-import { GetSocialFeedDto } from './dto/get-social-feed.dto';
-import { UpdateModerationDto } from './dto/update-moderation.dto';
+import { Request, Response } from 'express';
+import { ChallengeService } from './challenge.service';
 import {
-  FollowResponse,
-  SocialFeedResponse,
-  SocialPost,
-} from './interfaces/social-post.interface';
-import { SocialService } from './social.service';
+  CreateChallengeDto,
+  SubmitChallengeDto,
+  VoteDto,
+} from './dto/challenge.dto';
+import { CreateShowcaseDto } from './dto/create-showcase.dto';
+import { FollowDto } from './dto/follow.dto';
+import { IndexPostDto } from './dto/index-post.dto';
+import { FollowService } from './follow.service';
+import { HashtagService } from './hashtag.service';
+import { ShowcaseService } from './showcase.service';
+import { SubmissionProtectionService, SubmissionRateLimitException } from './submission-protection.service';
 
+/** REST surface for the social feed (backlog area H). */
 @Controller('social')
 export class SocialController {
-  constructor(private readonly socialService: SocialService) {}
+  constructor(
+    private readonly followService: FollowService,
+    private readonly showcaseService: ShowcaseService,
+    private readonly hashtagService: HashtagService,
+    private readonly challengeService: ChallengeService,
+    private readonly submissionProtection: SubmissionProtectionService,
+  ) {}
 
-  @Post('posts')
-  @HttpCode(HttpStatus.CREATED)
-  createPost(
-    @Body() dto: CreateSocialPostDto,
-    @Query('userId') userId: string,
-  ): SocialPost {
-    return this.socialService.createPost(userId, dto);
+  // ── Follow graph (BE-088) ───────────────────────────────────────────────
+
+  @Post('follows')
+  follow(@Body() dto: FollowDto) {
+    return this.followService.follow(dto.followerId, dto.followeeId);
   }
 
-  @Get('feed')
-  getFeed(@Query() dto: GetSocialFeedDto): SocialFeedResponse {
-    return this.socialService.getFeed(dto);
+  @Delete('follows')
+  @HttpCode(200)
+  unfollow(@Body() dto: FollowDto) {
+    return { removed: this.followService.unfollow(dto.followerId, dto.followeeId) };
   }
 
-  @Get('discovery')
-  getDiscovery(@Query() dto: GetSocialFeedDto): SocialFeedResponse {
-    return this.socialService.getFeed(dto);
+  @Get('users/:userId/following')
+  getFollowing(@Param('userId') userId: string) {
+    return { userId, following: this.followService.getFollowing(userId) };
   }
 
-  @Get('posts/:postId')
-  getPostById(@Param('postId') postId: string): SocialPost {
-    return this.socialService.getPostById(postId);
+  @Get('users/:userId/followers')
+  getFollowers(@Param('userId') userId: string) {
+    return { userId, followers: this.followService.getFollowers(userId) };
   }
 
-  @Put('posts/:postId/moderate')
-  @HttpCode(HttpStatus.OK)
-  moderatePost(
-    @Param('postId') postId: string,
-    @Query('moderatorId') moderatorId: string,
-    @Body() dto: UpdateModerationDto,
-  ): SocialPost {
-    return this.socialService.moderatePost(postId, moderatorId, dto);
+  @Get('users/:userId/follow-counts')
+  getCounts(@Param('userId') userId: string) {
+    return { userId, ...this.followService.getCounts(userId) };
   }
 
-  @Post('posts/:postId/flag')
-  @HttpCode(HttpStatus.OK)
-  flagPost(
-    @Param('postId') postId: string,
-    @Query('userId') userId: string,
-  ): SocialPost {
-    return this.socialService.flagPost(postId, userId);
+  @Get('users/:userId/feed')
+  getFeed(@Param('userId') userId: string) {
+    return { userId, items: this.followService.getFeed(userId) };
   }
 
-  @Post('posts/:postId/like')
-  @HttpCode(HttpStatus.OK)
-  likePost(@Param('postId') postId: string): SocialPost {
-    return this.socialService.likePost(postId);
+  // ── Showcase posts (BE-089) ─────────────────────────────────────────────
+
+  @Post('showcases')
+  createShowcase(@Body() dto: CreateShowcaseDto) {
+    return this.showcaseService.create(dto);
   }
 
-  @Post('posts/:postId/comment')
-  @HttpCode(HttpStatus.OK)
-  commentOnPost(@Param('postId') postId: string): SocialPost {
-    return this.socialService.commentOnPost(postId);
+  @Get('users/:userId/showcases')
+  listShowcases(@Param('userId') userId: string) {
+    return { userId, showcases: this.showcaseService.listByAuthor(userId) };
   }
 
-  @Post('posts/:postId/repost')
-  @HttpCode(HttpStatus.OK)
-  repostPost(@Param('postId') postId: string): SocialPost {
-    return this.socialService.repostPost(postId);
+  // ── Hashtags and trending (BE-090) ──────────────────────────────────────
+
+  @Post('hashtags/index')
+  indexPost(@Body() dto: IndexPostDto) {
+    return { postId: dto.postId, tags: this.hashtagService.indexPost(dto.postId, dto.text) };
   }
 
-  @Delete('posts/:postId')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  deletePost(@Param('postId') postId: string): void {
-    this.socialService.deletePost(postId);
+  @Get('hashtags/trending')
+  getTrending(@Query('limit', new ParseIntPipe({ optional: true })) limit?: number) {
+    return { trending: this.hashtagService.getTrending(limit ?? 5) };
   }
 
-  @Post('users/:userId/follow/:targetUserId')
-  @HttpCode(HttpStatus.OK)
-  followUser(
-    @Param('userId') userId: string,
-    @Param('targetUserId') targetUserId: string,
-  ): FollowResponse {
-    return this.socialService.followUser(userId, targetUserId);
+  @Get('hashtags/:tag/posts')
+  getTaggedPosts(@Param('tag') tag: string) {
+    return { tag, postIds: this.hashtagService.getPosts(tag) };
   }
 
-  @Delete('users/:userId/follow/:targetUserId')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  unfollowUser(
-    @Param('userId') userId: string,
-    @Param('targetUserId') targetUserId: string,
-  ): void {
-    this.socialService.unfollowUser(userId, targetUserId);
+  // ── Weekly challenges (BE-091) ──────────────────────────────────────────
+
+  @Post('challenges')
+  createChallenge(@Body() dto: CreateChallengeDto) {
+    const challenge = this.challengeService.create({
+      challengeId: dto.challengeId,
+      title: dto.title,
+      potStroops: BigInt(dto.potStroops),
+    });
+    // bigint is not JSON-serialisable, so the wire form is a string.
+    return { ...challenge, potStroops: challenge.potStroops.toString() };
   }
 
-  @Get('moderation/pending')
-  getPendingPosts(): SocialPost[] {
-    return this.socialService.getPendingPosts();
+  @Post('challenges/:challengeId/submissions')
+  submitToChallenge(
+    @Param('challengeId') challengeId: string,
+    @Body() dto: SubmitChallengeDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.submissionProtection.protect({
+      ...dto,
+      challengeId,
+      clientIp: request.ip ?? 'unknown',
+      action: () => this.challengeService.submit(challengeId, dto),
+    }).catch((error: unknown) => {
+      if (error instanceof SubmissionRateLimitException) {
+        response.setHeader('Retry-After', String(error.retryAfterSeconds));
+      }
+      throw error;
+    });
+  }
+
+  @Post('challenges/:challengeId/voting')
+  @HttpCode(200)
+  openVoting(@Param('challengeId') challengeId: string) {
+    const challenge = this.challengeService.openVoting(challengeId);
+    return { ...challenge, potStroops: challenge.potStroops.toString() };
+  }
+
+  @Post('challenges/:challengeId/votes')
+  @HttpCode(200)
+  vote(@Param('challengeId') challengeId: string, @Body() dto: VoteDto) {
+    this.challengeService.vote(challengeId, dto);
+    return { tally: this.challengeService.getTally(challengeId) };
+  }
+
+  @Post('challenges/:challengeId/close')
+  @HttpCode(200)
+  closeChallenge(@Param('challengeId') challengeId: string) {
+    const { challenge, payout } = this.challengeService.close(challengeId);
+    return {
+      challenge: { ...challenge, potStroops: challenge.potStroops.toString() },
+      payout: {
+        ...payout,
+        awards: Object.fromEntries(
+          Object.entries(payout.awards).map(([id, stroops]) => [id, stroops.toString()]),
+        ),
+      },
+    };
+  }
+
+  @Get('challenges/:challengeId')
+  getChallenge(@Param('challengeId') challengeId: string) {
+    const challenge = this.challengeService.get(challengeId);
+    return {
+      ...challenge,
+      potStroops: challenge.potStroops.toString(),
+      submissions: this.challengeService.getSubmissions(challengeId),
+      tally: this.challengeService.getTally(challengeId),
+    };
   }
 }

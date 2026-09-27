@@ -7,6 +7,7 @@ import { AuditService } from "../audit/audit.service";
 import { ContractRegistryService } from "./contract-registry.service";
 import { ContractChangeWebhookService } from "./contract-change-webhook.service";
 import { ContractChangeWebhookDispatcher } from "./contract-change-webhook.dispatcher";
+import { ContractWritePolicyService } from "../feature-flags/contract-write-policy.service";
 // import {
 //   ContractRegistryEntryDto,
 //   PublishContractRegistryDto,
@@ -24,6 +25,9 @@ describe("ContractRegistryService Integration", () => {
   >;
   let mockWebhookDispatcher: jest.Mocked<
     Partial<ContractChangeWebhookDispatcher>
+  >;
+  let mockContractWritePolicyService: jest.Mocked<
+    Partial<ContractWritePolicyService>
   >;
 
   beforeEach(() => {
@@ -65,6 +69,10 @@ describe("ContractRegistryService Integration", () => {
       dispatch: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<Partial<ContractChangeWebhookDispatcher>>;
 
+    mockContractWritePolicyService = {
+      assertWritePermission: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<Partial<ContractWritePolicyService>>;
+
     service = new ContractRegistryService(
       mockSupabaseService as unknown as SupabaseService,
       mockAuditService as unknown as AuditService,
@@ -72,6 +80,7 @@ describe("ContractRegistryService Integration", () => {
       mockEventEmitter,
       mockContractChangeWebhookService as unknown as ContractChangeWebhookService,
       mockWebhookDispatcher as unknown as ContractChangeWebhookDispatcher,
+      mockContractWritePolicyService as unknown as ContractWritePolicyService,
     );
   });
 

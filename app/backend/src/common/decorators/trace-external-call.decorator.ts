@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { MetricsService } from '../../metrics/metrics.service';
+import { CorrelationContextService } from '../correlation/correlation-context.service';
 
 /**
  * Decorator to trace external API calls with timing and error tracking.
@@ -24,7 +25,13 @@ export function TraceExternalCall(service: string, operation: string) {
     descriptor.value = async function (...args: unknown[]) {
       const metricsService: MetricsService = (this as Record<string, unknown>).metricsService as MetricsService;
       const startTime = Date.now();
-      const correlationId = (this as Record<string, unknown>).correlationId as string || 'N/A';
+      // Resolve correlation ID: try AsyncLocalStorage first, then instance property, then fallback
+      const correlationContext: CorrelationContextService | undefined =
+        (this as Record<string, unknown>).correlationContext as CorrelationContextService | undefined;
+      const correlationId =
+        correlationContext?.getCorrelationId()
+        || (this as Record<string, unknown>).correlationId as string
+        || 'N/A';
 
       logger.debug(
         JSON.stringify({

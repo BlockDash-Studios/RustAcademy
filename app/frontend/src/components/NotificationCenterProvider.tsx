@@ -3,9 +3,7 @@
 import {
   createContext,
   useContext,
-  useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
 import {
@@ -14,12 +12,17 @@ import {
   sortNotifications,
   type StoredNotification,
 } from "@/lib/notifications";
+import { usePersistentState } from "@/hooks/usePersistentState";
+import { errorReporter } from "@/lib/errorReporter";
 
 type NotificationCenterContextValue = {
   notifications: StoredNotification[];
   unreadCount: number;
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
+  /** True once localStorage has been read on the client. Use this to suppress
+   *  hydration mismatches in any component that renders unread-count badges. */
+  hasHydrated: boolean;
 };
 
 const NotificationCenterContext =
@@ -28,8 +31,17 @@ const NotificationCenterContext =
 function mergeStoredNotifications(
   storedNotifications: StoredNotification[],
 ): StoredNotification[] {
+  if (!Array.isArray(storedNotifications)) {
+    return sortNotifications(INITIAL_NOTIFICATIONS);
+  }
+
+  const validStored = storedNotifications.filter(
+    (item): item is StoredNotification =>
+      Boolean(item && typeof item === "object" && typeof item.id === "string"),
+  );
+
   const storedById = new Map(
-    storedNotifications.map((notification) => [notification.id, notification]),
+    validStored.map((notification) => [notification.id, notification]),
   );
 
   return sortNotifications(
@@ -50,81 +62,91 @@ function mergeStoredNotifications(
 
 export function NotificationCenterProvider({
   children,
+  userId,
 }: {
   children: ReactNode;
+  userId?: string;
 }) {
-  const [notifications, setNotifications] = useState<StoredNotification[]>(
+  const [notifications, setNotifications, hasHydrated] = usePersistentState<StoredNotification[]>(
+    NOTIFICATION_STORAGE_KEY,
     sortNotifications(INITIAL_NOTIFICATIONS),
+    {
+      userId,
+      deserialize: (str: string) => {
+        try {
+          const parsedValue = JSON.parse(str) as StoredNotification[];
+          return mergeStoredNotifications(parsedValue);
+        } catch (e) {
+          console.error("Unable to parse notifications", e);
+          const captured = e instanceof Error ? e : new Error(String(e));
+          errorReporter.captureError(captured, {
+            route: typeof window !== "undefined" ? window.location.pathname : undefined,
+            codeOrigin: "NotificationCenterProvider.deserialize",
+            extra: {
+              source: "NotificationCenterProvider",
+              operation: "deserialize",
+            },
+          });
+          return sortNotifications(INITIAL_NOTIFICATIONS);
+        }
+      },
+    }
   );
-  const [hasHydrated, setHasHydrated] = useState(false);
 
-  useEffect(() => {
-    try {
-      const storedValue = window.localStorage.getItem(NOTIFICATION_STORAGE_KEY);
-
-      if (storedValue) {
-        const parsedValue = JSON.parse(storedValue) as StoredNotification[];
-        setNotifications(mergeStoredNotifications(parsedValue));
-      }
-    } catch (error) {
-      console.error("Unable to restore notifications", error);
-    } finally {
-      setHasHydrated(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!hasHydrated) {
-      return;
-    }
-
-    window.localStorage.setItem(
-      NOTIFICATION_STORAGE_KEY,
-      JSON.stringify(notifications),
-    );
-  }, [hasHydrated, notifications]);
+  const safeNotifications = useMemo(
+    () => (Array.isArray(notifications) ? notifications : []),
+    [notifications],
+  );
 
   const unreadCount = useMemo(
     () =>
-      notifications.filter((notification) => notification.readAt === null)
-        .length,
-    [notifications],
+      safeNotifications.filter(
+        (notification) => notification && notification.readAt === null,
+      ).length,
+    [safeNotifications],
   );
 
   const value = useMemo<NotificationCenterContextValue>(
     () => ({
-      notifications,
+      notifications: safeNotifications,
       unreadCount,
+      hasHydrated,
       markAsRead: (id: string) => {
-        setNotifications((currentNotifications) =>
-          sortNotifications(
-            currentNotifications.map((notification) =>
-              notification.id === id && notification.readAt === null
+        setNotifications((currentNotifications) => {
+          const list = Array.isArray(currentNotifications)
+            ? currentNotifications
+            : INITIAL_NOTIFICATIONS;
+          return sortNotifications(
+            list.map((notification) =>
+              notification && notification.id === id && notification.readAt === null
                 ? {
                     ...notification,
                     readAt: new Date().toISOString(),
                   }
                 : notification,
             ),
-          ),
-        );
+          );
+        });
       },
       markAllAsRead: () => {
-        setNotifications((currentNotifications) =>
-          sortNotifications(
-            currentNotifications.map((notification) =>
-              notification.readAt === null
+        setNotifications((currentNotifications) => {
+          const list = Array.isArray(currentNotifications)
+            ? currentNotifications
+            : INITIAL_NOTIFICATIONS;
+          return sortNotifications(
+            list.map((notification) =>
+              notification && notification.readAt === null
                 ? {
                     ...notification,
                     readAt: new Date().toISOString(),
                   }
                 : notification,
             ),
-          ),
-        );
+          );
+        });
       },
     }),
-    [notifications, unreadCount],
+    [safeNotifications, unreadCount, hasHydrated, setNotifications],
   );
 
   return (

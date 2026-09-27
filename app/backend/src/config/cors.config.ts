@@ -27,11 +27,12 @@ export function buildCorsOptions(env: {
 
   const staticOrigins = new Set(env.allowedOrigins.filter(Boolean));
 
-  // Vercel preview pattern: https://<project>-<hash>-<team>.vercel.app
-  // or the simpler https://<project>-*.vercel.app
+  // Vercel preview pattern: https://<project>-<hash>.vercel.app or
+  // https://<project>-<hash>-<team>.vercel.app (variable segments after project).
+  // Uses [A-Za-z0-9] because Vercel commit hashes may include uppercase letters.
   const vercelPreviewRe = env.vercelProject
     ? new RegExp(
-        `^https://${escapeRegex(env.vercelProject)}-[a-z0-9-]+-[a-z0-9]+\\.vercel\\.app$`,
+        `^https://${escapeRegex(env.vercelProject)}-[A-Za-z0-9]+(-[A-Za-z0-9]+)*\\.vercel\\.app$`,
       )
     : null;
 

@@ -15,7 +15,6 @@ import {
   WebhookDeliveryHandler, 
   RecurringPaymentHandler, 
   ExportGenerationHandler,
-  ReconciliationHandler,
   StellarReconnectHandler,
   RefundJobHandler,
 } from './handlers';
@@ -36,7 +35,6 @@ export class JobQueueInitializer implements OnModuleInit {
     private readonly webhookDeliveryHandler: WebhookDeliveryHandler,
     private readonly recurringPaymentHandler: RecurringPaymentHandler,
     private readonly exportGenerationHandler: ExportGenerationHandler,
-    private readonly reconciliationHandler: ReconciliationHandler,
     private readonly stellarReconnectHandler: StellarReconnectHandler,
     private readonly refundJobHandler: RefundJobHandler,
   ) {}
@@ -91,20 +89,6 @@ export class JobQueueInitializer implements OnModuleInit {
         initialDelayMs: 300000,       // 5 minutes
         maxDelayMs: 300000,           // 5 minutes (fixed strategy)
         visibilityTimeoutMs: 600000,  // 10 minutes
-      },
-    );
-
-    // Register reconciliation handler
-    // Requirements: 10.1
-    this.registry.registerHandler(
-      JobType.RECONCILIATION,
-      this.reconciliationHandler,
-      {
-        maxAttempts: 1,
-        backoffStrategy: 'fixed',
-        initialDelayMs: 0,            // No delay (immediate retry if needed)
-        maxDelayMs: 0,                // No delay (fixed strategy)
-        visibilityTimeoutMs: 300000,  // 5 minutes
       },
     );
 

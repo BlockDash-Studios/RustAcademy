@@ -16,6 +16,7 @@ import { JobRegistry } from './job-registry.service';
 import { CancellationStore } from './cancellation-token';
 import { JobQueueMetricsService } from './job-queue-metrics.service';
 import { Job, JobType, JobStatus } from './types';
+import { CorrelationContextService } from '../common/correlation/correlation-context.service';
 
 describe('JobExecutor', () => {
   let executor: JobExecutor;
@@ -73,6 +74,13 @@ describe('JobExecutor', () => {
     mockRepository.updateJobStatus.mockResolvedValue(undefined);
     mockRepository.resetStaleJobs.mockResolvedValue(0);
 
+    const mockCorrelationContext = {
+      getCorrelationId: jest.fn().mockReturnValue('test-correlation-id'),
+      setCorrelationId: jest.fn(),
+      run: jest.fn((_id: string, fn: () => Promise<unknown>) => fn()),
+      runSync: jest.fn((_id: string, fn: () => unknown) => fn()),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         JobExecutor,
@@ -80,6 +88,7 @@ describe('JobExecutor', () => {
         { provide: JobRegistry, useValue: mockRegistry },
         { provide: CancellationStore, useValue: mockCancellationStore },
         { provide: JobQueueMetricsService, useValue: mockMetrics },
+        { provide: CorrelationContextService, useValue: mockCorrelationContext },
       ],
     }).compile();
 

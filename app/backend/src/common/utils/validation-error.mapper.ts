@@ -1,17 +1,15 @@
 import { ValidationError } from "class-validator";
+import type { ValidationErrorField } from "../errors";
 
 export interface MappedValidationError {
   message: string;
-  fields: Array<{
-    field: string;
-    errors: string[];
-  }>;
+  fields: ValidationErrorField[];
 }
 
 export function mapValidationErrors(
   errors: ValidationError[],
 ): MappedValidationError {
-  const fields = errors.map((error) => {
+  const fields: ValidationErrorField[] = errors.map((error) => {
     const constraints = error.constraints
       ? Object.values(error.constraints)
       : [];

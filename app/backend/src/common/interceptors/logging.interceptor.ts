@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
+import { CorrelationContextService } from '../correlation/correlation-context.service';
 
 /**
  * LoggingInterceptor logs every HTTP request with full request context
@@ -23,6 +24,8 @@ import { tap } from 'rxjs/operators';
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(LoggingInterceptor.name);
+
+  constructor(private readonly correlationContext?: CorrelationContextService) {}
 
   /** Fields that must never appear in logs */
   private static readonly SENSITIVE_FIELDS = new Set([
@@ -44,8 +47,7 @@ export class LoggingInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest();
     const { method, url, body, route } = request;
-    const correlationId =
-      (request as Record<string, unknown>)['correlationId'] || 'N/A';
+    const correlationId = this.correlationContext?.getCorrelationId() || request.correlationId || 'N/A';
     const userId = this.extractUserId(request);
     const routePath = route?.path || url;
     const now = Date.now();

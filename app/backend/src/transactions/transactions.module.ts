@@ -7,16 +7,18 @@ import { SorobanRpcService } from "./soroban-rpc.service";
 import { ApiKeysModule } from "../api-keys/api-keys.module";
 import { ApiKeyGuard } from "../auth/guards/api-key.guard";
 import { MetricsModule } from "../metrics/metrics.module";
-import { FeatureFlagsModule } from "../feature-flags/feature-flags.module";
+import { SupabaseModule } from "../supabase/supabase.module";
+import { InvocationReplayService } from "./invocation-replay.service";
 
 @Module({
-  imports: [AppConfigModule, ApiKeysModule, MetricsModule, FeatureFlagsModule],
+  imports: [AppConfigModule, ApiKeysModule, MetricsModule, SupabaseModule],
   controllers: [TransactionsController],
   providers: [
     HorizonService,
     TransactionsService,
     SorobanRpcService,
     ApiKeyGuard,
+    InvocationReplayService,
   ],
   exports: [HorizonService, TransactionsService, SorobanRpcService],
 })

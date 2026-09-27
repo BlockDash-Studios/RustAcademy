@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { MarketplaceListing, formatCountdown } from "@/hooks/marketplaceApi";
 import { useWatchlist } from "@/contexts/WatchlistContext";
 
@@ -25,9 +26,18 @@ const CATEGORY_COLORS: Record<MarketplaceListing["category"], string> = {
   brand: "text-teal-400 bg-teal-400/10 border-teal-400/20",
 };
 
-function UrgencyBar({ endsAt }: { endsAt: Date }) {
+function UrgencyBar({
+  endsAt,
+  now,
+}: {
+  endsAt: Date;
+  now: number | null;
+}) {
   const total = 7 * 24 * 3600 * 1000; // 7 day auction window
-  const remaining = Math.max(0, endsAt.getTime() - Date.now());
+  // While not mounted (SSR / initial hydration), `now` is null so we render a
+  // stable empty bar — this avoids a hydration mismatch caused by Date.now().
+  const remaining =
+    now === null ? 0 : Math.max(0, endsAt.getTime() - now);
   const pct = Math.min(100, Math.round((remaining / total) * 100));
   const color =
     pct < 15 ? "bg-red-500" : pct < 40 ? "bg-amber-500" : "bg-indigo-500";
@@ -47,16 +57,31 @@ export function UsernameCard({
   onBid,
   onViewDetails,
 }: UsernameCardProps) {
-  const { isInWatchlist, toggleWatchlist } = useWatchlist();
+  const { isInWatchlist, toggleWatchlist, isHydrated } = useWatchlist();
+
+  // Track "now" in state (updated every 30s) so the countdown is stable across
+  // SSR and client hydration, and ticks down while mounted. `null` on first
+  // render keeps server and client output identical.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const catColor = CATEGORY_COLORS[listing.category];
   const catLabel = CATEGORY_LABELS[listing.category];
-  const countdown = formatCountdown(listing.endsAt);
-  const isUrgent = listing.endsAt.getTime() - Date.now() < 1000 * 60 * 90;
-  const isWatched = isInWatchlist(listing.id);
+  const countdown =
+    now !== null ? formatCountdown(listing.endsAt, now) : "—";
+  const isUrgent =
+    now !== null && listing.endsAt.getTime() - now < 1000 * 60 * 90;
+  const isWatched = isHydrated ? isInWatchlist(listing.id) : false;
 
   const handleWatchlistClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    toggleWatchlist(listing.id, listing.username);
+    if (isHydrated) {
+      toggleWatchlist(listing.id, listing.username);
+    }
   };
 
   return (
@@ -133,7 +158,7 @@ export function UsernameCard({
           </div>
         </div>
 
-        <UrgencyBar endsAt={listing.endsAt} />
+        <UrgencyBar endsAt={listing.endsAt} now={now} />
 
         {/* Bottom row: owner + bid count */}
         <div className="flex items-center justify-between text-[11px] text-neutral-600">
