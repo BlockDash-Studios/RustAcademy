@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
@@ -10,16 +9,27 @@ import "@/lib/i18n";
 import i18n from "@/lib/i18n";
 import { useTranslation } from "react-i18next";
 
+// Shared Tailwind classes for top-level nav links, including focus-visible
+// styling for keyboard navigation accessibility.
 const NAV_LINK_CLASS =
   "rounded-md px-1 py-1 text-neutral-200 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950";
 
+// Site-wide sticky header: logo/home link, primary nav, a wallet-status
+// indicator, notifications, and the locale switcher.
 export function Header() {
   const { t } = useTranslation();
   const pathname = usePathname();
+  // Tri-state wallet detection status, starting as "checking" until the
+  // client-side effect below determines whether a Stellar wallet
+  // (Freighter) is available.
   const [walletState, setWalletState] = useState<
     "checking" | "connected" | "missing"
   >("checking");
 
+  // Detects whether a Stellar wallet (Freighter) is available in the
+  // browser. Treated as "connected" outside production, or when API
+  // mocking is enabled, so local/dev/test environments aren't blocked
+  // by a missing real wallet extension.
   useEffect(() => {
     const hasWallet =
       Boolean(
@@ -41,11 +51,16 @@ export function Header() {
     }
   }, []);
 
+  // Determines whether a given nav link matches the current route, so it
+  // can be styled/marked as active — also matches nested routes (e.g.
+  // "/settings/billing" counts as active for the "/settings" link).
   const isActive = (href: string) =>
     pathname === href || pathname?.startsWith(`${href}/`);
 
   return (
     <header className="sticky top-0 z-50 border-b border-white/5 bg-neutral-950/80 backdrop-blur-xl">
+      {/* Visually hidden until focused; lets keyboard/screen-reader users
+          jump straight past the header to the main content */}
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-indigo-500 focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
@@ -57,6 +72,7 @@ export function Header() {
         role="navigation"
         className="container mx-auto flex items-center justify-between gap-4 px-6 py-4"
       >
+        {/* Logo / home link */}
         <Link
           href="/"
           aria-label="RustAcademy home"
@@ -73,6 +89,8 @@ export function Header() {
           </span>
         </Link>
 
+        {/* Primary navigation links, hidden below md breakpoint (mobile
+            presumably uses a separate menu elsewhere) */}
         <div className="hidden gap-8 text-sm font-medium md:flex">
           <Link
             href="/dashboard"
@@ -112,7 +130,10 @@ export function Header() {
           </Link>
         </div>
 
+        {/* Right-hand cluster: wallet status, notifications, locale switcher */}
         <div className="flex items-center gap-4">
+          {/* Wallet status pill; shows a tooltip explaining how to fix
+              things when no wallet is detected */}
           <span
             title={
               walletState === "missing"
