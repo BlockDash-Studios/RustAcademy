@@ -11,6 +11,7 @@ NestJS backend API for RustAcademy — the decentralized, AI-powered Rust progra
 - `grading` — AI pre-score → tutor review submission pipeline (BE-037)
 - `rewards` — XLM learn-to-earn rewards
 - `progress` — Per-learner lesson/task progress, XP per course, certificate eligibility
+- `certificates` — Certification eligibility checks gating the `certificate_nft` mint (BE-042)
 - `ai-mentor` — Claude-powered AI mentor
 - `social` — Community feed
 - `chat` — Real-time messaging
@@ -54,6 +55,26 @@ transition records the reviewing tutor as its actor, and an override must carry
 both a replacement score and a reason. A final score at or above the pass
 threshold publishes a `task.passed` event so the existing XP/reward pipeline
 fires; the on-chain `reward_pool` payout is downstream of that event.
+
+## Certification eligibility (BE-042)
+
+Decides whether a learner qualifies for a `certificate_nft` mint. A course
+certificate requires every listed task to be graded and every recorded score to
+meet the course's minimum (default: the grading pass threshold). The certificate
+minting job consults these routes before minting; routes are under
+`api/v1/certificates`:
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `POST` | `/courses` | Register the task ids + minimum score a certificate requires |
+| `POST` | `/results` | Record a learner's final task score from the grading pipeline |
+| `GET`  | `/users/:userId/courses/:courseId/eligibility` | Eligibility verdict for one learner |
+| `GET`  | `/courses/:courseId/eligible-learners` | Every learner the job may mint for |
+
+`GET .../eligibility` returns `eligible`, the effective per-task results, and a
+`finalScore` (the rounded mean of the task scores) for the mint to record. Only
+the learner's best score per task is kept, so a retake can lift a task above the
+bar but never lower the certificate.
 
 ## Scripts
 

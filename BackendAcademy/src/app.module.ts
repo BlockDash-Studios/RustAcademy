@@ -12,6 +12,8 @@ import { SocialModule } from './social/social.module';
 import { StellarModule } from './stellar/stellar.module';
 import { SandboxModule } from './sandbox/sandbox.module';
 import { ProgressModule } from './progress/progress.module';
+import { CoursesModule } from './courses/courses.module';
+import { CertificatesModule } from './certificates/certificates.module';
 
 // Root application module: wires together global configuration/guards,
 // every feature module, and the top-level controllers/providers.
@@ -42,6 +44,8 @@ import { ProgressModule } from './progress/progress.module';
     StellarModule,
     SandboxModule,
     ProgressModule,
+    CoursesModule,
+    CertificatesModule,
   ],
   // Top-level controllers not owned by a specific feature module:
   // AppController (root/basic routes) and HealthController
