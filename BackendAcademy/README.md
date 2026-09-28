@@ -40,14 +40,14 @@ Implements the README's reward flow — AI grader scores a submission off-chain,
 a tutor confirms or overrides that score, and the final score triggers rewards.
 Routes are under `api/v1/grading`:
 
-| Method | Path | Purpose |
-| ------ | ---- | ------- |
-| `POST` | `/submissions` | Accept a learner submission and open its audit trail |
-| `POST` | `/submissions/:id/ai-pre-score` | Stage 1 — run the Claude grader (score + feedback) |
-| `POST` | `/submissions/:id/review` | Stage 2 — tutor `confirm`s or `override`s the pre-score |
-| `GET`  | `/submissions/:id` | Submission with its AI pre-score and tutor review |
-| `GET`  | `/submissions/:id/history` | Append-only status-transition audit trail |
-| `GET`  | `/queue` | AI pre-scored submissions awaiting tutor review |
+| Method | Path                            | Purpose                                                 |
+| ------ | ------------------------------- | ------------------------------------------------------- |
+| `POST` | `/submissions`                  | Accept a learner submission and open its audit trail    |
+| `POST` | `/submissions/:id/ai-pre-score` | Stage 1 — run the Claude grader (score + feedback)      |
+| `POST` | `/submissions/:id/review`       | Stage 2 — tutor `confirm`s or `override`s the pre-score |
+| `GET`  | `/submissions/:id`              | Submission with its AI pre-score and tutor review       |
+| `GET`  | `/submissions/:id/history`      | Append-only status-transition audit trail               |
+| `GET`  | `/queue`                        | AI pre-scored submissions awaiting tutor review         |
 
 Statuses move `submitted → ai_graded → tutor_confirmed | tutor_overridden`, and
 every move is appended to the submission's transition log. A `tutor_review`
@@ -64,12 +64,12 @@ meet the course's minimum (default: the grading pass threshold). The certificate
 minting job consults these routes before minting; routes are under
 `api/v1/certificates`:
 
-| Method | Path | Purpose |
-| ------ | ---- | ------- |
-| `POST` | `/courses` | Register the task ids + minimum score a certificate requires |
-| `POST` | `/results` | Record a learner's final task score from the grading pipeline |
-| `GET`  | `/users/:userId/courses/:courseId/eligibility` | Eligibility verdict for one learner |
-| `GET`  | `/courses/:courseId/eligible-learners` | Every learner the job may mint for |
+| Method | Path                                           | Purpose                                                       |
+| ------ | ---------------------------------------------- | ------------------------------------------------------------- |
+| `POST` | `/courses`                                     | Register the task ids + minimum score a certificate requires  |
+| `POST` | `/results`                                     | Record a learner's final task score from the grading pipeline |
+| `GET`  | `/users/:userId/courses/:courseId/eligibility` | Eligibility verdict for one learner                           |
+| `GET`  | `/courses/:courseId/eligible-learners`         | Every learner the job may mint for                            |
 
 `GET .../eligibility` returns `eligible`, the effective per-task results, and a
 `finalScore` (the rounded mean of the task scores) for the mint to record. Only
@@ -88,10 +88,12 @@ bar but never lower the certificate.
 
 ## Sandbox and Stellar configuration
 
-The Rust runner requires a reachable Docker Engine and the configured Rust image
-(`RUSTACADEMY_SANDBOX_IMAGE`, default `rust:1.86-slim`). Each run has network
-access disabled and is bounded by container CPU, memory, PID, wall-time, and
-output limits. Keep Docker Engine access restricted to this service.
+The Rust runner requires a reachable Docker Engine and the configured sandbox
+image (`RUSTACADEMY_SANDBOX_IMAGE`, default
+`rustacademy-wasm-sandbox:1.86-wasmtime-29.0.1`). Build instructions are in the
+Rust WASM task execution section below. Each run has network access disabled and
+is bounded by container CPU, memory, PID, wall-time, and output limits. Keep
+Docker Engine access restricted to this service.
 
 Set `STELLAR_NETWORK` to `testnet` (default) or `mainnet`. Configure
 `REWARD_POOL_SECRET` only in a secret store; it is never returned by the API.
@@ -103,3 +105,23 @@ For cross-instance submission controls, configure `REDIS_REST_URL` and
 are process-local and reset when the service restarts. Tune
 `SUBMISSION_RATE_LIMIT` (default 5), `SUBMISSION_RATE_WINDOW_SECONDS` (default
 60), and `SUBMISSION_DUPLICATE_WINDOW_SECONDS` (default 30) as needed.
+
+## Rust WASM task execution
+
+Build the sandbox runner image with Docker:
+
+```bash
+docker build -f BackendAcademy/sandbox.Dockerfile \
+  -t rustacademy-wasm-sandbox:1.86-wasmtime-29.0.1 BackendAcademy
+```
+
+`POST /api/tasks/run` accepts the existing `source` field. To execute test cases,
+also provide a `testCases` array of stdin strings and the shared `expectedOutput`.
+The response includes compilation status and per-case pass/fail, stdout, and
+elapsed duration (including compilation). Set `RUSTACADEMY_SANDBOX_IMAGE` to use
+a differently tagged image.
+
+The runner compiles to `wasm32-wasip1` and executes with Wasmtime. Each run has
+no network access or WASI directory preopens, a 10-second compile timeout, a
+2-second execution timeout, a 16 MiB guest-memory limit, 10 million fuel, and
+the existing Docker CPU, memory, PID, and output limits.
