@@ -10,8 +10,10 @@ import { AccessTokenClaims, WalletNonce, WalletTokenPair } from './wallet-auth.t
 
 export const DEFAULT_ACCESS_TTL_SECONDS = 900;
 
-/** Audit actions emitted by this service. Stable strings — audit consumers
- *  and dashboards key off them. */
+export function generateAccessTokenSecret(): string {
+  return randomBytes(32).toString('hex');
+}
+
 export const WALLET_AUTH_ACTIONS = {
   challengeIssued: 'wallet_auth.challenge_issued',
   loginSucceeded: 'wallet_auth.login_succeeded',
@@ -21,8 +23,6 @@ export const WALLET_AUTH_ACTIONS = {
   logout: 'wallet_auth.logout',
 } as const;
 
-/** Minimal sink so metrics stay optional and the service is testable without
- *  standing up the full prom-client registry. */
 export interface AuthMetricsSink {
   recordError(service: string, errorType: string): void;
 }
@@ -37,11 +37,10 @@ export class WalletAuthService {
     private readonly store: WalletAuthStore,
     private readonly audit: AuditService,
     private readonly accessTokenSecret: string,
-    private readonly accessTtlSeconds: number = DEFAULT_ACCESS_TTL_SECONDS,
+    private readonly accessTokenTtlSeconds: number = DEFAULT_ACCESS_TTL_SECONDS,
     private readonly metrics?: AuthMetricsSink,
   ) {}
 
-  /** Issue a challenge for a wallet to sign. */
   async createChallenge(
     walletAddress: string,
     requestId?: string,
@@ -59,14 +58,6 @@ export class WalletAuthService {
     return nonce;
   }
 
-  /**
-   * Exchange a signed challenge for a token pair.
-   *
-   * The nonce is consumed before the signature is checked. A consumed-but-
-   * unverified nonce is the safe ordering: it means a captured challenge
-   * cannot be retried with a guessed signature, at the cost of the caller
-   * needing a fresh challenge after a failed attempt.
-   */
   async login(
     walletAddress: string,
     nonceId: string,
@@ -107,12 +98,11 @@ export class WalletAuthService {
     return {
       accessToken,
       refreshToken,
-      expiresIn: this.accessTtlSeconds,
+      expiresIn: this.accessTokenTtlSeconds,
       sessionId: session.id,
     };
   }
 
-  /** Rotate a refresh token, returning a fresh pair. */
   async refresh(refreshToken: string, requestId?: string): Promise<WalletTokenPair> {
     let rotated;
     try {
@@ -136,12 +126,11 @@ export class WalletAuthService {
     return {
       accessToken,
       refreshToken: nextToken,
-      expiresIn: this.accessTtlSeconds,
+      expiresIn: this.accessTokenTtlSeconds,
       sessionId: session.id,
     };
   }
 
-  /** Revoke every session for a wallet. */
   async logout(walletAddress: string, requestId?: string): Promise<number> {
     const revoked = await this.refreshTokens.revokeAllForWallet(walletAddress);
     await this.audit.log(
@@ -154,7 +143,6 @@ export class WalletAuthService {
     return revoked;
   }
 
-  /** Verify an access token and return its claims, or throw. */
   verifyAccessToken(token: string, now: Date = new Date()): AccessTokenClaims {
     const separator = token.lastIndexOf('.');
     if (separator <= 0) {
@@ -177,22 +165,41 @@ export class WalletAuthService {
       );
     }
 
-    const claims = JSON.parse(
+    const rawClaims = JSON.parse(
       Buffer.from(payload, 'base64url').toString('utf8'),
-    ) as AccessTokenClaims;
+    ) as Record<string, unknown>;
 
-    if (claims.expiresAt * 1000 <= now.getTime()) {
+    if ((rawClaims.expiresAt as number) * 1000 <= now.getTime()) {
       throw new WalletAuthError(
         WalletAuthFailure.RefreshTokenExpired,
         'Access token has expired',
-        { sessionId: claims.sessionId },
+        { sessionId: rawClaims.sessionId },
       );
     }
 
-    return claims;
-  }
+    if (rawClaims.alg && rawClaims.alg !== 'HS256') {
+      throw new WalletAuthError(
+        WalletAuthFailure.SignatureInvalid,
+        'Algorithm mismatch or disallowed algorithm',
+      );
+    }
 
-  // -- internals ------------------------------------------------------------
+    if (rawClaims.iss && rawClaims.iss !== 'rustacademy-api') {
+      throw new WalletAuthError(
+        WalletAuthFailure.SignatureInvalid,
+        'Invalid token issuer (iss)',
+      );
+    }
+
+    if (rawClaims.aud && rawClaims.aud !== 'rustacademy-client') {
+      throw new WalletAuthError(
+        WalletAuthFailure.SignatureInvalid,
+        'Invalid token audience (aud)',
+      );
+    }
+
+    return rawClaims as unknown as AccessTokenClaims;
+  }
 
   private assertValidWallet(walletAddress: string, requestId?: string): void {
     if (!StrKey.isValidEd25519PublicKey(walletAddress)) {
@@ -232,11 +239,16 @@ export class WalletAuthService {
 
   private signAccessToken(walletAddress: string, sessionId: string): string {
     const issuedAt = Math.floor(Date.now() / 1000);
-    const claims: AccessTokenClaims = {
+    const claims = {
       walletAddress,
       sessionId,
       issuedAt,
-      expiresAt: issuedAt + this.accessTtlSeconds,
+      expiresAt: issuedAt + this.accessTokenTtlSeconds,
+      sub: walletAddress,
+      iss: 'rustacademy-api',
+      aud: 'rustacademy-client',
+      role: 'authenticated',
+      alg: 'HS256',
     };
     const payload = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
     return `${payload}.${this.hmac(payload)}`;
@@ -246,7 +258,6 @@ export class WalletAuthService {
     return createHmac('sha256', this.accessTokenSecret).update(payload).digest('hex');
   }
 
-  /** Emit structured audit metadata and a metric for a failed attempt. */
   private async recordFailure(
     error: unknown,
     actor: string,
@@ -255,17 +266,29 @@ export class WalletAuthService {
   ): Promise<void> {
     if (!(error instanceof WalletAuthError)) return;
 
-    this.metrics?.recordError('wallet-auth', error.failure);
+    const errDetails =
+      (error as { details?: unknown; context?: unknown }).details ||
+      (error as { details?: unknown; context?: unknown }).context;
+
+    const isSuspicious =
+      (error as { isSuspicious?: boolean }).isSuspicious ??
+      [
+        WalletAuthFailure.NonceAlreadyUsed,
+        WalletAuthFailure.SessionRevoked,
+        WalletAuthFailure.SignatureInvalid,
+      ].includes(error.failure);
+
+    this.metrics?.recordError("wallet-auth", error.failure);
     await this.audit.log(
       actor,
       action,
       undefined,
-      { failure: error.failure, suspicious: error.isSuspicious, ...error.metadata },
+      {
+        failure: error.failure,
+        suspicious: isSuspicious,
+        ...(errDetails ? { details: errDetails } : {}),
+      },
       requestId,
     );
   }
 }
-
-/** Helper for callers that need a throwaway secret (tests, local dev). */
-export const generateAccessTokenSecret = (): string =>
-  randomBytes(32).toString('hex');
