@@ -21,9 +21,12 @@ import {
 import { CreateShowcaseDto } from './dto/create-showcase.dto';
 import { FollowDto } from './dto/follow.dto';
 import { IndexPostDto } from './dto/index-post.dto';
+import { ReportContentDto } from './dto/report-content.dto';
+import { ContentModerationService } from './content-moderation.service';
 import { FollowService } from './follow.service';
 import { HashtagService } from './hashtag.service';
 import { ShowcaseService } from './showcase.service';
+import { ModerationTargetKind } from './social.types';
 import { SubmissionProtectionService, SubmissionRateLimitException } from './submission-protection.service';
 
 /** REST surface for the social feed (backlog area H). */
@@ -34,6 +37,7 @@ export class SocialController {
     private readonly showcaseService: ShowcaseService,
     private readonly hashtagService: HashtagService,
     private readonly challengeService: ChallengeService,
+    private readonly contentModeration: ContentModerationService,
     private readonly submissionProtection: SubmissionProtectionService,
   ) {}
 
@@ -67,7 +71,12 @@ export class SocialController {
 
   @Get('users/:userId/feed')
   getFeed(@Param('userId') userId: string) {
-    return { userId, items: this.followService.getFeed(userId) };
+    const items = this.contentModeration.filterVisible(
+      'post',
+      this.followService.getFeed(userId),
+      (item) => item.itemId,
+    );
+    return { userId, items };
   }
 
   // ── Showcase posts (BE-089) ─────────────────────────────────────────────
@@ -79,7 +88,12 @@ export class SocialController {
 
   @Get('users/:userId/showcases')
   listShowcases(@Param('userId') userId: string) {
-    return { userId, showcases: this.showcaseService.listByAuthor(userId) };
+    const showcases = this.contentModeration.filterVisible(
+      'post',
+      this.showcaseService.listByAuthor(userId),
+      (post) => post.itemId,
+    );
+    return { userId, showcases };
   }
 
   // ── Hashtags and trending (BE-090) ──────────────────────────────────────
@@ -96,7 +110,12 @@ export class SocialController {
 
   @Get('hashtags/:tag/posts')
   getTaggedPosts(@Param('tag') tag: string) {
-    return { tag, postIds: this.hashtagService.getPosts(tag) };
+    const postIds = this.contentModeration.filterVisible(
+      'post',
+      this.hashtagService.getPosts(tag),
+      (postId) => postId,
+    );
+    return { tag, postIds };
   }
 
   // ── Weekly challenges (BE-091) ──────────────────────────────────────────
@@ -171,4 +190,32 @@ export class SocialController {
       tally: this.challengeService.getTally(challengeId),
     };
   }
+
+  // ── Content moderation (BE-093) ─────────────────────────────────────────
+
+  /** Flags a post or comment; the target is hidden pending review. */
+  @Post('reports')
+  reportContent(@Body() dto: ReportContentDto) {
+    return this.contentModeration.report(dto);
+  }
+
+  @Get('moderation/queue')
+  getModerationQueue() {
+    return { reports: this.contentModeration.getQueue() };
+  }
+
+  /**
+   * The append-only moderation audit trail.
+   *
+   * Filtering by target is offered because the trail is otherwise shared by
+   * every moderated post and comment in the feed.
+   */
+  @Get('moderation/audit')
+  getModerationAudit(
+    @Query('targetKind') targetKind?: ModerationTargetKind,
+    @Query('targetId') targetId?: string,
+  ) {
+    return { entries: this.contentModeration.getAuditTrail({ targetKind, targetId }) };
+  }
 }
+
