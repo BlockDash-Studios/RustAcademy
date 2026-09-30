@@ -1,3 +1,14 @@
+/**
+ * Storage schema documentation for API key metadata.
+ *
+ * The API key record layout is defined by {@link ApiKeyRecord} and persisted
+ * by the api-keys storage layer. Keep this metadata in sync with the storage
+ * schema and its tests.
+ *
+ * @see ApiKeyRecord
+ * @see ApiKeyPublic
+ * @see ApiKeyCreated
+ */
 export const API_KEY_SCOPES = [
   'links:read',
   'links:write',
