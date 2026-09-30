@@ -1,50 +1,3 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
-import { CoursesService } from './courses.service';
-import { CreateCourseDto, CreateTaskDto, LearnerDto, SubmitTaskDto } from './dto/course.dto';
-
-@Controller('courses')
-export class CoursesController {
-  constructor(private readonly courses: CoursesService) {}
-
-  @Post()
-  create(@Body() dto: CreateCourseDto) {
-    return this.courses.create(dto);
-  }
-
-  @Get(':courseId')
-  get(@Param('courseId') courseId: string) {
-    return this.courses.get(courseId);
-  }
-
-  @Post(':courseId/enrollments')
-  enroll(@Param('courseId') courseId: string, @Body() dto: LearnerDto) {
-    return this.courses.enroll(courseId, dto.userId);
-  }
-
-  @Post(':courseId/enrollments/withdraw')
-  @HttpCode(200)
-  withdraw(@Param('courseId') courseId: string, @Body() dto: LearnerDto) {
-    return this.courses.withdraw(courseId, dto.userId);
-  }
-
-  @Post(':courseId/enrollments/complete')
-  @HttpCode(200)
-  complete(@Param('courseId') courseId: string, @Body() dto: LearnerDto) {
-    return this.courses.complete(courseId, dto.userId);
-  }
-
-  @Post(':courseId/tasks')
-  createTask(@Param('courseId') courseId: string, @Body() dto: CreateTaskDto) {
-    return this.courses.createTask(courseId, dto.taskId);
-  }
-
-  @Post(':courseId/tasks/:taskId/submissions')
-  submit(
-    @Param('courseId') courseId: string,
-    @Param('taskId') taskId: string,
-    @Body() dto: SubmitTaskDto,
-  ) {
-    return this.courses.submit(courseId, taskId, dto);
 import {
   Body,
   Controller,
@@ -55,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CourseService } from './course.service';
+import { CoursesService } from './courses.service';
 import { EnrollmentService } from './enrollment.service';
 import { LessonService } from './lesson.service';
 import { CreateCourseDto } from './dto/create-course.dto';
@@ -63,6 +17,12 @@ import { EnrollDto } from './dto/enroll.dto';
 import { StartLessonDto } from './dto/start-lesson.dto';
 import { CompleteLessonDto } from './dto/complete-lesson.dto';
 import { CompleteCourseDto } from './dto/complete-course.dto';
+import {
+  CreateCourseDto as LegacyCreateCourseDto,
+  CreateTaskDto,
+  LearnerDto,
+  SubmitTaskDto,
+} from './dto/course.dto';
 
 /**
  * REST surface for the Learning Academy — courses, lessons, and enrollment.
@@ -126,26 +86,16 @@ export class CoursesController {
     return this.lessonService.findByCourse(courseId);
   }
 
-  // ── Enrollment ───────────────────────────────────────────────────────────
+  // ── Enrollment with prerequisite gating ──────────────────────────────────
 
   /**
-   * Enrol a user in a course.
+   * Enroll a user in a course.
    *
    * Returns 409 with a structured body when prerequisite courses have not been
-   * completed:
-   *
-   * ```json
-   * {
-   *   "statusCode": 409,
-   *   "error": "Conflict",
-   *   "message": "Prerequisites not met for course \"lifetimes-201\": complete ownership-101 first",
-   *   "code": "PREREQUISITES_NOT_MET",
-   *   "unmetPrerequisiteIds": ["ownership-101"]
-   * }
-   * ```
+   * completed.
    */
   @Post('enrollments')
-  @ApiOperation({ summary: 'Enrol a user in a course (blocked with 409 when prerequisites unmet)' })
+  @ApiOperation({ summary: 'Enroll a user in a course (gated on prerequisite courses)' })
   @ApiResponse({ status: 201, description: 'Enrollment created' })
   @ApiResponse({
     status: 409,
@@ -206,5 +156,59 @@ export class CoursesController {
       courseId,
       progress: this.enrollmentService.listLessonProgress(userId, courseId),
     };
+  }
+}
+
+/**
+ * Legacy `/api/courses` surface backed by `CoursesService` (capacity-tracked
+ * enrollments and task submissions with enrollment enforcement).
+ *
+ * The e2e contract in `test/courses.e2e-spec.ts` exercises these routes; kept
+ * alongside the v1 Learning Academy controller until callers migrate.
+ */
+@ApiTags('courses')
+@Controller('courses')
+export class LegacyCoursesController {
+  constructor(private readonly courses: CoursesService) {}
+
+  @Post()
+  create(@Body() dto: LegacyCreateCourseDto) {
+    return this.courses.create(dto);
+  }
+
+  @Get(':courseId')
+  get(@Param('courseId') courseId: string) {
+    return this.courses.get(courseId);
+  }
+
+  @Post(':courseId/enrollments')
+  enroll(@Param('courseId') courseId: string, @Body() dto: LearnerDto) {
+    return this.courses.enroll(courseId, dto.userId);
+  }
+
+  @Post(':courseId/enrollments/withdraw')
+  @HttpCode(200)
+  withdraw(@Param('courseId') courseId: string, @Body() dto: LearnerDto) {
+    return this.courses.withdraw(courseId, dto.userId);
+  }
+
+  @Post(':courseId/enrollments/complete')
+  @HttpCode(200)
+  complete(@Param('courseId') courseId: string, @Body() dto: LearnerDto) {
+    return this.courses.complete(courseId, dto.userId);
+  }
+
+  @Post(':courseId/tasks')
+  createTask(@Param('courseId') courseId: string, @Body() dto: CreateTaskDto) {
+    return this.courses.createTask(courseId, dto.taskId);
+  }
+
+  @Post(':courseId/tasks/:taskId/submissions')
+  submit(
+    @Param('courseId') courseId: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: SubmitTaskDto,
+  ) {
+    return this.courses.submit(courseId, taskId, dto);
   }
 }

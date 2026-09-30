@@ -1,5 +1,15 @@
 import { createHash } from 'crypto';
-import { Injectable, TooManyRequestsException } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+
+/**
+ * NestJS 10 ships no built-in 429 exception class, so this module defines the
+ * one it needs; the subclass carries the Retry-After hint.
+ */
+export class TooManyRequestsException extends HttpException {
+  constructor(message = 'Too many requests') {
+    super(message, HttpStatus.TOO_MANY_REQUESTS);
+  }
+}
 
 export class SubmissionRateLimitException extends TooManyRequestsException {
   constructor(readonly retryAfterSeconds: number, message = 'Submission rate limit exceeded') {

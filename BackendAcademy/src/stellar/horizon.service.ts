@@ -27,11 +27,19 @@ export class HorizonService {
       return {
         accountId: account.accountId(),
         sequence: account.sequence,
-        balances: account.balances.map((balance) => ({
-          assetCode: balance.asset_type === 'native' ? 'XLM' : balance.asset_code,
-          assetIssuer: balance.asset_type === 'native' ? undefined : balance.asset_issuer,
-          amount: balance.balance,
-        })),
+        balances: account.balances.map((balance) => {
+          // Liquidity-pool-share balances carry neither asset_code nor
+          // asset_issuer; only credit balances do, so narrow on asset_type
+          // before reading them.
+          const isNative = balance.asset_type === 'native';
+          const isLiquidityPool = balance.asset_type === 'liquidity_pool_shares';
+          const credit = isNative || isLiquidityPool ? undefined : balance;
+          return {
+            assetCode: isNative ? 'XLM' : credit?.asset_code,
+            assetIssuer: credit?.asset_issuer,
+            amount: balance.balance,
+          };
+        }),
       };
     } catch (error) {
       if ((error as { response?: { status?: number } }).response?.status === 404) {
@@ -54,9 +62,10 @@ export class HorizonService {
       return {
         accountId: publicKey,
         operations,
-        nextCursor: page.records.length === safeLimit
-          ? String(page.records[page.records.length - 1].paging_token ?? operations[operations.length - 1].id)
-          : null,
+        nextCursor:
+          page.records.length > 0
+            ? String(page.records[page.records.length - 1].paging_token ?? operations[operations.length - 1].id)
+            : null,
       };
     } catch {
       throw new ServiceUnavailableException('Unable to fetch Stellar transaction history');
