@@ -8,6 +8,37 @@ import {
 import { CourseLevel } from './interfaces/course-level.enum';
 import { CourseEntity } from './course.entity';
 
+export type CourseRevisionSnapshot = {
+  title: string;
+  description: string;
+  level: CourseLevel;
+  order: number;
+  learningPathId: string;
+  duration: number;
+  category: string;
+  categories: string[];
+  tags: string[];
+  prerequisites: string[];
+  skills: string[];
+  xpReward: number;
+  isActive: boolean;
+};
+
+export function immutableCourseSnapshot(
+  snapshot: CourseRevisionSnapshot,
+): CourseRevisionSnapshot {
+  const copy = JSON.parse(JSON.stringify(snapshot)) as CourseRevisionSnapshot;
+  const freeze = (value: unknown): void => {
+    if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+      Object.values(value).forEach(freeze);
+      Object.freeze(value);
+    }
+  };
+
+  freeze(copy);
+  return copy;
+}
+
 /**
  * Append-only, immutable snapshot of a course at a specific version.
  *
@@ -36,21 +67,7 @@ export class CourseRevisionEntity {
    * additional relation table.
    */
   @Column({ type: 'jsonb' })
-  snapshot: {
-    title: string;
-    description: string;
-    level: CourseLevel;
-    order: number;
-    learningPathId: string;
-    duration: number;
-    category: string;
-    categories: string[];
-    tags: string[];
-    prerequisites: string[];
-    skills: string[];
-    xpReward: number;
-    isActive: boolean;
-  };
+  snapshot: CourseRevisionSnapshot;
 
   /** Optional human-readable summary of what changed */
   @Column({ name: 'change_note', type: 'text', nullable: true })
@@ -95,6 +112,9 @@ export class CourseRevisionEntity {
 
   constructor(partial: Partial<CourseRevisionEntity> = {}) {
     Object.assign(this, partial);
+    if (this.snapshot) {
+      this.snapshot = immutableCourseSnapshot(this.snapshot);
+    }
     this.createdAt = this.createdAt || new Date();
     this.reason = this.reason || 'update';
   }

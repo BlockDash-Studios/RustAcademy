@@ -5,6 +5,7 @@ import { CourseEntity } from './course.entity';
 import {
   CourseRevisionEntity,
   CourseRevisionReason,
+  immutableCourseSnapshot,
 } from './course-revision.entity';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
@@ -383,7 +384,7 @@ export class CourseService {
       id: crypto.randomUUID(),
       courseId: course.id,
       version: course.version,
-      snapshot: {
+      snapshot: immutableCourseSnapshot({
         title: course.title,
         description: course.description,
         level: course.level,
@@ -397,7 +398,7 @@ export class CourseService {
         skills: [...(course.skills ?? [])],
         xpReward: course.xpReward,
         isActive: course.isActive,
-      },
+      }),
       changeNote: options.changeNote,
       revisionAuthor: options.revisionAuthor,
       reason,

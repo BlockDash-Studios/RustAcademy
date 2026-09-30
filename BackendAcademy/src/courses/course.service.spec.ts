@@ -168,6 +168,33 @@ describe('CourseService', () => {
     expect(revisions[0].snapshot.title).toBe('Rust 101');
   });
 
+  it('deep-copies and freezes snapshots when constructing a revision', () => {
+    const sourceSnapshot: CourseRevisionEntity['snapshot'] = {
+      title: 'Snapshot Test',
+      description: 'Desc',
+      level: CourseLevel.BEGINNER,
+      order: 1,
+      learningPathId: 'path-1',
+      duration: 30,
+      category: 'rust',
+      categories: ['rust'],
+      tags: ['ownership'],
+      prerequisites: ['basics'],
+      skills: ['borrowing'],
+      xpReward: 50,
+      isActive: true,
+    };
+    const revision = new CourseRevisionEntity({ snapshot: sourceSnapshot });
+
+    sourceSnapshot.title = 'Mutated';
+    sourceSnapshot.categories.push('mutated');
+
+    expect(revision.snapshot.title).toBe('Snapshot Test');
+    expect(revision.snapshot.categories).toEqual(['rust']);
+    expect(Object.isFrozen(revision.snapshot)).toBe(true);
+    expect(Object.isFrozen(revision.snapshot.categories)).toBe(true);
+  });
+
   it('returns only active courses from findAll()', async () => {
     const active = await service.create({
       title: 'Active',
