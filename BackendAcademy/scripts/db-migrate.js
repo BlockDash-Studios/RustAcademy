@@ -16,6 +16,7 @@ if (!databaseUrl) {
 const migrations = [
   'database/migrations/001_gamification_chat.sql',
   'database/migrations/002_courses_prerequisites.sql',
+  'database/migrations/003_tutor_escrow.sql',
 ];
 
 for (const migration of migrations) {

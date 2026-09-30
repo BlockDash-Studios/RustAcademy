@@ -14,6 +14,7 @@ import { SandboxModule } from './sandbox/sandbox.module';
 import { ProgressModule } from './progress/progress.module';
 import { CoursesModule } from './courses/courses.module';
 import { CertificatesModule } from './certificates/certificates.module';
+import { UsersModule } from './users/users.module';
 
 // Root application module: wires together global configuration/guards,
 // every feature module, and the top-level controllers/providers.
@@ -46,6 +47,7 @@ import { CertificatesModule } from './certificates/certificates.module';
     ProgressModule,
     CoursesModule,
     CertificatesModule,
+    UsersModule,
   ],
   // Top-level controllers not owned by a specific feature module:
   // AppController (root/basic routes) and HealthController

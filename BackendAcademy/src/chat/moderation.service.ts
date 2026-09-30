@@ -1,4 +1,14 @@
-import { ForbiddenException, Injectable, TooManyRequestsException } from '@nestjs/common';
+import { ForbiddenException, HttpException, HttpStatus, Injectable } from '@nestjs/common';
+
+/**
+ * NestJS 10 ships no built-in 429 exception class, so the chat module defines
+ * the one it needs (BE-094 chat rate limiting).
+ */
+export class TooManyRequestsException extends HttpException {
+  constructor(message = 'Too many requests') {
+    super(message, HttpStatus.TOO_MANY_REQUESTS);
+  }
+}
 
 export interface ChatMessage {
   id: string;

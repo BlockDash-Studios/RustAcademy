@@ -1,5 +1,6 @@
 import { ArrayUnique, IsArray, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 
+/** Legacy /api/courses surface (CoursesService) — kept for the e2e contract. */
 export class CreateCourseDto {
   @IsString() @IsNotEmpty() courseId: string;
   @IsString() @IsNotEmpty() title: string;
